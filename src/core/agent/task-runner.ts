@@ -30,6 +30,7 @@ import {
   headTail,
   resolveAttachments,
 } from './action-executors';
+import { compressHistory, truncateHistory, buildActionLog, drainInbox } from './history-manager';
 import { parseModelResponse } from './action-parser';
 import { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
@@ -169,41 +170,16 @@ export class TaskRunner {
           snapshot: '(page not available)',
         }));
 
-        let actionLog = '';
-        if (this.task.steps.length > 0) {
-          const recent = this.task.steps.slice(-8);
-          const failedSelectors = new Set<string>();
-          for (const s of this.task.steps) {
-            if (s.error) {
-              const raw = s.action as Record<string, unknown>;
-              if (raw.selector) failedSelectors.add(String(raw.selector));
-            }
-          }
-          actionLog =
-            '\n\nRecent actions:\n' +
-            recent
-              .map((s) => {
-                const res = s.result ? ` → ${s.result.slice(0, 200)}` : '';
-                const err = s.error ? ` [ERROR: ${s.error.slice(0, 100)}]` : '';
-                const truncNote = s.thought?.includes('truncated')
-                  ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]'
-                  : '';
-                return `Step ${s.index + 1}: ${s.action.type}${res}${err}${truncNote}`;
-              })
-              .join('\n') +
-            '\n\nDo NOT repeat actions that already succeeded.' +
-            (failedSelectors.size > 0
-              ? '\n\n⚠ FAILED SELECTORS (do NOT use these again, try a completely different approach):\n' +
-                [...failedSelectors].map((s) => `- ${s}`).join('\n')
-              : '');
-        }
+        const actionLog = this.task.steps.length > 0
+          ? buildActionLog(this.task.steps, 8, { includeFailedSelectors: true, truncateResult: 200, truncateError: 100 })
+          : '';
 
         const turnText =
           step === 0
             ? `Task: ${this.task.prompt}${attachBlock}${memCtx}\n\nCurrent page:\nURL: ${snap.url}\nTitle: ${snap.title}\n\nPage snapshot:\n${snap.snapshot}`
             : `Step ${step + 1}.\nURL: ${snap.url}\nTitle: ${snap.title}\n\nPage snapshot:\n${snap.snapshot}${actionLog}`;
 
-        const inboxBlock = this.drainInbox();
+        const inboxBlock = drainInbox(this.opts.taskManager ?? null, this.opts.taskId ?? this.task.id);
         const turnMessage: VisionMessage = {
           role: 'user',
           content: [
@@ -218,22 +194,7 @@ export class TaskRunner {
           ],
         };
 
-        if (history.length > 8) {
-          const oldMessages = history.slice(1, history.length - 6);
-          const summary = oldMessages
-            .filter((m) => m.role === 'assistant')
-            .map((m) => {
-              const txt = m.content?.[0] && 'text' in m.content[0] ? m.content[0].text : '';
-              const actionMatch = txt.match(/"type"\s*:\s*"([^"]+)"/);
-              return actionMatch ? actionMatch[1] : '';
-            })
-            .filter(Boolean)
-            .join(' → ');
-          history.splice(1, oldMessages.length, {
-            role: 'user',
-            content: [{ type: 'input_text', text: `[Previous actions: ${summary}]` }],
-          });
-        }
+        compressHistory(history, 6);
         history.push(turnMessage);
 
         const { text: rawResponse, usage } = await this.callVisionModel(systemPrompt, history);
@@ -416,49 +377,22 @@ export class TaskRunner {
     while (!this.aborted && this.task.steps.length < this.task.maxSteps) {
       try {
         const stepIndex = this.task.steps.length;
-        let actionLog = '';
-        if (stepIndex > 0) {
-          const recentSteps = this.task.steps.slice(-8);
-          actionLog =
-            '\n\nRecent actions:\n' +
-            recentSteps
-              .map((s) => {
-                const desc = s.action.type;
-                const resultSuffix = s.result ? ` → ${s.result.slice(0, 200)}` : '';
-                const errorSuffix = s.error ? ` [ERROR: ${s.error.slice(0, 100)}]` : '';
-                return `Step ${s.index + 1}: ${desc}${resultSuffix}${errorSuffix}`;
-              })
-              .join('\n') +
-            '\n\nDo NOT repeat actions that already succeeded.';
-        }
+        const actionLog = stepIndex > 0
+          ? buildActionLog(this.task.steps, 8, { truncateResult: 200, truncateError: 100 })
+          : '';
 
         const turnText =
           stepIndex === 0
             ? `Task: ${this.task.prompt}\n\nYou are in API-only mode. Use the polymarket_* actions directly. Do NOT use shell, navigate, or evaluate.`
             : `Step ${stepIndex + 1}.${actionLog}`;
 
-        const inboxBlock = this.drainInbox();
+        const inboxBlock = drainInbox(this.opts.taskManager ?? null, this.opts.taskId ?? this.task.id);
         const turnMessage: VisionMessage = {
           role: 'user',
           content: [{ type: 'input_text', text: turnText + inboxBlock }],
         };
 
-        if (history.length > 8) {
-          const oldMessages = history.slice(1, history.length - 6);
-          const summary = oldMessages
-            .filter((m) => m.role === 'assistant')
-            .map((m) => {
-              const txt = m.content?.[0] && 'text' in m.content[0] ? m.content[0].text : '';
-              const actionMatch = txt.match(/"type"\s*:\s*"([^"]+)"/);
-              return actionMatch ? actionMatch[1] : '';
-            })
-            .filter(Boolean)
-            .join(' → ');
-          history.splice(1, oldMessages.length, {
-            role: 'user',
-            content: [{ type: 'input_text', text: `[Previous actions: ${summary}]` }],
-          });
-        }
+        compressHistory(history, 6);
         history.push(turnMessage);
 
         const { text: rawResponse, usage } = await this.callVisionModel(systemPrompt, history);
@@ -555,13 +489,13 @@ export class TaskRunner {
           turnText = `Step ${stepIndex + 1}.\n\nRecent actions:\n${actionLog}\n\nContinue with the next step.`;
         }
 
-        turnText += this.drainInbox();
+        turnText += drainInbox(this.opts.taskManager ?? null, this.opts.taskId ?? this.task.id);
         const turnMessage: VisionMessage = {
           role: 'user',
           content: [{ type: 'input_text', text: turnText }],
         };
 
-        if (history.length > 20) history.splice(1, history.length - 19);
+        if (history.length > 20) truncateHistory(history, 19);
         history.push(turnMessage);
 
         this.pushStatus('Thinking...');
@@ -856,15 +790,6 @@ export class TaskRunner {
   }
 
   private lastScrapeData = '';
-
-  private drainInbox(): string {
-    const tm = this.opts.taskManager;
-    if (!tm) return '';
-    const msgs = tm.drainMessages(this.opts.taskId ?? this.task.id);
-    if (msgs.length === 0) return '';
-    const lines = msgs.map((m) => `  From ${m.from}: ${m.message}`).join('\n');
-    return `\n\n[INCOMING MESSAGES]\n${lines}\n[/INCOMING MESSAGES]`;
-  }
 
   private finish(status: 'completed' | 'failed' | 'cancelled', error?: string): Task {
     this.cleanup();
