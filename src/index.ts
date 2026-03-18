@@ -82,11 +82,26 @@ export type AppType = typeof routes;
 // ── Start server ────────────────────────────────────────────────────────────
 const port = Number.parseInt(process.env.SKYNUL_PORT ?? '3141', 10);
 
-const server = serve({ fetch: routes.fetch, port }, (info) => {
-  console.log(`\x1b[36m▸\x1b[0m listening on \x1b[1;32mhttp://localhost:${info.port}\x1b[0m`);
-});
+async function start() {
+  for (let i = 0; i < 10; i++) {
+    const p = port + i;
+    try {
+      const server = serve({ fetch: routes.fetch, port: p }, (info) => {
+        console.log(`\x1b[36m▸\x1b[0m listening on \x1b[1;32mhttp://localhost:${info.port}\x1b[0m`);
+      });
+      injectWebSocket(server);
+      return;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('EADDRINUSE')) {
+        if (i === 9) throw err;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
-injectWebSocket(server);
+start();
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 const shutdown = async () => {
