@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "rebuild:sqlite": "cd ./node_modules/better-sqlite3 && node-gyp rebuild"
+    "rebuild:sqlite": "cd ./node_modules/better-sqlite3 && node-gyp rebuild",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.1",
@@ -35,8 +37,10 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
     "tsx": "^4.19.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   },
   "engines": {
     "node": ">=22"
