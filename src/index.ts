@@ -2,6 +2,17 @@ import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
+
+console.log(`
+\x1b[1;37m  ███████╗██╗  ██╗██╗   ██╗███╗   ██╗██╗   ██╗██╗
+  ██╔════╝██║ ██╔╝╚██╗ ██╔╝████╗  ██║██║   ██║██║
+  ███████╗█████╔╝  ╚████╔╝ ██╔██╗ ██║██║   ██║██║
+  ╚════██║██╔═██╗   ╚██╔╝  ██║╚██╗██║██║   ██║██║
+  ███████║██║  ██╗   ██║   ██║ ╚████║╚██████╔╝███████╗
+  ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝\x1b[0m
+\x1b[90m backend · v0.0.1 · node ${process.versions.node}\x1b[0m
+`);
+
 import { authMiddleware } from './middleware/auth';
 import { corsMiddleware } from './middleware/cors';
 import { browser } from './routes/browser';
@@ -72,7 +83,7 @@ export type AppType = typeof routes;
 const port = Number.parseInt(process.env.SKYNUL_PORT ?? '3141', 10);
 
 const server = serve({ fetch: routes.fetch, port }, (info) => {
-  console.log(`skynul-server listening on http://localhost:${info.port}`);
+  console.log(`\x1b[36m▸\x1b[0m listening on \x1b[1;32mhttp://localhost:${info.port}\x1b[0m`);
 });
 
 injectWebSocket(server);
