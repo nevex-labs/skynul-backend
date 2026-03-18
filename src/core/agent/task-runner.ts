@@ -13,7 +13,8 @@
 import type { ProviderId, Task, TaskAction, TaskStep } from '../../types';
 import type { BrowserEngine } from '../browser/engine/browser-engine';
 import { acquireBrowserEngine } from '../browser/engine/factory';
-import { type VisionMessage, codexVisionRespond } from '../providers/codex-vision';
+import { type VisionMessage } from '../providers/codex-vision';
+import { callVision } from './vision-dispatch';
 import {
   type ExecutorContext,
   executeFactAction,
@@ -197,7 +198,7 @@ export class TaskRunner {
         compressHistory(history, 6);
         history.push(turnMessage);
 
-        const { text: rawResponse, usage } = await this.callVisionModel(systemPrompt, history);
+        const { text: rawResponse, usage } = await callVision(this.opts.provider, systemPrompt, history, this.task.id, this.opts.openaiModel);
         if (usage) this.addUsage(usage);
         const { thought, action } = parseModelResponse(rawResponse);
 
@@ -395,7 +396,7 @@ export class TaskRunner {
         compressHistory(history, 6);
         history.push(turnMessage);
 
-        const { text: rawResponse, usage } = await this.callVisionModel(systemPrompt, history);
+        const { text: rawResponse, usage } = await callVision(this.opts.provider, systemPrompt, history, this.task.id, this.opts.openaiModel);
         if (usage) this.addUsage(usage);
         const { thought, action } = parseModelResponse(rawResponse);
 
@@ -499,7 +500,7 @@ export class TaskRunner {
         history.push(turnMessage);
 
         this.pushStatus('Thinking...');
-        const { text: rawResponse, usage } = await this.callVisionModel(systemPrompt, history);
+        const { text: rawResponse, usage } = await callVision(this.opts.provider, systemPrompt, history, this.task.id, this.opts.openaiModel);
         if (usage) this.addUsage(usage);
         console.log(`[code-loop] raw (${rawResponse.length}c):`, rawResponse.slice(0, 400));
         const { thought, action } = parseModelResponse(rawResponse);
@@ -722,57 +723,6 @@ export class TaskRunner {
         return undefined;
       default:
         return `[Error: "${action.type}" is not available in API-only mode.]`;
-    }
-  }
-
-  private async callVisionModel(
-    systemPrompt: string,
-    messages: VisionMessage[]
-  ): Promise<{ text: string; usage?: { inputTokens: number; outputTokens: number } }> {
-    switch (this.opts.provider) {
-      case 'chatgpt':
-        return {
-          text: await codexVisionRespond({
-            systemPrompt,
-            messages,
-            sessionId: this.task.id,
-            model: this.opts.openaiModel,
-          }),
-        };
-      case 'claude': {
-        const { claudeVisionRespond } = await import('../providers/claude-vision');
-        return { text: await claudeVisionRespond({ systemPrompt, messages }) };
-      }
-      case 'deepseek': {
-        const { deepseekVisionRespond } = await import('../providers/deepseek-vision');
-        return { text: await deepseekVisionRespond({ systemPrompt, messages }) };
-      }
-      case 'kimi': {
-        const { kimiVisionRespond } = await import('../providers/kimi-vision');
-        return kimiVisionRespond({ systemPrompt, messages });
-      }
-      case 'glm': {
-        const { glmVisionRespond } = await import('../providers/glm-vision');
-        return glmVisionRespond({ systemPrompt, messages });
-      }
-      case 'minimax': {
-        const { minimaxVisionRespond } = await import('../providers/minimax-vision');
-        return minimaxVisionRespond({ systemPrompt, messages });
-      }
-      case 'openrouter': {
-        const { openrouterVisionRespond } = await import('../providers/openrouter-vision');
-        return openrouterVisionRespond({ systemPrompt, messages });
-      }
-      case 'gemini': {
-        const { geminiVisionRespond } = await import('../providers/gemini-vision');
-        return geminiVisionRespond({ systemPrompt, messages });
-      }
-      case 'ollama': {
-        const { ollamaVisionRespond } = await import('../providers/ollama-vision');
-        return ollamaVisionRespond({ systemPrompt, messages });
-      }
-      default:
-        throw new Error(`Unsupported provider: ${this.opts.provider}`);
     }
   }
 
