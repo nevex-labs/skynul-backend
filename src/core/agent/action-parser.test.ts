@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseModelResponse } from './action-parser';
 
 describe('parseModelResponse', () => {
@@ -40,7 +40,9 @@ describe('parseModelResponse', () => {
     });
 
     it('parses task_send action', () => {
-      const result = parseModelResponse('{"action":{"type":"task_send","prompt":"do something","agentRole":"Research"}}');
+      const result = parseModelResponse(
+        '{"action":{"type":"task_send","prompt":"do something","agentRole":"Research"}}'
+      );
       expect(result.action).toEqual({ type: 'task_send', prompt: 'do something', agentRole: 'Research' });
     });
 
@@ -62,7 +64,9 @@ describe('parseModelResponse', () => {
     });
 
     it('extracts first JSON from multiple fences', () => {
-      const result = parseModelResponse('```json\n{"action":{"type":"done","summary":"first"}}\n```\n```json\n{"action":{"type":"fail","reason":"second"}}\n```');
+      const result = parseModelResponse(
+        '```json\n{"action":{"type":"done","summary":"first"}}\n```\n```json\n{"action":{"type":"fail","reason":"second"}}\n```'
+      );
       expect(result.action).toEqual({ type: 'done', summary: 'first' });
     });
   });
@@ -79,7 +83,9 @@ describe('parseModelResponse', () => {
     });
 
     it('strips CDP browser bridge noise', () => {
-      const result = parseModelResponse('{"thought":"hi","action":{"type":"done","summary":"ok"}}\n· CDP browser bridge ready');
+      const result = parseModelResponse(
+        '{"thought":"hi","action":{"type":"done","summary":"ok"}}\n· CDP browser bridge ready'
+      );
       expect(result.action).toEqual({ type: 'done', summary: 'ok' });
     });
   });

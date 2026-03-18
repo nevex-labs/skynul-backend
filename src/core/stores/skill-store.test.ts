@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { getActiveSkillPrompts } from './skill-store';
+import { describe, expect, it } from 'vitest';
 import type { Skill } from '../../types';
+import { getActiveSkillPrompts } from './skill-store';
 
 describe('getActiveSkillPrompts', () => {
   const mockSkills: Skill[] = [

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadPolicy } from './policy-store';
 
 const mockReadFile = vi.hoisted(() => vi.fn());
@@ -35,7 +35,7 @@ describe('loadPolicy', () => {
     mockReadFile.mockResolvedValue(
       JSON.stringify({
         provider: { active: 'openai' },
-      }),
+      })
     );
     const result = await loadPolicy();
     expect(result.provider.active).toBe('chatgpt');
@@ -45,7 +45,7 @@ describe('loadPolicy', () => {
     mockReadFile.mockResolvedValue(
       JSON.stringify({
         provider: { active: 'claude' },
-      }),
+      })
     );
     const result = await loadPolicy();
     expect(result.provider.active).toBe('claude');
@@ -56,7 +56,7 @@ describe('loadPolicy', () => {
       JSON.stringify({
         themeMode: 'light',
         provider: { active: 'deepseek', openaiModel: 'deepseek-chat' },
-      }),
+      })
     );
     const result = await loadPolicy();
     expect(result.themeMode).toBe('light');
@@ -69,7 +69,7 @@ describe('loadPolicy', () => {
     mockReadFile.mockResolvedValue(
       JSON.stringify({
         provider: { active: 'chatgpt' },
-      }),
+      })
     );
     const result = await loadPolicy();
     expect(result.provider.openaiModel).toBe('gpt-4.1-mini');
