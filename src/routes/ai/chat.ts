@@ -1,9 +1,9 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { dispatchChat } from '../core/providers/dispatch';
-import type { ChatSendResponse } from '../types';
-import { policyState } from './policy';
+import { dispatchChat } from '../../core/providers/dispatch';
+import type { ChatSendResponse } from '../../types';
+import { policyState } from '../agent/policy';
 
 const chatMessageSchema = z.object({
   role: z.enum(['user', 'assistant']),

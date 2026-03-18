@@ -1,8 +1,8 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createScheduleId, loadSchedules, saveSchedules } from '../core/stores/schedule-store';
-import type { Schedule } from '../types';
+import { createScheduleId, loadSchedules, saveSchedules } from '../../core/stores/schedule-store';
+import type { Schedule } from '../../types';
 
 const scheduleSchema = z.object({
   id: z.string().optional(),

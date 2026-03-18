@@ -8,7 +8,7 @@ import {
   projectList,
   projectRemoveTask,
   projectUpdate,
-} from '../core/stores/project-store';
+} from '../../core/stores/project-store';
 
 const projects = new Hono()
   .get('/', (c) => {

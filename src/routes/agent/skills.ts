@@ -2,8 +2,8 @@ import { zValidator } from '@hono/zod-validator';
 import { readFile } from 'fs/promises';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createSkillId, loadSkills, saveSkills } from '../core/stores/skill-store';
-import type { Skill } from '../types';
+import { createSkillId, loadSkills, saveSkills } from '../../core/stores/skill-store';
+import type { Skill } from '../../types';
 
 const skillSchema = z.object({
   id: z.string().optional(),

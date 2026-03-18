@@ -15,19 +15,11 @@ console.log(`
 
 import { authMiddleware } from './middleware/auth';
 import { corsMiddleware } from './middleware/cors';
-import { browser } from './routes/browser';
-import { channelManager, channels } from './routes/channels';
-import { chat } from './routes/chat';
-import { chatgpt } from './routes/chatgpt';
-import { dialogs } from './routes/dialogs';
-import { ollama } from './routes/ollama';
-import { policy } from './routes/policy';
-import { projects } from './routes/projects';
-import { runtime } from './routes/runtime';
-import { schedules } from './routes/schedules';
-import { secrets } from './routes/secrets';
-import { skills } from './routes/skills';
-import { tasks } from './routes/tasks';
+import { agentGroup } from './routes/agent';
+import { aiGroup } from './routes/ai';
+import { channelManager, integrationsGroup } from './routes/integrations';
+import { systemGroup } from './routes/system';
+import { tasksGroup } from './routes/tasks';
 import { addClient, clientCount, removeClient } from './ws/events';
 
 const app = new Hono();
@@ -62,19 +54,11 @@ const routes = app
   )
 
   // ── Routes ──────────────────────────────────────────────────────────────────
-  .route('/api/tasks', tasks)
-  .route('/api/policy', policy)
-  .route('/api/channels', channels)
-  .route('/api/skills', skills)
-  .route('/api/schedules', schedules)
-  .route('/api/chat', chat)
-  .route('/api/projects', projects)
-  .route('/api/secrets', secrets)
-  .route('/api/browser', browser)
-  .route('/api/ollama', ollama)
-  .route('/api/chatgpt', chatgpt)
-  .route('/api/runtime', runtime)
-  .route('/api/dialogs', dialogs);
+  .route('/api/tasks', tasksGroup)
+  .route('/api/ai', aiGroup)
+  .route('/api/agent', agentGroup)
+  .route('/api/integrations', integrationsGroup)
+  .route('/api/system', systemGroup);
 
 // ── Export type for hono/client (hc) ────────────────────────────────────────
 export type AppType = typeof routes;

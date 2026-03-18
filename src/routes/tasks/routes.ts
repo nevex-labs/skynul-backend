@@ -1,9 +1,9 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { TaskManager } from '../core/agent/task-manager';
-import type { TaskListResponse } from '../types';
-import { policyState } from './policy';
+import { TaskManager } from '../../core/agent/task-manager';
+import type { TaskListResponse } from '../../types';
+import { policyState } from '../agent/policy';
 
 const tm = new TaskManager();
 tm.setPolicyGetter(() => policyState);

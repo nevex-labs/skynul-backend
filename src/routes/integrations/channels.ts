@@ -1,9 +1,9 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { ChannelManager } from '../core/channels/channel-manager';
-import type { ChannelId } from '../types';
-import { taskManager } from './tasks';
+import { ChannelManager } from '../../core/channels/channel-manager';
+import type { ChannelId } from '../../types';
+import { taskManager } from '../tasks';
 
 const cm = new ChannelManager(taskManager);
 

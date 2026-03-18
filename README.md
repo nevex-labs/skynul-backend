@@ -9,16 +9,23 @@ pnpm install
 pnpm dev
 ```
 
-## Structure
+## API Structure
 
 ```
-├── server/        — Hono-based API server with WebSocket support
-├── shared/        — Shared types and utilities
+/api/tasks          → task management, schedules, projects
+/api/ai            → chat dispatch, providers (chatgpt, ollama)
+/api/agent         → skills, policy settings, dialogs
+/api/integrations  → channels (telegram, discord, etc), secrets
+/api/system        → browser snapshots, runtime stats
 ```
 
-## Linting
+## Commands
 
 ```bash
-pnpm lint       # check
-pnpm lint:fix   # fix
+pnpm dev          # start dev server
+pnpm typecheck    # TypeScript check
+pnpm lint         # biome check
+pnpm lint:fix     # biome fix
+pnpm test         # vitest watch
+pnpm test:run     # vitest single run
 ```

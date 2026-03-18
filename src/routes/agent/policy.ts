@@ -1,8 +1,8 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { loadPolicy, savePolicy } from '../core/stores/policy-store';
-import type { CapabilityId, ProviderId } from '../types';
+import { loadPolicy, savePolicy } from '../../core/stores/policy-store';
+import type { CapabilityId, ProviderId } from '../../types';
 
 let policy = await loadPolicy();
 
