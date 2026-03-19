@@ -10,7 +10,9 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "start:dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -39,6 +41,7 @@
     "@flydotio/dockerfile": "^0.7.10",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.19.4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"

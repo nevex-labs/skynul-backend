@@ -28,15 +28,18 @@ RUN apt-get update -qq && \
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy application code
+# Copy application code and compile TypeScript
 COPY . .
+RUN pnpm build
 
 
 # Final stage for app image
 FROM base
 
 # Copy built application
-COPY --from=build /app /app
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/dist /app/dist
+COPY --from=build /app/package.json /app/package.json
 
 # Start the server by default, this can be overwritten at runtime
 EXPOSE 8080
