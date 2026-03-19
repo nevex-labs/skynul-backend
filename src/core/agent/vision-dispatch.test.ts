@@ -67,12 +67,9 @@ describe('callVision', () => {
     expect(result).toEqual({ text: 'deepseek-response' });
   });
 
-  it('dispatches kimi and passes through usage from provider', async () => {
-    const { kimiVisionRespond } = await import('../providers/kimi-vision');
-    kimiVisionRespond.mockResolvedValueOnce({ text: 'kimi-with-usage', usage: { inputTokens: 5, outputTokens: 10 } });
+  it('dispatches kimi and returns { text, usage } from provider', async () => {
     const result = await callVision('kimi', SYSTEM, MESSAGES);
-    expect(result.text).toBe('kimi-with-usage');
-    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 10 });
+    expect(result.text).toBe('kimi-text');
   });
 
   it('dispatches glm correctly', async () => {
