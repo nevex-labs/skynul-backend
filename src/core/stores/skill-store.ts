@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import type { Skill } from '../../types';
 import { getDataDir } from '../config';
+import { SkillArraySchema } from './schemas';
 
 function filePath(): string {
   return join(getDataDir(), 'skills.json');
@@ -12,6 +13,9 @@ export async function loadSkills(): Promise<Skill[]> {
   try {
     const raw = await readFile(filePath(), 'utf8');
     const parsed = JSON.parse(raw);
+    const result = SkillArraySchema.safeParse(parsed);
+    if (result.success) return result.data;
+    console.warn('[skill-store] Invalid data:', result.error.issues);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];

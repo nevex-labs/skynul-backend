@@ -7,7 +7,7 @@ import type { TaskManager } from '../agent/task-manager';
 import { getDataDir } from '../config';
 import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
-import { formatTaskList, formatTaskSummary } from './message-formatter';
+import { handleCommand } from './command-router';
 
 type SlackState = {
   enabled: boolean;
@@ -173,37 +173,14 @@ export class SlackChannel extends Channel {
     // Only respond to paired user
     if (!this.state.paired || userId !== this.state.pairedUserId) return;
 
-    if (content === '/list') {
-      const tasks = this.taskManager.list();
-      await say(formatTaskList(tasks));
-      return;
-    }
-
-    if (content.startsWith('/cancel ')) {
-      const taskId = content.slice(8).trim();
-      try {
-        this.taskManager.cancel(taskId);
-        await say(`\u26d4 Tarea cancelada.`);
-      } catch (e) {
-        await say(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    const result = await handleCommand(content, this.taskManager);
+    if (result.handled) {
+      if (result.text === '__UNPAIR__') {
+        await this.unpair();
+        await say('Desvinculado.');
+      } else {
+        await say(result.text);
       }
-      return;
-    }
-
-    if (content.startsWith('/status ')) {
-      const taskId = content.slice(8).trim();
-      const task = this.taskManager.get(taskId);
-      if (!task) {
-        await say('\u{1f50d} Tarea no encontrada.');
-        return;
-      }
-      await say(formatTaskSummary(task));
-      return;
-    }
-
-    if (content === '/unpair') {
-      await this.unpair();
-      await say('Desvinculado.');
       return;
     }
 

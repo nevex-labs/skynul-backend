@@ -1,13 +1,20 @@
 /**
  * CDP / Polymarket mode — API-only, no browser.
- * Action execution lives in TaskRunner (via callbacks).
  */
 
-import type { Task } from '../../../types';
+import type { Task, TaskAction } from '../../../types';
 import type { VisionMessage } from '../../providers/codex-vision';
-import type { TaskManager } from '../task-manager';
-import { buildCdpSystemPrompt } from '../system-prompt';
+import type { ExecutorContext } from '../action-executors';
+import {
+  executeFactAction,
+  executeGenerateImage,
+  executeInterTaskAction,
+  executePolymarketAction,
+  executeSetIdentity,
+} from '../action-executors';
 import { buildActionLog } from '../history-manager';
+import { buildCdpSystemPrompt } from '../system-prompt';
+import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
 
 export type CdpLoopSetup = {
@@ -38,7 +45,10 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   const filePaths = allAttachments.filter((a) => !a.startsWith('data:image/'));
   const attachmentsBlock =
     filePaths.length > 0
-      ? `\n\nAttached local files (absolute paths):\n${filePaths.slice(0, 12).map((p) => `- ${p}`).join('\n')}`
+      ? `\n\nAttached local files (absolute paths):\n${filePaths
+          .slice(0, 12)
+          .map((p) => `- ${p}`)
+          .join('\n')}`
       : '';
 
   history.push({
@@ -73,4 +83,46 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   };
 
   return { systemPrompt, history, callbacks };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Execute an API-only action (Polymarket, inter-task, etc). */
+export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorContext): Promise<string | undefined> {
+  const raw = action as Record<string, unknown>;
+  switch (action.type) {
+    case 'task_list_peers':
+    case 'task_send':
+    case 'task_read':
+    case 'task_message': {
+      const res = await executeInterTaskAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'remember_fact':
+    case 'forget_fact': {
+      const res = executeFactAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'set_identity': {
+      const res = executeSetIdentity(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'generate_image': {
+      const res = await executeGenerateImage(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'polymarket_get_account_summary':
+    case 'polymarket_get_trader_leaderboard':
+    case 'polymarket_search_markets':
+    case 'polymarket_place_order':
+    case 'polymarket_close_position': {
+      const res = await executePolymarketAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'wait':
+      await sleep((raw.ms as number) ?? 1000);
+      return undefined;
+    default:
+      return `[Error: "${action.type}" is not available in API-only mode.]`;
+  }
 }

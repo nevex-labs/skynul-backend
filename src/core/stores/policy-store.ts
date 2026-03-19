@@ -2,37 +2,46 @@ import { dirname, join } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { DEFAULT_POLICY, type PolicyState, type ProviderId } from '../../types';
 import { getDataDir } from '../config';
+import { PolicyStateSchema } from './schemas';
 
 function policyPath(): string {
   return join(getDataDir(), 'policy.json');
 }
 
+function normalizePolicy(parsed: Record<string, unknown>): PolicyState {
+  let activeProvider =
+    ((parsed.provider as Record<string, unknown>)?.active as string) ?? DEFAULT_POLICY.provider.active;
+  if (activeProvider === 'openai') activeProvider = 'chatgpt';
+
+  return {
+    workspaceRoot: (parsed.workspaceRoot as string | null) ?? null,
+    capabilities: {
+      ...DEFAULT_POLICY.capabilities,
+      ...((parsed.capabilities as Record<string, boolean>) ?? {}),
+    },
+    themeMode: (parsed.themeMode as PolicyState['themeMode']) ?? DEFAULT_POLICY.themeMode,
+    language: (parsed.language as PolicyState['language']) ?? DEFAULT_POLICY.language,
+    provider: {
+      active: activeProvider as ProviderId,
+      openaiModel:
+        ((parsed.provider as Record<string, unknown>)?.openaiModel as string) ?? DEFAULT_POLICY.provider.openaiModel,
+    },
+    taskMemoryEnabled: (parsed.taskMemoryEnabled as boolean) ?? DEFAULT_POLICY.taskMemoryEnabled,
+    taskAutoApprove: (parsed.taskAutoApprove as boolean) ?? DEFAULT_POLICY.taskAutoApprove,
+  };
+}
+
 export async function loadPolicy(): Promise<PolicyState> {
   try {
     const raw = await readFile(policyPath(), 'utf8');
-    const parsed = JSON.parse(raw) as PolicyState;
-    // Migrate old 'openai' provider to 'chatgpt'
-    let activeProvider = (parsed.provider?.active ?? DEFAULT_POLICY.provider.active) as string;
-    if (activeProvider === 'openai') activeProvider = 'chatgpt';
-
-    return {
-      workspaceRoot: parsed.workspaceRoot ?? null,
-      capabilities: {
-        ...DEFAULT_POLICY.capabilities,
-        ...(parsed.capabilities ?? {}),
-      },
-      themeMode: parsed.themeMode ?? DEFAULT_POLICY.themeMode,
-      language: parsed.language ?? DEFAULT_POLICY.language,
-      provider: {
-        active: activeProvider as ProviderId,
-        openaiModel: parsed.provider?.openaiModel ?? DEFAULT_POLICY.provider.openaiModel,
-      },
-      taskMemoryEnabled: parsed.taskMemoryEnabled ?? DEFAULT_POLICY.taskMemoryEnabled,
-      taskAutoApprove: parsed.taskAutoApprove ?? DEFAULT_POLICY.taskAutoApprove,
-    };
+    const parsed = JSON.parse(raw);
+    const result = PolicyStateSchema.safeParse(parsed);
+    if (result.success) return normalizePolicy(result.data as unknown as Record<string, unknown>);
+    console.warn('[policy-store] Invalid data:', result.error.issues);
   } catch {
-    return DEFAULT_POLICY;
+    // fall through to default
   }
+  return DEFAULT_POLICY;
 }
 
 export async function savePolicy(next: PolicyState): Promise<void> {

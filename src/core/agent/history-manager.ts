@@ -3,8 +3,8 @@
  * Handles message compression, action logging, and inbox draining.
  */
 
-import type { VisionMessage } from '../providers/codex-vision';
 import type { TaskStep } from '../../types';
+import type { VisionMessage } from '../providers/codex-vision';
 import type { TaskManager } from './task-manager';
 
 /** Extract action type from an assistant message text. */
@@ -58,8 +58,9 @@ export function buildActionLog(
   const lines = recent.map((s) => {
     const res = s.result ? ` → ${s.result.slice(0, opts?.truncateResult ?? 200)}` : '';
     const err = s.error ? ` [ERROR: ${s.error.slice(0, opts?.truncateError ?? 100)}]` : '';
-    const truncNote =
-      s.thought?.includes('truncated') ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]' : '';
+    const truncNote = s.thought?.includes('truncated')
+      ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]'
+      : '';
     return `Step ${s.index + 1}: ${s.action.type}${res}${err}${truncNote}`;
   });
 

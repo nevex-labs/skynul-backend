@@ -6,16 +6,18 @@
  */
 
 import type { Task, TaskAction, TaskStep } from '../../../types';
-import type { VisionMessage } from '../../providers/codex-vision';
 import type { ProviderId } from '../../../types';
+import type { VisionMessage } from '../../providers/codex-vision';
+import { type ParserState, parseModelResponse } from '../action-parser';
+import { compressHistory, drainInbox, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
-import { parseModelResponse } from '../action-parser';
-import { compressHistory, truncateHistory } from '../history-manager';
 
 export type LoopCallbacks = {
   taskManager: TaskManager | null;
-  buildTurnMessage(stepIndex: number, history: VisionMessage[], task: Task): Promise<{ text: string; images?: string[] }> | { text: string; images?: string[] };
+  buildTurnMessage(
+    stepIndex: number
+  ): Promise<{ text: string; images?: string[] }> | { text: string; images?: string[] };
   executeAction?(action: TaskAction): Promise<string | undefined>;
   recordStep(step: TaskStep): void;
   pushStatus(msg: string): void;
@@ -29,15 +31,17 @@ export async function runAgentLoop(
   task: Task,
   provider: ProviderId,
   openaiModel: string,
-  callbacks: LoopCallbacks,
+  callbacks: LoopCallbacks
 ): Promise<Task> {
+  const parserState: ParserState = { consecutiveTruncations: 0 };
+
   while (task.steps.length < maxSteps && !callbacks.isAborted()) {
     const stepIndex = task.steps.length;
 
     let turnText: string;
     let images: string[] | undefined;
     try {
-      const turn = await callbacks.buildTurnMessage(stepIndex, history, task);
+      const turn = await callbacks.buildTurnMessage(stepIndex);
       turnText = turn.text;
       images = turn.images;
     } catch (e) {
@@ -86,7 +90,7 @@ export async function runAgentLoop(
 
     history.push({ role: 'assistant', content: [{ type: 'output_text', text: rawResponse }] });
 
-    const { thought, action } = parseModelResponse(rawResponse);
+    const { thought, action } = parseModelResponse(rawResponse, parserState);
 
     const step: TaskStep = {
       index: task.steps.length,
@@ -130,7 +134,7 @@ function finish(
   task: Task,
   status: 'completed' | 'failed' | 'cancelled',
   callbacks: LoopCallbacks,
-  error?: string,
+  error?: string
 ): Task {
   task.status = status;
   if (error) task.error = error;
@@ -142,12 +146,4 @@ function finish(
     action: { type: 'done' } as TaskAction,
   });
   return task;
-}
-
-function drainInbox(tm: TaskManager | null, taskId: string): string {
-  if (!tm) return '';
-  const msgs = tm.drainMessages(taskId);
-  if (msgs.length === 0) return '';
-  const lines = msgs.map((m) => `  From ${m.from}: ${m.message}`).join('\n');
-  return `\n\n[INCOMING MESSAGES]\n${lines}\n[/INCOMING MESSAGES]`;
 }

@@ -24,6 +24,11 @@ import { addClient, clientCount, removeClient } from './ws/events';
 
 const app = new Hono();
 
+app.onError((err, c) => {
+  console.error('[server] Unhandled error:', err);
+  return c.json({ error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message }, 500);
+});
+
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 // Capture the chained result so `typeof routes` carries full route type info

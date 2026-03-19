@@ -1,12 +1,28 @@
 /**
  * Code mode — file/shell execution, no browser.
- * Action execution lives in TaskRunner (via callbacks).
  */
 
-import type { Task } from '../../../types';
+import type { Task, TaskAction } from '../../../types';
 import type { VisionMessage } from '../../providers/codex-vision';
-import type { TaskManager } from '../task-manager';
+import type { ExecutorContext } from '../action-executors';
+import {
+  executeFactAction,
+  executeFileEdit,
+  executeFileList,
+  executeFileRead,
+  executeFileSearch,
+  executeFileWrite,
+  executeGenerateImage,
+  executeInterTaskAction,
+  executePolymarketAction,
+  executeSetIdentity,
+  executeShell,
+} from '../action-executors';
+import { AppBridge } from '../app-bridge';
+import { createExcelFromTsv } from '../excel-writer';
 import { buildCodeSystemPrompt } from '../system-prompt';
+import type { TaskManager } from '../task-manager';
+import { scrapeUrl } from '../web-scraper';
 import type { LoopCallbacks } from './agent-loop';
 
 export type CodeLoopSetup = {
@@ -80,4 +96,120 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
   };
 
   return { systemPrompt, history, callbacks };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Execute a code-mode action. */
+export async function executeCodeAction(
+  action: TaskAction,
+  ctx: ExecutorContext,
+  state: { lastScrapeData: string }
+): Promise<string | undefined> {
+  const raw = action as Record<string, unknown>;
+
+  switch (action.type) {
+    case 'shell': {
+      const res = await executeShell(
+        raw.command as string,
+        raw.cwd as string | undefined,
+        raw.timeout as number | undefined
+      );
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'wait':
+      await sleep(raw.ms as number);
+      return undefined;
+    case 'web_scrape': {
+      const data = await scrapeUrl(raw.url as string, raw.instruction as string);
+      state.lastScrapeData += (state.lastScrapeData ? '\n' : '') + data;
+      return data;
+    }
+    case 'save_to_excel': {
+      if (!state.lastScrapeData) return '[Error: no data available. Use web_scrape first.]';
+      try {
+        const filePath = await createExcelFromTsv(
+          state.lastScrapeData,
+          raw.filename as string,
+          raw.filter as string | undefined
+        );
+        return `Excel saved: ${filePath}`;
+      } catch (e) {
+        return `[Error creating Excel: ${e instanceof Error ? e.message : String(e)}]`;
+      }
+    }
+    case 'launch': {
+      const res = await executeShell(`powershell.exe -NoProfile -Command "Start-Process '${raw.app}'"`);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'file_read': {
+      const res = await executeFileRead(
+        raw.path as string,
+        raw.cwd as string | undefined,
+        raw.offset as number | undefined,
+        raw.limit as number | undefined
+      );
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'file_write': {
+      const res = await executeFileWrite(raw.path as string, raw.content as string, raw.cwd as string | undefined);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'file_edit': {
+      const res = await executeFileEdit(
+        raw.path as string,
+        raw.old_string as string,
+        raw.new_string as string,
+        raw.cwd as string | undefined
+      );
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'file_list': {
+      const res = await executeFileList(raw.pattern as string, raw.cwd as string | undefined);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'file_search': {
+      const res = await executeFileSearch(
+        raw.pattern as string,
+        raw.path as string | undefined,
+        raw.glob as string | undefined,
+        raw.cwd as string | undefined
+      );
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'app_script': {
+      const result = await ctx.appBridge.run(raw.app as string, raw.script as string);
+      return result.ok ? result.output : `[AppBridge error: ${result.error}]`;
+    }
+    case 'task_list_peers':
+    case 'task_send':
+    case 'task_read':
+    case 'task_message': {
+      const res = await executeInterTaskAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'remember_fact':
+    case 'forget_fact': {
+      const res = executeFactAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'set_identity': {
+      const res = executeSetIdentity(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'generate_image': {
+      const res = await executeGenerateImage(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'polymarket_get_account_summary':
+    case 'polymarket_get_trader_leaderboard':
+    case 'polymarket_search_markets':
+    case 'polymarket_place_order':
+    case 'polymarket_close_position': {
+      const res = await executePolymarketAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    default:
+      return `[Action "${action.type}" not supported in code mode]`;
+  }
 }

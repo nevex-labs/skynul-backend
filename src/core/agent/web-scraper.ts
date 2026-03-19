@@ -6,12 +6,14 @@
 
 import { execSync } from 'child_process';
 import { type Browser, chromium } from 'playwright-core';
+import { validateUrl } from './input-guard';
 
 const MAX_TEXT_LENGTH = 16000;
 const PAGE_TIMEOUT_MS = 30_000;
 
 let browserInstance: Browser | null = null;
 let chromePath: string | null = null;
+let browserLock: Promise<Browser> | null = null;
 
 const IS_WSL = process.platform === 'linux' && !!process.env.WSL_DISTRO_NAME;
 
@@ -102,27 +104,41 @@ const STEALTH_ARGS = [
 async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
 
-  if (IS_WSL) {
-    // WSL: use Playwright's bundled Chromium (Linux binary) — no cross-boundary issues
-    browserInstance = await chromium.launch({
-      headless: true,
-      args: STEALTH_ARGS,
-    });
-  } else {
-    // Native Windows: use system Chrome
-    const executablePath = findChromePath();
-    browserInstance = await chromium.launch({
-      executablePath,
-      headless: true,
-      args: STEALTH_ARGS,
-    });
-  }
+  // If another call is already launching, wait for it
+  if (browserLock) return browserLock;
 
-  browserInstance.on('disconnected', () => {
-    browserInstance = null;
-  });
+  browserLock = (async () => {
+    try {
+      // Double-check after acquiring "lock"
+      if (browserInstance?.isConnected()) return browserInstance;
 
-  return browserInstance;
+      if (IS_WSL) {
+        // WSL: use Playwright's bundled Chromium (Linux binary) — no cross-boundary issues
+        browserInstance = await chromium.launch({
+          headless: true,
+          args: STEALTH_ARGS,
+        });
+      } else {
+        // Native Windows: use system Chrome
+        const executablePath = findChromePath();
+        browserInstance = await chromium.launch({
+          executablePath,
+          headless: true,
+          args: STEALTH_ARGS,
+        });
+      }
+
+      browserInstance!.on('disconnected', () => {
+        browserInstance = null;
+      });
+
+      return browserInstance!;
+    } finally {
+      browserLock = null;
+    }
+  })();
+
+  return browserLock;
 }
 
 /**
@@ -131,6 +147,8 @@ async function getBrowser(): Promise<Browser> {
  * @param instruction - What to extract (currently unused — returns full visible text).
  */
 export async function scrapeUrl(url: string, _instruction: string): Promise<string> {
+  validateUrl(url);
+
   // Fast path: API URLs → fetch JSON directly, no browser needed
   if (url.includes('api.mercadolibre.com') || url.includes('/api/') || url.match(/\.(json)(\?|$)/)) {
     try {

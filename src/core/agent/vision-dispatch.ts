@@ -17,7 +17,7 @@ export async function callVision(
   systemPrompt: string,
   messages: VisionMessage[],
   sessionId?: string,
-  model?: string,
+  model?: string
 ): Promise<VisionResult> {
   switch (provider) {
     case 'chatgpt': {
@@ -26,13 +26,11 @@ export async function callVision(
     }
     case 'claude': {
       const { claudeVisionRespond } = await import('../providers/claude-vision');
-      const text = await claudeVisionRespond({ systemPrompt, messages });
-      return { text };
+      return claudeVisionRespond({ systemPrompt, messages });
     }
     case 'deepseek': {
       const { deepseekVisionRespond } = await import('../providers/deepseek-vision');
-      const text = await deepseekVisionRespond({ systemPrompt, messages });
-      return { text };
+      return deepseekVisionRespond({ systemPrompt, messages });
     }
     case 'kimi':
     case 'glm':
@@ -47,11 +45,13 @@ export async function callVision(
         gemini: () => import('../providers/gemini-vision').then((m) => m.geminiVisionRespond),
       };
       const fn = await modMap[provider]();
-      return fn({ systemPrompt, messages });
+      const result = await fn({ systemPrompt, messages });
+      return result;
     }
     case 'ollama': {
       const { ollamaVisionRespond } = await import('../providers/ollama-vision');
-      return ollamaVisionRespond({ systemPrompt, messages });
+      const result = await ollamaVisionRespond({ systemPrompt, messages });
+      return result;
     }
     default:
       throw new Error(`Unsupported provider: ${provider}`);

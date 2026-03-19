@@ -1,0 +1,21 @@
+# fly.toml app configuration file generated for skynul-backend on 2026-03-18T23:21:54-03:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'skynul-backend'
+primary_region = 'ams'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

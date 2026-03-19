@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { callVision } from './vision-dispatch';
 import type { VisionMessage } from '../providers/codex-vision';
+import { callVision } from './vision-dispatch';
 
 function makeMsg(role: 'user' | 'assistant', text: string): VisionMessage {
   return { role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] };
@@ -14,11 +14,11 @@ vi.mock('../providers/codex-vision', () => ({
 }));
 
 vi.mock('../providers/claude-vision', () => ({
-  claudeVisionRespond: vi.fn(() => Promise.resolve('claude-response')),
+  claudeVisionRespond: vi.fn(() => Promise.resolve({ text: 'claude-response' })),
 }));
 
 vi.mock('../providers/deepseek-vision', () => ({
-  deepseekVisionRespond: vi.fn(() => Promise.resolve('deepseek-response')),
+  deepseekVisionRespond: vi.fn(() => Promise.resolve({ text: 'deepseek-response' })),
 }));
 
 vi.mock('../providers/kimi-vision', () => ({
@@ -47,9 +47,7 @@ vi.mock('../providers/ollama-vision', () => ({
 
 describe('callVision', () => {
   it('throws on unknown provider', async () => {
-    await expect(callVision('unknown' as any, SYSTEM, MESSAGES)).rejects.toThrow(
-      'Unsupported provider: unknown',
-    );
+    await expect(callVision('unknown' as any, SYSTEM, MESSAGES)).rejects.toThrow('Unsupported provider: unknown');
   });
 
   it('dispatches to chatgpt and normalizes string to { text }', async () => {

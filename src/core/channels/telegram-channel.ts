@@ -9,7 +9,7 @@ import type { TaskManager } from '../agent/task-manager';
 import { getDataDir } from '../config';
 import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
-import { formatTaskList, formatTaskSummary } from './message-formatter';
+import { handleCommand } from './command-router';
 
 type TelegramState = {
   enabled: boolean;
@@ -229,8 +229,8 @@ export class TelegramChannel extends Channel {
 
     this.bot.command('list', async (ctx) => {
       if (!this.isPaired(ctx.chat.id)) return;
-      const tasks = this.taskManager.list();
-      await ctx.reply(toHtml(formatTaskList(tasks)), { parse_mode: 'HTML' });
+      const result = await handleCommand('/list', this.taskManager);
+      await ctx.reply(toHtml(result.text), { parse_mode: 'HTML' });
     });
 
     this.bot.command('status', async (ctx) => {
@@ -240,12 +240,10 @@ export class TelegramChannel extends Channel {
         await ctx.reply('Uso: /status <número> (de /list)');
         return;
       }
-      const task = this.resolveTask(input);
-      if (!task) {
-        await ctx.reply('\u{1f50d} Tarea no encontrada. Usá /list para ver tus tareas.');
-        return;
-      }
-      await ctx.reply(toHtml(formatTaskSummary(task)), { parse_mode: 'HTML' });
+      const result = await handleCommand(`/status ${input}`, this.taskManager, {
+        resolveTask: (i) => this.resolveTask(i),
+      });
+      await ctx.reply(toHtml(result.text), { parse_mode: 'HTML' });
     });
 
     this.bot.command('cancel', async (ctx) => {
@@ -255,18 +253,11 @@ export class TelegramChannel extends Channel {
         await ctx.reply('Uso: /cancel <número> (de /list)');
         return;
       }
-      const task = this.resolveTask(input);
-      if (!task) {
-        await ctx.reply('\u{1f50d} Tarea no encontrada. Usá /list para ver tus tareas.');
-        return;
-      }
-      try {
-        this.taskManager.cancel(task.id);
-        await ctx.reply(toHtml(`\u26d4 *Cancelada:* ${task.prompt.slice(0, 80)}`), {
-          parse_mode: 'HTML',
-        });
-      } catch (e) {
-        await ctx.reply(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      const result = await handleCommand(`/cancel ${input}`, this.taskManager, {
+        resolveTask: (i) => this.resolveTask(i),
+      });
+      if (result.handled && result.text !== '__UNPAIR__') {
+        await ctx.reply(toHtml(result.text), { parse_mode: 'HTML' });
       }
     });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { compressHistory, truncateHistory, buildActionLog, drainInbox } from './history-manager';
 import type { VisionMessage } from '../providers/codex-vision';
+import { buildActionLog, compressHistory, drainInbox, truncateHistory } from './history-manager';
 import type { TaskManager } from './task-manager';
 
 function makeMsg(role: 'user' | 'assistant', text: string): VisionMessage {
@@ -163,7 +163,13 @@ describe('buildActionLog', () => {
 
   it('includes failed selectors when includeFailedSelectors is true', () => {
     const steps = [
-      { index: 0, timestamp: 0, screenshotBase64: '', action: { type: 'click', selector: '#bad' } as any, error: 'failed' },
+      {
+        index: 0,
+        timestamp: 0,
+        screenshotBase64: '',
+        action: { type: 'click', selector: '#bad' } as any,
+        error: 'failed',
+      },
     ];
     const log = buildActionLog(steps, 8, { includeFailedSelectors: true });
     expect(log).toContain('⚠ FAILED SELECTORS');

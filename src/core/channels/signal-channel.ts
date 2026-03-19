@@ -4,7 +4,7 @@ import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
 import { getDataDir } from '../config';
 import { Channel } from './channel';
-import { formatTaskList, formatTaskSummary } from './message-formatter';
+import { handleCommand } from './command-router';
 
 type SignalState = {
   enabled: boolean;
@@ -187,37 +187,14 @@ export class SignalChannel extends Channel {
 
     if (sender !== this.state.phoneNumber) return;
 
-    if (body === '/list') {
-      const tasks = this.taskManager.list();
-      await this.sendMessage(formatTaskList(tasks));
-      return;
-    }
-
-    if (body.startsWith('/cancel ')) {
-      const taskId = body.slice(8).trim();
-      try {
-        this.taskManager.cancel(taskId);
-        await this.sendMessage(`\u26d4 Tarea cancelada.`);
-      } catch (e) {
-        await this.sendMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    const result = await handleCommand(body, this.taskManager);
+    if (result.handled) {
+      if (result.text === '__UNPAIR__') {
+        await this.unpair();
+        await this.sendMessage('Desvinculado.');
+      } else {
+        await this.sendMessage(result.text);
       }
-      return;
-    }
-
-    if (body.startsWith('/status ')) {
-      const taskId = body.slice(8).trim();
-      const task = this.taskManager.get(taskId);
-      if (!task) {
-        await this.sendMessage('\u{1f50d} Tarea no encontrada.');
-        return;
-      }
-      await this.sendMessage(formatTaskSummary(task));
-      return;
-    }
-
-    if (body === '/unpair') {
-      await this.unpair();
-      await this.sendMessage('Desvinculado.');
       return;
     }
 

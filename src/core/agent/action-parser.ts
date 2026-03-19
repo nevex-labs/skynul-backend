@@ -11,8 +11,8 @@ type ModelResponse = {
   action: TaskAction;
 };
 
-/** Track consecutive truncation recoveries to avoid infinite wait loops */
-let consecutiveTruncations = 0;
+export type ParserState = { consecutiveTruncations: number };
+
 const MAX_TRUNCATION_RETRIES = 2;
 
 /** Regex that matches status-log noise (allows optional · and whitespace/newlines). */
@@ -52,14 +52,15 @@ function stripTrailingNoise(text: string): string {
  * Parse the model response into a thought + action.
  * Throws if the response cannot be parsed.
  */
-export function parseModelResponse(raw: string): ModelResponse {
+export function parseModelResponse(raw: string, state?: ParserState): ModelResponse {
+  const s = state ?? { consecutiveTruncations: 0 };
   let trimmed = raw.trim();
   trimmed = stripEmbeddedNoise(trimmed);
   trimmed = stripTrailingNoise(trimmed);
 
   // Try direct JSON parse first (single clean object)
   try {
-    return validateResponse(JSON.parse(trimmed));
+    return validateResponse(JSON.parse(trimmed), s);
   } catch {
     // continue
   }
@@ -68,7 +69,7 @@ export function parseModelResponse(raw: string): ModelResponse {
   const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (fenceMatch) {
     try {
-      return validateResponse(JSON.parse(fenceMatch[1].trim()));
+      return validateResponse(JSON.parse(fenceMatch[1].trim()), s);
     } catch {
       // continue
     }
@@ -79,7 +80,7 @@ export function parseModelResponse(raw: string): ModelResponse {
   const firstJson = extractFirstJson(trimmed);
   if (firstJson) {
     try {
-      return validateResponse(JSON.parse(firstJson));
+      return validateResponse(JSON.parse(firstJson), s);
     } catch {
       // continue
     }
@@ -100,10 +101,13 @@ export function parseModelResponse(raw: string): ModelResponse {
           if (actionJson) {
             try {
               const actionObj = JSON.parse(actionJson);
-              return validateResponse({
-                thought: rawThought,
-                action: actionObj,
-              });
+              return validateResponse(
+                {
+                  thought: rawThought,
+                  action: actionObj,
+                },
+                s
+              );
             } catch {
               // fall through to error below
             }
@@ -119,9 +123,9 @@ export function parseModelResponse(raw: string): ModelResponse {
   // of tokens before producing the action. Recover with wait (up to MAX retries),
   // then fail cleanly to avoid infinite loops.
   if (/^\s*\{\s*"thought"\s*:/.test(trimmed)) {
-    consecutiveTruncations++;
-    if (consecutiveTruncations > MAX_TRUNCATION_RETRIES) {
-      consecutiveTruncations = 0;
+    s.consecutiveTruncations++;
+    if (s.consecutiveTruncations > MAX_TRUNCATION_RETRIES) {
+      s.consecutiveTruncations = 0;
       return {
         thought: 'Model keeps generating truncated responses — aborting task',
         action: {
@@ -131,7 +135,7 @@ export function parseModelResponse(raw: string): ModelResponse {
       };
     }
     console.warn(
-      `[action-parser] Truncated response (${consecutiveTruncations}/${MAX_TRUNCATION_RETRIES}) — injecting wait`
+      `[action-parser] Truncated response (${s.consecutiveTruncations}/${MAX_TRUNCATION_RETRIES}) — injecting wait`
     );
     // Extract partial thought to feed back to the model as context
     const partialThought = trimmed.match(/"thought"\s*:\s*"([\s\S]{0,200})/)?.[1] ?? '';
@@ -233,9 +237,7 @@ const VALID_ACTION_TYPES = new Set([
   'generate_image',
 ]);
 
-function validateResponse(obj: unknown): ModelResponse {
-  // Reset truncation counter on any successful parse
-  consecutiveTruncations = 0;
+function validateResponse(obj: unknown, state: ParserState): ModelResponse {
   if (!obj || typeof obj !== 'object') {
     throw new Error('Response is not an object');
   }
@@ -270,6 +272,9 @@ function validateResponse(obj: unknown): ModelResponse {
   if (!VALID_ACTION_TYPES.has(action.type as string)) {
     throw new Error(`Unknown action type: ${action.type}`);
   }
+
+  // Reset truncation counter only on a fully successful parse
+  state.consecutiveTruncations = 0;
 
   return {
     thought,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseModelResponse } from './action-parser';
+import { type ParserState, parseModelResponse } from './action-parser';
 
 describe('parseModelResponse', () => {
   describe('clean JSON', () => {
@@ -124,5 +124,51 @@ describe('parseModelResponse', () => {
     it('throws on unknown action type', () => {
       expect(() => parseModelResponse('{"action":{"type":"flyToTheMoon"}}')).toThrow('Could not parse');
     });
+  });
+});
+
+describe('ParserState isolation', () => {
+  it('does not leak truncation count between independent states', () => {
+    const state1: ParserState = { consecutiveTruncations: 0 };
+    const state2: ParserState = { consecutiveTruncations: 0 };
+
+    // Simulate truncation on state1 (truncated response = thought with no action)
+    parseModelResponse('{"thought": "thinking about something long..."}', state1);
+    expect(state1.consecutiveTruncations).toBe(1);
+    expect(state2.consecutiveTruncations).toBe(0);
+  });
+
+  it('resets truncation counter on successful parse', () => {
+    const state: ParserState = { consecutiveTruncations: 2 };
+    parseModelResponse('{"action":{"type":"done","summary":"ok"}}', state);
+    expect(state.consecutiveTruncations).toBe(0);
+  });
+
+  it('fails after MAX_TRUNCATION_RETRIES on a given state', () => {
+    const state: ParserState = { consecutiveTruncations: 0 };
+    // First two truncations → wait action
+    parseModelResponse('{"thought": "truncated..."}', state);
+    parseModelResponse('{"thought": "truncated again..."}', state);
+    expect(state.consecutiveTruncations).toBe(2);
+
+    // Third truncation exceeds limit → fail action
+    const result = parseModelResponse('{"thought": "still truncated..."}', state);
+    expect(result.action.type).toBe('fail');
+    expect(state.consecutiveTruncations).toBe(0); // reset after fail
+  });
+
+  it('two independent states do not interfere at max retries', () => {
+    const state1: ParserState = { consecutiveTruncations: 0 };
+    const state2: ParserState = { consecutiveTruncations: 0 };
+
+    // Exhaust state1
+    parseModelResponse('{"thought": "t"}', state1);
+    parseModelResponse('{"thought": "t"}', state1);
+    parseModelResponse('{"thought": "t"}', state1); // fail
+
+    // state2 should still be at 0 and able to parse normally
+    expect(state2.consecutiveTruncations).toBe(0);
+    const result = parseModelResponse('{"action":{"type":"done","summary":"ok"}}', state2);
+    expect(result.action.type).toBe('done');
   });
 });

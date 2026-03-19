@@ -1,6 +1,7 @@
 import { dirname, join } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { getDataDir } from '../config';
+import { SecretStoreSchema } from './schemas';
 
 type SecretStoreShape = Record<string, string>;
 
@@ -11,9 +12,12 @@ function storePath(): string {
 async function loadRaw(): Promise<SecretStoreShape> {
   try {
     const raw = await readFile(storePath(), 'utf8');
-    const parsed = JSON.parse(raw) as SecretStoreShape;
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
+    const parsed = JSON.parse(raw);
+    const result = SecretStoreSchema.safeParse(parsed);
+    if (result.success) return result.data;
+    console.warn('[secret-store] Invalid data:', result.error.issues);
+    if (parsed && typeof parsed === 'object') return parsed as SecretStoreShape;
+    return {};
   } catch {
     return {};
   }

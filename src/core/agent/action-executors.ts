@@ -10,6 +10,7 @@ import { PolymarketClient } from '../polymarket-client';
 import { generateImage } from '../providers/image-gen';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
+import { sandboxPath, validateShellCommand } from './input-guard';
 import type { TaskManager } from './task-manager';
 import { deleteFact, saveFact } from './task-memory';
 import { scrapeUrl } from './web-scraper';
@@ -142,6 +143,11 @@ export async function executeGenerateImage(
 
 /** Execute shell command with timeout. */
 export function executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<ExecutorResult> {
+  try {
+    validateShellCommand(command);
+  } catch (e) {
+    return Promise.resolve(errResult(e instanceof Error ? e.message : String(e)));
+  }
   return new Promise((resolve) => {
     const { exec } = require('child_process') as typeof import('child_process');
     const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
@@ -171,9 +177,13 @@ export async function executeFileRead(
   offset?: number,
   limit?: number
 ): Promise<ExecutorResult> {
+  let resolved: string;
+  try {
+    resolved = sandboxPath(filePath, cwd);
+  } catch (e) {
+    return errResult(e instanceof Error ? e.message : String(e));
+  }
   const fs = await import('fs/promises');
-  const pathMod = await import('path');
-  const resolved = cwd ? pathMod.resolve(cwd, filePath) : pathMod.resolve(filePath);
   try {
     const content = await fs.readFile(resolved, 'utf-8');
     let lines = content.split('\n');
@@ -192,9 +202,14 @@ export async function executeFileRead(
 
 /** Execute file_write action. */
 export async function executeFileWrite(filePath: string, content: string, cwd?: string): Promise<ExecutorResult> {
+  let resolved: string;
+  try {
+    resolved = sandboxPath(filePath, cwd);
+  } catch (e) {
+    return errResult(e instanceof Error ? e.message : String(e));
+  }
   const fs = await import('fs/promises');
   const pathMod = await import('path');
-  const resolved = cwd ? pathMod.resolve(cwd, filePath) : pathMod.resolve(filePath);
   try {
     await fs.mkdir(pathMod.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, content, 'utf-8');
@@ -211,9 +226,13 @@ export async function executeFileEdit(
   newStr: string,
   cwd?: string
 ): Promise<ExecutorResult> {
+  let resolved: string;
+  try {
+    resolved = sandboxPath(filePath, cwd);
+  } catch (e) {
+    return errResult(e instanceof Error ? e.message : String(e));
+  }
   const fs = await import('fs/promises');
-  const pathMod = await import('path');
-  const resolved = cwd ? pathMod.resolve(cwd, filePath) : pathMod.resolve(filePath);
   try {
     const content = await fs.readFile(resolved, 'utf-8');
     const count = content.split(oldStr).length - 1;
@@ -229,6 +248,9 @@ export async function executeFileEdit(
 
 /** Execute file_list action. */
 export function executeFileList(pattern: string, cwd?: string): Promise<ExecutorResult> {
+  if (/[;&|`$()]/.test(pattern)) {
+    return Promise.resolve(errResult('Invalid characters in file pattern'));
+  }
   const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {
@@ -257,6 +279,9 @@ export function executeFileSearch(
   glob?: string,
   cwd?: string
 ): Promise<ExecutorResult> {
+  if (/[;&|`$()]/.test(pattern) || (glob && /[;&|`$()]/.test(glob))) {
+    return Promise.resolve(errResult('Invalid characters in search pattern'));
+  }
   const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {

@@ -8,7 +8,7 @@ import type { TaskManager } from '../agent/task-manager';
 import { getDataDir } from '../config';
 import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
-import { formatTaskList, formatTaskSummary } from './message-formatter';
+import { handleCommand } from './command-router';
 
 type DiscordState = {
   enabled: boolean;
@@ -175,37 +175,14 @@ export class DiscordChannel extends Channel {
     if (!this.state.paired || msg.author.id !== this.state.pairedUserId || msg.channelId !== this.state.pairedChannelId)
       return;
 
-    if (content === '/list') {
-      const tasks = this.taskManager.list();
-      await msg.reply(formatTaskList(tasks));
-      return;
-    }
-
-    if (content.startsWith('/cancel ')) {
-      const taskId = content.slice(8).trim();
-      try {
-        this.taskManager.cancel(taskId);
-        await msg.reply(`\u26d4 Tarea cancelada.`);
-      } catch (e) {
-        await msg.reply(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    const result = await handleCommand(content, this.taskManager);
+    if (result.handled) {
+      if (result.text === '__UNPAIR__') {
+        await this.unpair();
+        await msg.reply('Desvinculado.');
+      } else {
+        await msg.reply(result.text);
       }
-      return;
-    }
-
-    if (content.startsWith('/status ')) {
-      const taskId = content.slice(8).trim();
-      const task = this.taskManager.get(taskId);
-      if (!task) {
-        await msg.reply('\u{1f50d} Tarea no encontrada.');
-        return;
-      }
-      await msg.reply(formatTaskSummary(task));
-      return;
-    }
-
-    if (content.startsWith('/unpair')) {
-      await this.unpair();
-      await msg.reply('Desvinculado.');
       return;
     }
 

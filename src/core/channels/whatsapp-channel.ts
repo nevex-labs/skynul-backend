@@ -5,7 +5,7 @@ import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
 import { getDataDir } from '../config';
 import { Channel } from './channel';
-import { formatTaskList, formatTaskSummary } from './message-formatter';
+import { handleCommand } from './command-router';
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -176,31 +176,14 @@ export class WhatsAppChannel extends Channel {
     // Only respond to paired chat
     if (chatId !== this.state.pairedChatId) return;
 
-    if (body.startsWith('/list')) {
-      const tasks = this.taskManager.list();
-      await this.client!.sendMessage(chatId, formatTaskList(tasks));
-      return;
-    }
-
-    if (body.startsWith('/cancel ')) {
-      const taskId = body.slice(8).trim();
-      try {
-        this.taskManager.cancel(taskId);
-        await this.client!.sendMessage(chatId, `\u26d4 Tarea cancelada.`);
-      } catch (e) {
-        await this.client!.sendMessage(chatId, `Error: ${e instanceof Error ? e.message : String(e)}`);
+    const result = await handleCommand(body, this.taskManager);
+    if (result.handled) {
+      if (result.text === '__UNPAIR__') {
+        await this.unpair();
+        await this.client!.sendMessage(chatId, 'Desvinculado.');
+      } else {
+        await this.client!.sendMessage(chatId, result.text);
       }
-      return;
-    }
-
-    if (body.startsWith('/status ')) {
-      const taskId = body.slice(8).trim();
-      const task = this.taskManager.get(taskId);
-      if (!task) {
-        await this.client!.sendMessage(chatId, '\u{1f50d} Tarea no encontrada.');
-        return;
-      }
-      await this.client!.sendMessage(chatId, formatTaskSummary(task));
       return;
     }
 
