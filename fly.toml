@@ -8,11 +8,22 @@ primary_region = 'ams'
 
 [build]
 
+[env]
+  SKYNUL_PORT = "8080"
+  NODE_ENV = "production"
+
 [http_service]
   internal_port = 8080
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/ping"
+    timeout = "5s"
 
 [[vm]]
   memory = '256mb'
