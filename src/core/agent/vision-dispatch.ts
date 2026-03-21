@@ -4,7 +4,7 @@
  */
 
 import type { ProviderId } from '../../types';
-import type { VisionMessage } from '../providers/codex-vision';
+import type { VisionMessage } from '../../types';
 import { codexVisionRespond } from '../providers/codex-vision';
 
 export type VisionResult = {

@@ -3,11 +3,9 @@
  * endpoint using OAuth tokens, following the same format as Clawdbot/OpenClaw.
  */
 
-import { loadTokens, saveTokens } from './codex';
-
-const ISSUER = 'https://auth.openai.com';
-const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const CODEX_API_ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses';
+import type { VisionMessage } from '../../types';
+import { CHATGPT_CODEX_API_ENDPOINT, loadTokens, refreshIfNeeded, saveTokens } from './chatgpt-oauth';
+import { parseSSE } from './sse';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,53 +35,6 @@ type AssistantMessage = {
 };
 
 type InputItem = UserMessage | AssistantMessage;
-
-export type VisionMessage = {
-  role: 'user' | 'assistant';
-  content: Array<
-    | { type: 'input_text'; text: string }
-    | { type: 'input_image'; image_url: string }
-    | { type: 'output_text'; text: string }
-  >;
-};
-
-interface StoredTokens {
-  access: string;
-  refresh: string;
-  expires: number;
-  accountId?: string;
-}
-
-interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in?: number;
-}
-
-// ─── Token refresh ─────────────────────────────────────────────────────────
-
-async function refreshStoredTokens(stored: StoredTokens): Promise<StoredTokens> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: stored.refresh,
-      client_id: CLIENT_ID,
-    }).toString(),
-  });
-  if (!response.ok) {
-    const txt = await response.text().catch(() => '');
-    throw new Error(`Token refresh failed: ${response.status}${txt ? ` - ${txt}` : ''}`);
-  }
-  const data = (await response.json()) as TokenResponse;
-  return {
-    access: data.access_token,
-    refresh: data.refresh_token || stored.refresh,
-    expires: Date.now() + (data.expires_in ?? 3600) * 1000,
-    accountId: stored.accountId,
-  };
-}
 
 // ─── Message conversion ────────────────────────────────────────────────────
 
@@ -132,45 +83,6 @@ function convertMessages(messages: VisionMessage[]): InputItem[] {
   });
 }
 
-// ─── SSE parser (Clawdbot style: split on \n\n) ────────────────────────────
-
-async function* parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // SSE events are delimited by double newline
-    let idx = buffer.indexOf('\n\n');
-    while (idx !== -1) {
-      const chunk = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-
-      const dataLines = chunk
-        .split('\n')
-        .filter((l) => l.startsWith('data:'))
-        .map((l) => l.slice(5).trim());
-
-      if (dataLines.length > 0) {
-        const data = dataLines.join('\n').trim();
-        if (data && data !== '[DONE]') {
-          try {
-            yield JSON.parse(data) as Record<string, unknown>;
-          } catch {
-            // ignore malformed SSE
-          }
-        }
-      }
-
-      idx = buffer.indexOf('\n\n');
-    }
-  }
-}
-
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export async function codexVisionRespond(opts: {
@@ -185,10 +97,8 @@ export async function codexVisionRespond(opts: {
   }
 
   // Refresh if expired (with 30s margin)
-  if (tokens.expires - 30_000 < Date.now()) {
-    tokens = await refreshStoredTokens(tokens);
-    await saveTokens(tokens);
-  }
+  tokens = await refreshIfNeeded(tokens);
+  await saveTokens(tokens);
 
   const input = convertMessages(opts.messages.slice(-20));
 
@@ -209,7 +119,6 @@ export async function codexVisionRespond(opts: {
     model: opts.model || 'gpt-5.3-codex',
     store: false,
     stream: true,
-    max_output_tokens: 4096,
     // System prompt goes in `instructions`, NOT as a message in input
     instructions: opts.systemPrompt,
     input,
@@ -224,7 +133,7 @@ export async function codexVisionRespond(opts: {
     body.prompt_cache_key = opts.sessionId;
   }
 
-  const res = await fetch(CODEX_API_ENDPOINT, {
+  const res = await fetch(CHATGPT_CODEX_API_ENDPOINT, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),

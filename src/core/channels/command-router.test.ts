@@ -8,6 +8,7 @@ function makeTask(id: string, status: Task['status'] = 'running', prompt = 'test
     status,
     prompt,
     mode: 'browser',
+    runner: 'browser',
     capabilities: [],
     steps: [],
     createdAt: Date.now(),

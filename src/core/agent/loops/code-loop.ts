@@ -3,7 +3,7 @@
  */
 
 import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../providers/codex-vision';
+import type { VisionMessage } from '../../../types';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,

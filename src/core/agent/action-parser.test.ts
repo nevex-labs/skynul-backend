@@ -172,3 +172,105 @@ describe('ParserState isolation', () => {
     expect(result.action.type).toBe('done');
   });
 });
+
+// ── On-chain trading action types ────────────────────────────────────────────
+describe('parseModelResponse — on-chain trading actions', () => {
+  it('parses chain_get_balance', () => {
+    const { action } = parseModelResponse('{"action":{"type":"chain_get_balance"}}');
+    expect(action.type).toBe('chain_get_balance');
+  });
+
+  it('parses chain_get_balance with chainId', () => {
+    const { action } = parseModelResponse('{"action":{"type":"chain_get_balance","chainId":84532}}');
+    expect(action.type).toBe('chain_get_balance');
+    expect((action as any).chainId).toBe(84532);
+  });
+
+  it('parses chain_get_token_balance', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"chain_get_token_balance","tokenAddress":"0xusdc"}}'
+    );
+    expect(action.type).toBe('chain_get_token_balance');
+    expect((action as any).tokenAddress).toBe('0xusdc');
+  });
+
+  it('parses chain_send_token', () => {
+    const { action } = parseModelResponse(
+      '{"thought":"Send USDC","action":{"type":"chain_send_token","tokenAddress":"0xusdc","to":"0xrecip","amount":"10.0"}}'
+    );
+    expect(action.type).toBe('chain_send_token');
+    expect((action as any).amount).toBe('10.0');
+  });
+
+  it('parses chain_swap with slippageBps', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"chain_swap","tokenIn":"0xusdc","tokenOut":"0xweth","amountIn":"5.0","slippageBps":50}}'
+    );
+    expect(action.type).toBe('chain_swap');
+    expect((action as any).slippageBps).toBe(50);
+  });
+
+  it('parses chain_get_tx_status', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"chain_get_tx_status","txHash":"0xdeadbeef"}}'
+    );
+    expect(action.type).toBe('chain_get_tx_status');
+    expect((action as any).txHash).toBe('0xdeadbeef');
+  });
+});
+
+// ── CEX trading action types ──────────────────────────────────────────────────
+describe('parseModelResponse — CEX trading actions', () => {
+  it('parses cex_get_balance for binance', () => {
+    const { action } = parseModelResponse('{"action":{"type":"cex_get_balance","exchange":"binance"}}');
+    expect(action.type).toBe('cex_get_balance');
+    expect((action as any).exchange).toBe('binance');
+  });
+
+  it('parses cex_get_balance for coinbase', () => {
+    const { action } = parseModelResponse('{"action":{"type":"cex_get_balance","exchange":"coinbase"}}');
+    expect((action as any).exchange).toBe('coinbase');
+  });
+
+  it('parses cex_place_order market buy', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"cex_place_order","exchange":"binance","symbol":"BTCUSDT","side":"buy","orderType":"market","amount":50}}'
+    );
+    expect(action.type).toBe('cex_place_order');
+    expect((action as any).symbol).toBe('BTCUSDT');
+    expect((action as any).side).toBe('buy');
+    expect((action as any).amount).toBe(50);
+  });
+
+  it('parses cex_place_order limit sell with price', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"cex_place_order","exchange":"coinbase","symbol":"BTC-USD","side":"sell","orderType":"limit","amount":0.001,"price":70000}}'
+    );
+    expect((action as any).price).toBe(70000);
+    expect((action as any).orderType).toBe('limit');
+  });
+
+  it('parses cex_cancel_order', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"cex_cancel_order","exchange":"binance","orderId":"12345","symbol":"BTCUSDT"}}'
+    );
+    expect(action.type).toBe('cex_cancel_order');
+    expect((action as any).orderId).toBe('12345');
+  });
+
+  it('parses cex_get_positions', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"cex_get_positions","exchange":"coinbase"}}'
+    );
+    expect(action.type).toBe('cex_get_positions');
+  });
+
+  it('parses cex_withdraw', () => {
+    const { action } = parseModelResponse(
+      '{"action":{"type":"cex_withdraw","exchange":"binance","asset":"USDT","amount":100,"address":"0xabc","network":"ETH"}}'
+    );
+    expect(action.type).toBe('cex_withdraw');
+    expect((action as any).asset).toBe('USDT');
+    expect((action as any).network).toBe('ETH');
+  });
+});

@@ -20,6 +20,7 @@ import { aiGroup } from './routes/ai';
 import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
 import { tasksGroup } from './routes/tasks';
+import { walletGroup } from './routes/wallet';
 import { addClient, clientCount, removeClient } from './ws/events';
 
 const app = new Hono();
@@ -63,7 +64,8 @@ const routes = app
   .route('/api/ai', aiGroup)
   .route('/api/agent', agentGroup)
   .route('/api/integrations', integrationsGroup)
-  .route('/api/system', systemGroup);
+  .route('/api/system', systemGroup)
+  .route('/api/wallet', walletGroup);
 
 // ── Export type for hono/client (hc) ────────────────────────────────────────
 export type AppType = typeof routes;

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../types';
-import type { VisionMessage } from '../../providers/codex-vision';
+import type { VisionMessage } from '../../../types';
 import { callVision } from '../vision-dispatch';
 import { runAgentLoop } from './agent-loop';
 

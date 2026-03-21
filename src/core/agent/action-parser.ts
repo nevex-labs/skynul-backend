@@ -224,6 +224,18 @@ const VALID_ACTION_TYPES = new Set([
   'polymarket_search_markets',
   'polymarket_place_order',
   'polymarket_close_position',
+  // On-chain trading actions
+  'chain_get_balance',
+  'chain_get_token_balance',
+  'chain_send_token',
+  'chain_swap',
+  'chain_get_tx_status',
+  // CEX trading actions
+  'cex_get_balance',
+  'cex_place_order',
+  'cex_cancel_order',
+  'cex_get_positions',
+  'cex_withdraw',
   // Inter-task communication
   'task_list_peers',
   'task_send',

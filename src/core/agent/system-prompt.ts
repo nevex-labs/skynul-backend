@@ -482,6 +482,8 @@ export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagen
   const subagentBlock = isSubagent ? buildSubagentBlock() : '';
   const capList = capabilities.map((c) => `- ${c}`).join('\n');
   const hasPolymarket = capabilities.includes('polymarket.trading');
+  const hasOnchain = capabilities.includes('onchain.trading');
+  const hasCex = capabilities.includes('cex.trading');
   const hasAppScripting = capabilities.includes('app.scripting');
   const appScriptingBlock = hasAppScripting
     ? `
@@ -542,6 +544,57 @@ Examples:
 - Keep using "wait" + polymarket_get_account_summary in a loop to monitor active positions until the time window ends or targets are hit.
 - If a position is ILLIQUID (sell orders keep failing, no buyers at any price), STOP trying to close it. Accept the loss, report it, and move on. Do NOT waste 10+ steps trying to sell something nobody wants to buy.
 - MAX 3 search attempts. If you can't find a good market in 3 searches, pick the best available from what you found and trade it. Do NOT search 20+ times.
+`
+    : '';
+
+  const onchainBlock = hasOnchain
+    ? `
+## ON-CHAIN TRADING ACTIONS (HIGHEST PRIORITY when onchain.trading is granted):
+- CRITICAL: Use ONLY the chain_* actions below for on-chain operations. Do NOT use shell, navigate, or evaluate.
+- Default chain: Base Sepolia (chainId 84532, testnet). Omit chainId to use default.
+- Every write operation (send, swap) automatically deducts 0.40 USDC as a platform fee. Ensure sufficient USDC balance before writing.
+
+**START HERE — check balance first:**
+{"thought": "Check my on-chain balance.", "action": {"type": "chain_get_balance"}}
+
+Available actions:
+{"thought": "Check USDC balance.", "action": {"type": "chain_get_balance"}}
+{"thought": "Check a specific token balance.", "action": {"type": "chain_get_token_balance", "tokenAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"}}
+{"thought": "Send USDC to an address.", "action": {"type": "chain_send_token", "tokenAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", "to": "0xRecipient...", "amount": "10.0"}}
+{"thought": "Swap USDC for WETH.", "action": {"type": "chain_swap", "tokenIn": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", "tokenOut": "0x4200000000000000000000000000000000000006", "amountIn": "10.0", "slippageBps": 50}}
+{"thought": "Check tx status.", "action": {"type": "chain_get_tx_status", "txHash": "0x..."}}
+
+## TRADING DISCIPLINE — ON-CHAIN:
+- ALWAYS check balance before sending or swapping.
+- Fee: 0.40 USDC is deducted per write operation. Keep at least 0.40 USDC extra in your balance.
+- For swaps, confirm the chain has a configured DEX router. Base Sepolia supports testnet only.
+- Use chain_get_tx_status to verify transactions after sending.
+`
+    : '';
+
+  const cexBlock = hasCex
+    ? `
+## CEX TRADING ACTIONS (HIGHEST PRIORITY when cex.trading is granted):
+- CRITICAL: Use ONLY the cex_* actions below for exchange operations. Do NOT use shell, navigate, or evaluate.
+- Specify "exchange": "binance" or "coinbase" in every action.
+- Platform fee: 0.40 USDC is deducted from the order amount. Minimum order must exceed 0.40 USDC.
+
+**START HERE — check balance first:**
+{"thought": "Check my Binance balance.", "action": {"type": "cex_get_balance", "exchange": "binance"}}
+
+Available actions:
+{"thought": "Check balances.", "action": {"type": "cex_get_balance", "exchange": "binance"}}
+{"thought": "Get open positions.", "action": {"type": "cex_get_positions", "exchange": "binance"}}
+{"thought": "Place market buy.", "action": {"type": "cex_place_order", "exchange": "binance", "symbol": "BTCUSDT", "side": "buy", "orderType": "market", "amount": 50}}
+{"thought": "Place limit sell.", "action": {"type": "cex_place_order", "exchange": "coinbase", "symbol": "BTC-USD", "side": "sell", "orderType": "limit", "amount": 0.001, "price": 70000}}
+{"thought": "Cancel an order.", "action": {"type": "cex_cancel_order", "exchange": "binance", "orderId": "12345", "symbol": "BTCUSDT"}}
+{"thought": "Withdraw USDT.", "action": {"type": "cex_withdraw", "exchange": "binance", "asset": "USDT", "amount": 100, "address": "0xAddress...", "network": "ETH"}}
+
+## EXCHANGE NOTES:
+- Binance symbols: BTCUSDT, ETHUSDT, SOLUSDT (no dash)
+- Coinbase symbols: BTC-USD, ETH-USD, SOL-USD (with dash)
+- Always check balances before placing orders.
+- Fee (0.40 USDC) is deducted from the order amount automatically.
 `
     : '';
 
@@ -659,6 +712,8 @@ After launch, you will receive a screenshot. Use screen-style actions (click by 
 - NEVER use Alt+F4 or any close command. NEVER close any application.
 
 ${polymarketBlock}
+${onchainBlock}
+${cexBlock}
 ${appScriptingBlock}
 ${getOfficeBlock(capabilities)}
 ${getInterTaskBlock()}

@@ -2,7 +2,7 @@
  * Shared utilities for vision providers.
  */
 
-import type { VisionMessage } from './codex-vision';
+import type { VisionMessage } from '../../types';
 
 export type EdgeContentPart = { type: 'text'; text: string } | { type: 'image'; mediaType: string; base64: string };
 export type EdgeMessage = { role: 'user' | 'assistant'; content: string | EdgeContentPart[] };

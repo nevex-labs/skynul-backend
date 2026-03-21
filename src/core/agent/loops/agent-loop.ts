@@ -7,7 +7,7 @@
 
 import type { Task, TaskAction, TaskStep } from '../../../types';
 import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../providers/codex-vision';
+import type { VisionMessage } from '../../../types';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { compressHistory, drainInbox, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
@@ -72,6 +72,10 @@ export async function runAgentLoop(
 
     callbacks.pushStatus('Thinking...');
 
+    if (callbacks.isAborted()) {
+      return finish(task, 'cancelled', callbacks, task.error);
+    }
+
     let rawResponse: string;
     let usage: { inputTokens: number; outputTokens: number } | undefined;
     try {
@@ -79,7 +83,14 @@ export async function runAgentLoop(
       rawResponse = result.text;
       usage = result.usage;
     } catch (e) {
+      if (callbacks.isAborted()) {
+        return finish(task, 'cancelled', callbacks, task.error);
+      }
       return finish(task, 'failed', callbacks, `Model call error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    if (callbacks.isAborted()) {
+      return finish(task, 'cancelled', callbacks, task.error);
     }
 
     if (usage) {
@@ -115,9 +126,16 @@ export async function runAgentLoop(
     let stepResult: string | undefined;
     let stepError: string | undefined;
     try {
+      if (callbacks.isAborted()) {
+        return finish(task, 'cancelled', callbacks, task.error);
+      }
       stepResult = await callbacks.executeAction!(action);
     } catch (e) {
       stepError = e instanceof Error ? e.message : String(e);
+    }
+
+    if (callbacks.isAborted()) {
+      return finish(task, 'cancelled', callbacks, task.error);
     }
 
     step.result = stepResult;

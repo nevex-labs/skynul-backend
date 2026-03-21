@@ -2,8 +2,8 @@
  * Gemini vision provider — Google Generative Language API (generateContent).
  */
 
+import type { VisionMessage } from '../../types';
 import { createVisionProvider } from './base-vision';
-import type { VisionMessage } from './codex-vision';
 import { extractDataUrl, toText } from './vision-utils';
 
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';

@@ -10,6 +10,7 @@ import { dirname, join } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import type { PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../types';
 import { broadcast } from '../../ws/events';
+import { isPerTaskBrowserSessionMode, parseBrowserSessionMode } from '../browser/session-mode';
 import { getDataDir } from '../config';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
 import {
@@ -20,6 +21,7 @@ import {
   searchFacts,
   searchMemories,
 } from './task-memory';
+import { deriveRunner } from './task-routing';
 import { TaskRunner } from './task-runner';
 
 const DEFAULT_MAX_STEPS = 200;
@@ -80,7 +82,7 @@ function pickAgentName(role: string, seed: string): string {
 
 /** Per-mode concurrency limits */
 const MAX_CONCURRENT: Record<TaskMode, number> = {
-  browser: 5,
+  browser: isPerTaskBrowserSessionMode(parseBrowserSessionMode()) ? 1 : 5,
   code: 10,
 };
 
@@ -108,6 +110,9 @@ export class TaskManager extends EventEmitter {
     const agentRole = req.agentRole ?? (req.parentTaskId ? inferAgentRole(req.prompt) : undefined);
     const agentName = req.agentName ?? (req.parentTaskId ? pickAgentName(agentRole ?? 'Agent', id) : undefined);
 
+    const mode = req.mode ?? 'code';
+    const capabilities = req.capabilities ?? [];
+
     const task: Task = {
       id,
       parentTaskId: req.parentTaskId,
@@ -116,8 +121,9 @@ export class TaskManager extends EventEmitter {
       prompt: req.prompt,
       attachments: req.attachments,
       status: 'pending_approval',
-      mode: req.mode ?? 'browser',
-      capabilities: req.capabilities,
+      mode,
+      runner: deriveRunner(mode, capabilities),
+      capabilities,
       steps: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -309,7 +315,7 @@ export class TaskManager extends EventEmitter {
     return inbox;
   }
 
-  cancel(taskId: string): Task {
+  cancel(taskId: string, reason = 'Cancelled by user'): Task {
     const task = this.getOrThrow(taskId);
 
     if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
@@ -318,11 +324,17 @@ export class TaskManager extends EventEmitter {
 
     const runner = this.runners.get(taskId);
     if (runner) {
-      runner.abort('Cancelled by user');
+      runner.abort(reason);
       this.runners.delete(taskId);
+      const latest = runner.getTask();
+      const finalReason = latest.error;
+      if (finalReason) {
+        task.error = finalReason;
+      }
     }
 
     task.status = 'cancelled';
+    if (!task.error) task.error = reason;
     task.updatedAt = Date.now();
     this.tasks.set(taskId, task);
     this.pushUpdate(task);
@@ -356,6 +368,15 @@ export class TaskManager extends EventEmitter {
     for (const [id, runner] of this.runners) {
       runner.abort('App shutting down');
       this.runners.delete(id);
+
+      const task = this.tasks.get(id);
+      if (task && task.status === 'running') {
+        task.status = 'cancelled';
+        task.error = 'App shutting down';
+        task.updatedAt = Date.now();
+        this.tasks.set(id, task);
+        this.pushUpdate(task);
+      }
     }
     this.persistToDiskSync();
     closeMemoryDb();
@@ -476,6 +497,12 @@ export class TaskManager extends EventEmitter {
       if (!Array.isArray(loaded)) return;
 
       for (const task of loaded) {
+        // Backfill runner for older persisted tasks.
+        if (!(task as any).runner) {
+          const mode = (task.mode ?? 'browser') as TaskMode;
+          const caps = (task.capabilities ?? []) as TaskCapabilityId[];
+          (task as any).runner = deriveRunner(mode, caps);
+        }
         if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
           this.tasks.set(task.id, task);
         } else {

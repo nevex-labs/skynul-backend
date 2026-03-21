@@ -75,3 +75,9 @@ export async function getSecretKeys(): Promise<string[]> {
   const raw = await loadRaw();
   return Object.keys(raw);
 }
+
+export async function deleteSecret(key: string): Promise<void> {
+  const raw = await loadRaw();
+  delete raw[key];
+  await saveRaw(raw);
+}

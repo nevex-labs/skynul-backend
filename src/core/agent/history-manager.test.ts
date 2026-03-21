@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { VisionMessage } from '../providers/codex-vision';
+import type { VisionMessage } from '../../types';
 import { buildActionLog, compressHistory, drainInbox, truncateHistory } from './history-manager';
 import type { TaskManager } from './task-manager';
 

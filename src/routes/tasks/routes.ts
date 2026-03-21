@@ -1,8 +1,10 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { inferTaskSetup } from '../../core/agent/task-inference';
 import { TaskManager } from '../../core/agent/task-manager';
-import type { TaskListResponse } from '../../types';
+import { dispatchChat } from '../../core/providers/dispatch';
+import { TASK_CAPABILITY_IDS, type TaskCreateRequest, type TaskListResponse } from '../../types';
 import { policyState } from '../agent/policy';
 
 const tm = new TaskManager();
@@ -11,11 +13,16 @@ tm.setPolicyGetter(() => policyState);
 /** Expose the TaskManager instance for use by other modules (e.g., channels). */
 export { tm as taskManager };
 
+const taskCapabilitySchema = z.enum(TASK_CAPABILITY_IDS);
+
 const taskCreateSchema = z.object({
   prompt: z.string().min(1),
-  capabilities: z.array(z.string()),
+  // If omitted/empty, the backend can infer sensible defaults.
+  capabilities: z.array(taskCapabilitySchema).optional(),
   attachments: z.array(z.string()).optional(),
-  mode: z.enum(['browser', 'code']).optional().default('browser'),
+  mode: z.enum(['browser', 'code']).optional(),
+  infer: z.boolean().optional(),
+  inferStrategy: z.enum(['auto', 'rules', 'llm']).optional(),
   maxSteps: z.number().optional(),
   timeoutMs: z.number().optional(),
   source: z.enum(['desktop', 'telegram', 'discord', 'slack', 'whatsapp', 'signal']).optional(),
@@ -25,6 +32,26 @@ const taskCreateSchema = z.object({
 });
 
 const tasks = new Hono()
+  .post(
+    '/infer',
+    zValidator(
+      'json',
+      z.object({
+        prompt: z.string().min(1),
+        attachments: z.array(z.string()).optional(),
+        strategy: z.enum(['auto', 'rules', 'llm']).optional(),
+      })
+    ),
+    async (c) => {
+      const { prompt, attachments, strategy } = c.req.valid('json');
+      const inferred = await inferTaskSetup({
+        input: { prompt, attachments },
+        strategy,
+        chat: (messages) => dispatchChat(policyState.provider.active, messages),
+      });
+      return c.json(inferred);
+    }
+  )
   .get('/', (c) => {
     const response: TaskListResponse = { tasks: tm.list() };
     return c.json(response);
@@ -35,10 +62,43 @@ const tasks = new Hono()
     if (!task) return c.json({ error: 'Task not found' }, 404);
     return c.json(task);
   })
-  .post('/', zValidator('json', taskCreateSchema), (c) => {
+  .post('/', zValidator('json', taskCreateSchema), async (c) => {
     const body = c.req.valid('json');
     try {
-      const task = tm.create(body as any);
+      const infer = body.infer ?? true;
+      if (!infer && !body.mode) {
+        return c.json({ error: 'mode is required when infer=false' }, 400);
+      }
+      const needsInference = infer && ((body.capabilities?.length ?? 0) === 0 || body.mode === undefined);
+      const inferred = needsInference
+        ? await inferTaskSetup({
+            input: { prompt: body.prompt, attachments: body.attachments },
+            strategy: body.inferStrategy,
+            chat: (messages) => dispatchChat(policyState.provider.active, messages),
+          })
+        : null;
+
+      const capabilities =
+        infer && (!body.capabilities || body.capabilities.length === 0)
+          ? (inferred?.capabilities ?? [])
+          : (body.capabilities ?? []);
+
+      const mode = infer && !body.mode ? (inferred?.mode ?? 'browser') : (body.mode ?? 'browser');
+
+      const req: TaskCreateRequest = {
+        prompt: body.prompt,
+        capabilities,
+        attachments: body.attachments,
+        mode,
+        maxSteps: body.maxSteps,
+        timeoutMs: body.timeoutMs,
+        source: body.source,
+        parentTaskId: body.parentTaskId,
+        agentName: body.agentName,
+        agentRole: body.agentRole,
+      };
+
+      const task = tm.create(req);
       return c.json({ task });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);

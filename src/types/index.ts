@@ -1,6 +1,7 @@
 export * from './browser';
 export * from './channel';
 export * from './ipc';
+export * from './llm';
 export * from './policy';
 export * from './project';
 export * from './runtime';

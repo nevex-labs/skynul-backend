@@ -108,3 +108,5 @@ describe('executeShell', () => {
     expect(result.ok).toBe(true);
   }, 5000);
 });
+
+// Trading executor tests live in trading-executors.test.ts

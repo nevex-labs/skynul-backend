@@ -1,6 +1,7 @@
 import type { ChatMessage, ProviderId } from '../../types';
 import { getSecret } from '../stores/secret-store';
 import { claudeRespond } from './claude';
+import { codexRespond, loadTokens } from './codex';
 import { deepseekRespond } from './deepseek';
 import { geminiRespond } from './gemini';
 import { glmRespond } from './glm';
@@ -32,13 +33,16 @@ const RESPOND: Record<string, (opts: { dynamic: string; messages: ChatMessage[] 
 
 export async function dispatchChat(provider: ProviderId, messages: ChatMessage[]): Promise<string> {
   if (provider === 'chatgpt') {
+    const tokens = await loadTokens();
+    if (tokens?.access) {
+      return codexRespond({ messages });
+    }
+
     const apiKey = await getSecret('openai.apiKey');
     if (!apiKey) {
-      throw new Error(
-        'ChatGPT OAuth is only available in desktop mode. ' +
-          'Set an OpenAI API key in Settings to use this provider via the API.'
-      );
+      throw new Error('ChatGPT is not connected. Sign in via /api/ai/chatgpt/oauth or set openai.apiKey.');
     }
+
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },

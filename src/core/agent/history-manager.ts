@@ -4,7 +4,7 @@
  */
 
 import type { TaskStep } from '../../types';
-import type { VisionMessage } from '../providers/codex-vision';
+import type { VisionMessage } from '../../types';
 import type { TaskManager } from './task-manager';
 
 /** Extract action type from an assistant message text. */

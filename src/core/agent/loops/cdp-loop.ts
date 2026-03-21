@@ -3,9 +3,11 @@
  */
 
 import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../providers/codex-vision';
+import type { VisionMessage } from '../../../types';
 import type { ExecutorContext } from '../action-executors';
 import {
+  executeCexAction,
+  executeChainAction,
   executeFactAction,
   executeGenerateImage,
   executeInterTaskAction,
@@ -67,8 +69,13 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
     taskManager,
     buildTurnMessage(stepIndex) {
       if (stepIndex === 0) {
+        const activeModes: string[] = [];
+        if (task.capabilities.includes('polymarket.trading')) activeModes.push('polymarket_* actions');
+        if (task.capabilities.includes('onchain.trading')) activeModes.push('chain_* actions');
+        if (task.capabilities.includes('cex.trading')) activeModes.push('cex_* actions');
+        const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
         return {
-          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use the polymarket_* actions directly. Do NOT use shell, navigate, or evaluate.`,
+          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.`,
         };
       }
       const actionLog = buildActionLog(task.steps, 8, { truncateResult: 200, truncateError: 100 });
@@ -117,6 +124,22 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'polymarket_place_order':
     case 'polymarket_close_position': {
       const res = await executePolymarketAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'chain_get_balance':
+    case 'chain_get_token_balance':
+    case 'chain_send_token':
+    case 'chain_swap':
+    case 'chain_get_tx_status': {
+      const res = await executeChainAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'cex_get_balance':
+    case 'cex_place_order':
+    case 'cex_cancel_order':
+    case 'cex_get_positions':
+    case 'cex_withdraw': {
+      const res = await executeCexAction(ctx, action);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'wait':

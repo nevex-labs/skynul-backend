@@ -3,9 +3,9 @@
  */
 
 import type { Task, TaskAction } from '../../../types';
+import type { VisionMessage } from '../../../types';
 import type { BrowserEngine } from '../../browser/engine/browser-engine';
 import { acquireBrowserEngine } from '../../browser/engine/factory';
-import type { VisionMessage } from '../../providers/codex-vision';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,

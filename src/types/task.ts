@@ -1,11 +1,16 @@
 // ── Task Capability IDs ───────────────────────────────────────────────────────
 
-export type TaskCapabilityId =
-  | 'browser.cdp'
-  | 'app.launch'
-  | 'polymarket.trading'
-  | 'office.professional'
-  | 'app.scripting';
+export const TASK_CAPABILITY_IDS = [
+  'browser.cdp',
+  'app.launch',
+  'polymarket.trading',
+  'office.professional',
+  'app.scripting',
+  'onchain.trading',
+  'cex.trading',
+] as const;
+
+export type TaskCapabilityId = (typeof TASK_CAPABILITY_IDS)[number];
 
 export const ALL_TASK_CAPABILITIES: Array<{
   id: TaskCapabilityId;
@@ -28,6 +33,16 @@ export const ALL_TASK_CAPABILITIES: Array<{
     id: 'app.scripting',
     title: 'App Scripting',
     desc: 'Run scripts inside desktop apps (Illustrator, Photoshop, After Effects, Blender, Unreal).',
+  },
+  {
+    id: 'onchain.trading',
+    title: 'On-Chain Trading',
+    desc: 'Trade on DEXs and manage on-chain assets (EVM).',
+  },
+  {
+    id: 'cex.trading',
+    title: 'CEX Trading',
+    desc: 'Trade on centralized exchanges (Binance, Coinbase).',
   },
 ];
 
@@ -91,7 +106,34 @@ export type TaskAction =
   | { type: 'forget_fact'; factId: number }
   // Sub-agent identity — first action in a sub-agent task
   | { type: 'set_identity'; name: string; role?: string }
-  | { type: 'generate_image'; prompt: string; size?: '1024x1024' | '1792x1024' | '1024x1792' };
+  | { type: 'generate_image'; prompt: string; size?: '1024x1024' | '1792x1024' | '1024x1792' }
+  // On-chain trading actions (require onchain.trading capability)
+  | { type: 'chain_get_balance'; chainId?: number }
+  | { type: 'chain_get_token_balance'; chainId?: number; tokenAddress: string }
+  | { type: 'chain_send_token'; chainId?: number; tokenAddress: string; to: string; amount: string }
+  | { type: 'chain_swap'; chainId?: number; tokenIn: string; tokenOut: string; amountIn: string; slippageBps?: number }
+  | { type: 'chain_get_tx_status'; chainId?: number; txHash: string }
+  // CEX trading actions (require cex.trading capability)
+  | { type: 'cex_get_balance'; exchange: 'binance' | 'coinbase' }
+  | {
+      type: 'cex_place_order';
+      exchange: 'binance' | 'coinbase';
+      symbol: string;
+      side: 'buy' | 'sell';
+      orderType: 'market' | 'limit';
+      amount: number;
+      price?: number;
+    }
+  | { type: 'cex_cancel_order'; exchange: 'binance' | 'coinbase'; orderId: string; symbol?: string }
+  | { type: 'cex_get_positions'; exchange: 'binance' | 'coinbase' }
+  | {
+      type: 'cex_withdraw';
+      exchange: 'binance' | 'coinbase';
+      asset: string;
+      amount: number;
+      address: string;
+      network: string;
+    };
 
 // ── Task Step (one turn of the agent loop) ────────────────────────────────────
 
@@ -116,6 +158,10 @@ export type TaskSource = 'desktop' | 'telegram' | 'discord' | 'slack' | 'whatsap
 
 export type TaskMode = 'browser' | 'code';
 
+// The concrete execution loop selected by the backend.
+// This is derived from { mode, capabilities }.
+export type TaskRunnerId = 'browser' | 'code' | 'cdp';
+
 export type Task = {
   id: string;
   /** If present, this task was spawned from another task (sub-agent). */
@@ -129,6 +175,8 @@ export type Task = {
   attachments?: string[];
   status: TaskStatus;
   mode: TaskMode;
+  /** The backend-selected execution loop. */
+  runner: TaskRunnerId;
   capabilities: TaskCapabilityId[];
   steps: TaskStep[];
   /** Best-effort token usage (only available for some providers). */
@@ -151,16 +199,37 @@ export type Task = {
 
 export type TaskCreateRequest = {
   prompt: string;
-  capabilities: TaskCapabilityId[];
+  /**
+   * Task-scoped capabilities. If omitted/empty, the backend may infer sensible defaults.
+   */
+  capabilities?: TaskCapabilityId[];
   /** Optional local file paths attached by the user (absolute paths). */
   attachments?: string[];
   mode?: TaskMode;
+  /** If true (default server-side), infer mode/capabilities when not provided. */
+  infer?: boolean;
+  /** How to infer mode/capabilities when infer=true. */
+  inferStrategy?: 'auto' | 'rules' | 'llm';
   maxSteps?: number;
   timeoutMs?: number;
   source?: TaskSource;
   parentTaskId?: string;
   agentName?: string;
   agentRole?: string;
+};
+
+export type TaskInferRequest = {
+  prompt: string;
+  attachments?: string[];
+  strategy?: 'auto' | 'rules' | 'llm';
+};
+
+export type TaskInferResponse = {
+  mode: TaskMode;
+  runner: TaskRunnerId;
+  capabilities: TaskCapabilityId[];
+  source: 'rules' | 'llm';
+  confidence: number;
 };
 
 export type TaskCreateResponse = {

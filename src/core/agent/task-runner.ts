@@ -13,6 +13,7 @@ import { runAgentLoop } from './loops/agent-loop';
 import { executeBrowserAction, setupBrowserLoop } from './loops/browser-loop';
 import { executeApiOnlyAction, setupCdpLoop } from './loops/cdp-loop';
 import { executeCodeAction, setupCodeLoop } from './loops/code-loop';
+import { deriveRunner } from './task-routing';
 
 export type TaskRunnerCallbacks = {
   onUpdate: (task: Task) => void;
@@ -32,6 +33,7 @@ export class TaskRunner {
   private task: Task;
   private appBridge = new AppBridge();
   private lastScrapeData = '';
+  private activeRelease: (() => Promise<void>) | null = null;
 
   private get executorCtx(): ExecutorContext {
     return {
@@ -54,8 +56,10 @@ export class TaskRunner {
   async run(): Promise<Task> {
     this.timeoutHandle = setTimeout(() => this.abort('Task timed out'), this.task.timeoutMs);
 
-    if (this.task.mode === 'code') return this.runCode();
-    if (this.task.capabilities.includes('polymarket.trading')) return this.runCdp();
+    // runner is persisted, but we derive as a safety net.
+    const runner = this.task.runner ?? deriveRunner(this.task.mode, this.task.capabilities);
+    if (runner === 'code') return this.runCode();
+    if (runner === 'cdp') return this.runCdp();
     return this.runBrowser();
   }
 
@@ -87,6 +91,7 @@ export class TaskRunner {
       });
       engine = e;
       release = r;
+      this.activeRelease = release;
 
       callbacks.executeAction = (action) => executeBrowserAction(engine!, action, this.executorCtx);
       loopResult = await runAgentLoop(
@@ -100,11 +105,13 @@ export class TaskRunner {
       );
     } catch (e) {
       if (release) await release().catch(() => {});
-      if ((e as any)?.__cancelled || this.aborted) return this.finish('cancelled');
+      if (this.activeRelease === release) this.activeRelease = null;
+      if ((e as any)?.__cancelled || this.aborted) return this.finish('cancelled', this.task.error);
       return this.finish('failed', `Browser loop error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     if (release) await release().catch(() => {});
+    if (this.activeRelease === release) this.activeRelease = null;
     return loopResult;
   }
 
@@ -170,6 +177,15 @@ export class TaskRunner {
   abort(reason?: string): void {
     this.aborted = true;
     if (reason) this.task.error = reason;
+    // eslint-disable-next-line no-console
+    console.log(`[task] abort: ${this.task.id}${reason ? ` — ${reason}` : ''}`);
+    // Best-effort: close active browser page early to stop Playwright work.
+    // (We still rely on the loop's isAborted() checks to stop future model calls.)
+    const rel = this.activeRelease;
+    this.activeRelease = null;
+    if (rel) {
+      void rel().catch(() => {});
+    }
     this.cleanup();
   }
 

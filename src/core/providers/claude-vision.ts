@@ -3,8 +3,8 @@
  * edge function `chat-claude`, which holds the Anthropic API key.
  */
 
+import type { VisionMessage } from '../../types';
 import { buildSupabaseVisionRequest, createVisionProvider } from './base-vision';
-import type { VisionMessage } from './codex-vision';
 import { convertToEdgeMessages } from './vision-utils';
 
 export const claudeVisionRespond = createVisionProvider({

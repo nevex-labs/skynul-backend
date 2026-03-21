@@ -398,6 +398,177 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
   }
 }
 
+/** Execute on-chain trading actions. */
+export async function executeChainAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  const raw = action as Record<string, unknown>;
+  const chainId = typeof raw.chainId === 'number' ? raw.chainId : undefined;
+
+  const chainTypes = [
+    'chain_get_balance',
+    'chain_get_token_balance',
+    'chain_send_token',
+    'chain_swap',
+    'chain_get_tx_status',
+  ];
+  if (!chainTypes.includes(action.type)) {
+    return errResult(`Unknown chain action: ${(action as any).type}`);
+  }
+
+  const { ChainClient } = await import('../chain/chain-client');
+  const client = new ChainClient(chainId);
+
+  switch (action.type) {
+    case 'chain_get_balance': {
+      try {
+        const [usdc, native] = await Promise.all([client.getBalance(), client.getNativeBalance()]);
+        return result(`USDC balance: ${usdc.balance} USDC | Native balance: ${native.balance} ${native.symbol}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'chain_get_token_balance': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_get_token_balance' }>;
+        const bal = await client.getTokenBalance(a.tokenAddress);
+        return result(`${bal.symbol} balance: ${bal.balance} (${a.tokenAddress})`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'chain_send_token': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
+        const receipt = await client.sendToken(a.tokenAddress, a.to, a.amount);
+        return result(
+          `Token sent. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'chain_swap': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
+        const receipt = await client.swap({
+          tokenIn: a.tokenIn,
+          tokenOut: a.tokenOut,
+          amountIn: a.amountIn,
+          slippageBps: a.slippageBps,
+        });
+        return result(
+          `Swap executed. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'chain_get_tx_status': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_get_tx_status' }>;
+        const receipt = await client.getTxStatus(a.txHash);
+        return result(
+          `Tx ${a.txHash}: ${receipt.status}${receipt.blockNumber ? ` (block ${receipt.blockNumber})` : ''}`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    default:
+      return errResult(`Unknown chain action`);
+  }
+}
+
+/** Execute CEX trading actions. */
+export async function executeCexAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  const raw = action as Record<string, unknown>;
+  const exchange = raw.exchange as 'binance' | 'coinbase' | undefined;
+
+  const cexTypes = ['cex_get_balance', 'cex_place_order', 'cex_cancel_order', 'cex_get_positions', 'cex_withdraw'];
+  if (!cexTypes.includes(action.type)) {
+    return errResult(`Unknown CEX action: ${(action as any).type}`);
+  }
+
+  if (!exchange || !['binance', 'coinbase'].includes(exchange)) {
+    return errResult(`Invalid or missing "exchange" field. Must be "binance" or "coinbase".`);
+  }
+
+  const { BinanceClient } = await import('../cex/binance-client');
+  const { CoinbaseClient } = await import('../cex/coinbase-client');
+  const { FeeService, FEE_USDC } = await import('../chain/fee-service');
+
+  const client = exchange === 'binance' ? new BinanceClient({ mode: 'live' }) : new CoinbaseClient({ mode: 'live' });
+
+  switch (action.type) {
+    case 'cex_get_balance': {
+      try {
+        const balances = await client.getBalances();
+        if (balances.length === 0) return result('No balances found.');
+        const lines = balances.map((b) => `  ${b.asset}: ${b.free} free, ${b.locked} locked`);
+        return result(`${exchange} balances:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'cex_get_positions': {
+      try {
+        const positions = await client.getPositions();
+        if (positions.length === 0) return result('No open positions.');
+        const lines = positions.map(
+          (p) => `  ${p.symbol} ${p.side} ${p.size} @ ${p.entryPrice}, PnL: ${p.unrealizedPnl}`
+        );
+        return result(`${exchange} positions:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'cex_place_order': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'cex_place_order' }>;
+        const netAmount = FeeService.deductFeeFromAmount(a.amount);
+        if (netAmount <= 0) {
+          return errResult(`Order amount too small after fee deduction (fee: ${FEE_USDC} USDC).`);
+        }
+        const res = await client.placeOrder({
+          symbol: a.symbol,
+          side: a.side,
+          orderType: a.orderType,
+          amount: netAmount,
+          price: a.price,
+        });
+        return result(
+          `Order placed on ${exchange}: ${a.side} ${netAmount} ${a.symbol} | orderId: ${res.orderId} | status: ${res.status}`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'cex_cancel_order': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'cex_cancel_order' }>;
+        if (exchange === 'binance') {
+          await (client as any).cancelOrder(a.symbol ?? '', a.orderId);
+        } else {
+          await (client as any).cancelOrder(a.orderId);
+        }
+        return result(`Order ${a.orderId} cancelled on ${exchange}.`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'cex_withdraw': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'cex_withdraw' }>;
+        const withdrawId = await client.withdraw(a.asset, a.amount, a.address, a.network);
+        return result(`Withdrawal initiated on ${exchange}: ${withdrawId}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    default:
+      return errResult(`Unknown CEX action`);
+  }
+}
+
 /** Resolve data URL attachments to temp files. */
 export async function resolveAttachments(attachments?: string[]): Promise<{
   filePaths: string[];
