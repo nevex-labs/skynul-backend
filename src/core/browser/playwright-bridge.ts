@@ -57,7 +57,40 @@ export type PageInfo = {
 };
 
 export class PlaywrightBridge {
-  constructor(private page: Page) {}
+  private ownedPages = new Set<Page>();
+
+  constructor(private page: Page) {
+    this.trackPage(page);
+  }
+
+  private trackPage(page: Page): void {
+    this.ownedPages.add(page);
+    page.once('close', () => {
+      this.ownedPages.delete(page);
+    });
+  }
+
+  /**
+   * Switch the active page (e.g. when a click opens a new tab).
+   * The rest of the engine intentionally operates on a single "active" page.
+   */
+  setActivePage(page: Page): void {
+    if (!this.ownedPages.has(page)) this.trackPage(page);
+    this.page = page;
+  }
+
+  /** Close all pages opened/used by this bridge. */
+  async close(): Promise<void> {
+    const pages = [...this.ownedPages];
+    for (const p of pages) {
+      try {
+        if (!p.isClosed()) await p.close();
+      } catch {
+        // ignore
+      }
+    }
+    this.ownedPages.clear();
+  }
 
   get rawPage(): Page {
     return this.page;
@@ -96,6 +129,11 @@ export class PlaywrightBridge {
   }
 
   async click(selector: string, frameId?: string): Promise<void> {
+    // If the click opens a popup/new tab, switch the active page to it.
+    // This avoids "Target page, context or browser has been closed" errors
+    // when sites close the opener after opening a new tab.
+    const popupPromise = this.page.waitForEvent('popup', { timeout: 1_500 }).catch(() => null);
+
     const loc = this.resolveLocator(selector, frameId);
     try {
       await loc.click({ timeout: 8_000 });
@@ -130,6 +168,15 @@ export class PlaywrightBridge {
       } else {
         throw e;
       }
+    }
+
+    const popup = await popupPromise;
+    if (popup && !popup.isClosed()) {
+      // eslint-disable-next-line no-console
+      console.log('[browser] popup opened; switching active page');
+      this.setActivePage(popup);
+      await popup.bringToFront().catch(() => {});
+      await popup.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
     }
   }
 

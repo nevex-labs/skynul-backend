@@ -46,6 +46,24 @@ pnpm dev
 
 The server starts on `http://localhost:3141`.
 
+### Browser session mode
+
+Browser-mode tasks launch Chrome via Playwright CDP.
+
+- Default: `SKYNUL_BROWSER_SESSION=per-task` — one Chrome window per task; closes the window when the task ends.
+- Optional: `SKYNUL_BROWSER_SESSION=shared` — shared Chrome window across tasks; faster + supports more concurrency.
+
+```bash
+export SKYNUL_BROWSER_SESSION=per-task
+```
+
+If Chrome is already running with the same profile, Skynul will fail fast by default.
+To allow auto-terminating the existing Chrome instance (use with care):
+
+```bash
+export SKYNUL_CHROME_KILL_EXISTING_SESSION=1
+```
+
 Set at least one LLM provider key:
 
 ```bash
@@ -142,6 +160,7 @@ src/
 | `GET` | `/` | List all tasks |
 | `GET` | `/:id` | Get task by ID |
 | `POST` | `/` | Create and start a task |
+| `POST` | `/infer` | Infer `mode` + `capabilities` from prompt |
 | `POST` | `/:id/approve` | Approve a pending task |
 | `POST` | `/:id/cancel` | Cancel a running task |
 | `POST` | `/:id/message` | Send message to a running task |

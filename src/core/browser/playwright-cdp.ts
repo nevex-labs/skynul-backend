@@ -7,6 +7,7 @@ import { dirname, join } from 'path';
 import { access, cp, mkdir, readFile, readlink, stat, unlink, writeFile } from 'fs/promises';
 import { type Browser, type BrowserContext, type Page, chromium } from 'playwright-core';
 import { getDataDir } from '../config';
+import { parseBrowserSessionMode } from './session-mode';
 
 const app = { getPath: (_: string) => getDataDir() };
 
@@ -532,6 +533,15 @@ export async function launchPlaywrightChromeCdp(): Promise<LaunchResult> {
           : '';
       // Chrome delegated to an already-running instance — kill it and retry this same dir (once)
       if (msg === 'EXISTING_SESSION' && !existingSessionRetried) {
+        const allowKill = ['1', 'true', 'yes'].includes(
+          (process.env.SKYNUL_CHROME_KILL_EXISTING_SESSION ?? '').trim().toLowerCase()
+        );
+        if (!allowKill) {
+          throw new Error(
+            `Chrome is already running with this profile dir: ${attemptUserDataDir}. ` +
+              `Close the existing Chrome instance, or set SKYNUL_CHROME_KILL_EXISTING_SESSION=1 to allow Skynul to terminate it automatically.`
+          );
+        }
         existingSessionRetried = true;
         console.warn('Chrome already running with this profile; killing existing instance and retrying...');
         try {
@@ -617,13 +627,17 @@ export async function acquirePlaywrightPage(): Promise<{
   userDataDir: string;
   chromeExecutable: string;
 }> {
-  const s = await getSharedPlaywrightChromeCdp();
+  const mode = parseBrowserSessionMode();
+  const s = mode === 'per-task' ? await launchPlaywrightChromeCdp() : await getSharedPlaywrightChromeCdp();
   const page = await s.context.newPage();
   const release = async (): Promise<void> => {
     try {
       await page.close();
     } catch {
       // ignore
+    }
+    if (mode === 'per-task') {
+      await s.close().catch(() => {});
     }
   };
   return { page, release, userDataDir: s.userDataDir, chromeExecutable: s.chromeExecutable };

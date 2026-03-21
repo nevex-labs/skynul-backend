@@ -55,10 +55,18 @@ class PlaywrightBrowserEngine implements BrowserEngine {
 export async function acquirePlaywrightBrowserEngine(): Promise<AcquiredBrowserEngine> {
   const acquired = await acquirePlaywrightPage();
   const bridge = new PlaywrightBridge(acquired.page);
+
+  const release = async (): Promise<void> => {
+    // Close any popups/new tabs this task opened.
+    await bridge.close().catch(() => {});
+    // Back-compat: also call the original release.
+    await acquired.release().catch(() => {});
+  };
+
   return {
     engineId: BROWSER_ENGINE_ID.PLAYWRIGHT,
     engine: new PlaywrightBrowserEngine(bridge),
-    release: acquired.release,
+    release,
     meta: {
       chromeExecutable: acquired.chromeExecutable,
       userDataDir: acquired.userDataDir,
