@@ -28,27 +28,48 @@ walletAuthGroup.post('/verify', async (c) => {
   if (!pending || Date.now() > pending.expiresAt) return c.json({ error: 'Nonce expired or not found' }, 400)
   pendingNonces.delete(key)
 
-  const { verifyMessage, JsonRpcProvider, Contract, hashMessage } = await import('ethers')
+  const { createPublicClient, http, hashMessage, encodeFunctionData, decodeFunctionResult } = await import('viem')
+  const { base } = await import('viem/chains')
   const message = `Sign in to Skynul: ${pending.nonce}`
 
-  const isValid = await (async () => {
-    // EOA: standard 65-byte signature
-    try {
-      const recovered = (verifyMessage(message, signature) as string).toLowerCase()
-      if (recovered === key) return true
-    } catch { /* not EOA */ }
+  const rpcUrl = process.env.ETH_RPC_URL ?? 'https://mainnet.base.org'
+  const client = createPublicClient({ chain: base, transport: http(rpcUrl) })
 
-    // Smart Wallet (ERC-4337): EIP-1271 on-chain verification
-    const rpcUrl = process.env.ETH_RPC_URL ?? 'https://mainnet.base.org'
-    const provider = new JsonRpcProvider(rpcUrl)
-    const contract = new Contract(key, ['function isValidSignature(bytes32,bytes) view returns (bytes4)'], provider)
-    const msgHash = hashMessage(message)
-    try {
-      const result = await contract.isValidSignature(msgHash, signature)
-      return result === '0x1626ba7e'
-    } catch { return false }
-  })()
+  const hash = hashMessage(message)
 
+  let isValid = false
+  try {
+    // ERC-6492 Universal Signature Verifier — deployed on all EVM chains
+    const UNIVERSAL_SIG_VERIFIER = '0x7DD271fA79df3a5Feb99F73BebFA4395b2E4F4Be' as `0x${string}`
+    const abi = [{
+      name: 'isValidSig',
+      type: 'function',
+      stateMutability: 'nonpayable',
+      inputs: [
+        { name: '_signer', type: 'address' },
+        { name: '_hash', type: 'bytes32' },
+        { name: '_signature', type: 'bytes' },
+      ],
+      outputs: [{ name: '', type: 'bool' }],
+    }] as const
+
+    const data = encodeFunctionData({
+      abi,
+      functionName: 'isValidSig',
+      args: [key as `0x${string}`, hash, signature as `0x${string}`],
+    })
+
+    const result = await client.call({
+      to: UNIVERSAL_SIG_VERIFIER,
+      data,
+    })
+
+    if (result.data) {
+      isValid = decodeFunctionResult({ abi, functionName: 'isValidSig', data: result.data }) as boolean
+    }
+  } catch (err: any) {
+    console.error('[verify] ERC-6492 verification error:', err?.shortMessage ?? err?.message ?? err)
+  }
   if (!isValid) return c.json({ error: 'Invalid signature' }, 401)
 
   const sessionId = randomBytes(32).toString('hex')
