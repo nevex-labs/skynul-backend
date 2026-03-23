@@ -21,6 +21,8 @@ import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
 import { tasksGroup } from './routes/tasks';
 import { walletGroup } from './routes/wallet';
+import { coinbaseAuthGroup } from './routes/auth/coinbase';
+import { walletAuthGroup } from './routes/auth/wallet';
 import { addClient, clientCount, removeClient } from './ws/events';
 
 const app = new Hono();
@@ -65,7 +67,9 @@ const routes = app
   .route('/api/agent', agentGroup)
   .route('/api/integrations', integrationsGroup)
   .route('/api/system', systemGroup)
-  .route('/api/wallet', walletGroup);
+  .route('/api/wallet', walletGroup)
+  .route('/auth/coinbase', coinbaseAuthGroup)
+  .route('/auth/wallet', walletAuthGroup);
 
 // ── Export type for hono/client (hc) ────────────────────────────────────────
 export type AppType = typeof routes;
