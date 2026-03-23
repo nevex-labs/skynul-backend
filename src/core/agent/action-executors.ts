@@ -3,6 +3,7 @@
  * Extracted from TaskRunner to enable testing and reduce complexity.
  */
 
+import { exec } from 'node:child_process';
 import os from 'os';
 import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
@@ -195,7 +196,6 @@ export function executeShell(command: string, cwd?: string, timeoutMs?: number):
     return Promise.resolve(errResult(e instanceof Error ? e.message : String(e)));
   }
   return new Promise((resolve) => {
-    const { exec } = require('child_process') as typeof import('child_process');
     const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
     const child = exec(
       command,
@@ -297,7 +297,6 @@ export function executeFileList(pattern: string, cwd?: string): Promise<Executor
   if (/[;&|`$()]/.test(pattern)) {
     return Promise.resolve(errResult('Invalid characters in file pattern'));
   }
-  const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {
     const fdCmd = `fd --type f --glob '${pattern.replace(/'/g, "'\\''")}'`;
@@ -328,7 +327,6 @@ export function executeFileSearch(
   if (/[;&|`$()]/.test(pattern) || (glob && /[;&|`$()]/.test(glob))) {
     return Promise.resolve(errResult('Invalid characters in search pattern'));
   }
-  const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {
     const escapedPattern = pattern.replace(/'/g, "'\\''");

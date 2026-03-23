@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, execFile, spawn } from 'child_process';
+import { type ChildProcessWithoutNullStreams, execFile, execSync, spawn } from 'child_process';
 import { constants as fsConstants } from 'fs';
 import http from 'http';
 import net from 'net';
@@ -545,7 +545,6 @@ export async function launchPlaywrightChromeCdp(): Promise<LaunchResult> {
         existingSessionRetried = true;
         console.warn('Chrome already running with this profile; killing existing instance and retrying...');
         try {
-          const { execSync } = require('child_process');
           const psList = execSync(
             `ps aux | grep -- '--user-data-dir=${attemptUserDataDir}' | grep -v grep | awk '{print $2}'`,
             { timeout: 3000 }
