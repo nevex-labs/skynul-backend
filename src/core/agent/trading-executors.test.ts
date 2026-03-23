@@ -36,6 +36,15 @@ vi.mock('../chain/fee-service', () => ({
   },
 }));
 
+// Risk guard always allows in executor tests — risk logic has its own test file
+vi.mock('./risk-guard', () => ({
+  checkTradeAllowed: vi.fn(() => ({ allowed: true })),
+  recordTradeVolume: vi.fn(),
+  openRiskPosition: vi.fn(),
+  closeRiskPosition: vi.fn(),
+  closeAllPositionsForTask: vi.fn(),
+}));
+
 import { BinanceClient } from '../cex/binance-client';
 import { CoinbaseClient } from '../cex/coinbase-client';
 import { ChainClient } from '../chain/chain-client';

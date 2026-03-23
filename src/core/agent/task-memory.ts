@@ -96,7 +96,57 @@ function initSchema(database: Database.Database): void {
   database.exec(OBSERVATIONS_SCHEMA);
   // eval-feedback tables (imported lazily to avoid circular dep)
   database.exec(EVAL_SCHEMA_PLACEHOLDER);
+  // paper trading tables
+  database.exec(PAPER_PORTFOLIO_SCHEMA);
+  // risk guardrails tables
+  database.exec(RISK_SCHEMA);
 }
+
+// Inlined to avoid circular imports (paper-portfolio imports getMemoryDb from here)
+const PAPER_PORTFOLIO_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS paper_balances (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset      TEXT    NOT NULL UNIQUE,
+    amount     REAL    NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS paper_trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     TEXT,
+    venue       TEXT    NOT NULL,
+    action_type TEXT    NOT NULL,
+    symbol      TEXT,
+    side        TEXT,
+    price       REAL,
+    size        REAL,
+    amount_usd  REAL,
+    order_id    TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'FILLED',
+    created_at  INTEGER NOT NULL
+  );
+`;
+
+// Inlined to avoid circular imports (risk-guard imports getMemoryDb from here)
+const RISK_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS risk_daily_volume (
+    date       TEXT NOT NULL,
+    venue      TEXT NOT NULL,
+    volume_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (date, venue)
+  );
+  CREATE TABLE IF NOT EXISTS risk_positions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    venue      TEXT    NOT NULL,
+    symbol     TEXT    NOT NULL,
+    side       TEXT    NOT NULL,
+    size_usd   REAL    NOT NULL,
+    task_id    TEXT,
+    opened_at  INTEGER NOT NULL,
+    closed_at  INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS rp_open ON risk_positions(venue, closed_at);
+  CREATE INDEX IF NOT EXISTS rp_task ON risk_positions(task_id);
+`;
 
 // Placeholder filled after eval-feedback module is available
 // We inline the schema here to avoid circular imports
