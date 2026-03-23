@@ -29,6 +29,9 @@ const taskCreateSchema = z.object({
   parentTaskId: z.string().optional(),
   agentName: z.string().optional(),
   agentRole: z.string().optional(),
+  orchestrate: z.boolean().optional(),
+  model: z.string().optional(),
+  skipMemory: z.boolean().optional(),
 });
 
 const tasks = new Hono()
@@ -96,6 +99,9 @@ const tasks = new Hono()
         parentTaskId: body.parentTaskId,
         agentName: body.agentName,
         agentRole: body.agentRole,
+        orchestrate: body.orchestrate,
+        model: body.model,
+        skipMemory: body.skipMemory,
       };
 
       const task = tm.create(req);

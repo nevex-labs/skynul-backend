@@ -142,6 +142,21 @@ const policyRoutes = new Hono()
     }
   )
   .put(
+    '/paper-trading',
+    zValidator(
+      'json',
+      z.object({
+        enabled: z.boolean(),
+      })
+    ),
+    async (c) => {
+      const { enabled } = c.req.valid('json');
+      policy = { ...policy, paperTradingEnabled: enabled };
+      await savePolicy(policy);
+      return c.json(policy);
+    }
+  )
+  .put(
     '/workspace',
     zValidator(
       'json',
