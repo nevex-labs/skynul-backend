@@ -9,14 +9,17 @@ import type { Task, TaskAction, TaskStep } from '../../../types';
 import type { ProviderId } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { type ParserState, parseModelResponse } from '../action-parser';
-import { compressHistory, drainInbox, truncateHistory } from '../history-manager';
+import { computeBudget } from '../context-budget';
+import { formatError } from '../errors';
+import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
 
 export type LoopCallbacks = {
   taskManager: TaskManager | null;
   buildTurnMessage(
-    stepIndex: number
+    stepIndex: number,
+    budget?: { applyLevel1: boolean }
   ): Promise<{ text: string; images?: string[] }> | { text: string; images?: string[] };
   executeAction?(action: TaskAction): Promise<string | undefined>;
   recordStep(step: TaskStep): void;
@@ -31,17 +34,32 @@ export async function runAgentLoop(
   task: Task,
   provider: ProviderId,
   openaiModel: string,
-  callbacks: LoopCallbacks
+  callbacks: LoopCallbacks,
+  contextWindowOverride?: number,
+  systemPromptCompact?: string
 ): Promise<Task> {
   const parserState: ParserState = { consecutiveTruncations: 0 };
+
+  // Track last reported input tokens for accurate budget when provider supports it
+  let lastReportedInputTokens: number | undefined;
 
   while (task.steps.length < maxSteps && !callbacks.isAborted()) {
     const stepIndex = task.steps.length;
 
+    // Compute context budget before building the turn (uses current history)
+    const budget = computeBudget(
+      systemPrompt,
+      history,
+      provider,
+      openaiModel,
+      contextWindowOverride,
+      lastReportedInputTokens
+    );
+
     let turnText: string;
     let images: string[] | undefined;
     try {
-      const turn = await callbacks.buildTurnMessage(stepIndex);
+      const turn = await callbacks.buildTurnMessage(stepIndex, budget);
       turnText = turn.text;
       images = turn.images;
     } catch (e) {
@@ -49,12 +67,14 @@ export async function runAgentLoop(
     }
 
     const inboxBlock = drainInbox(callbacks.taskManager, task.id);
+    // Level 1: reduce screenshot count when context is getting full
+    const maxImages = budget.applyLevel1 ? 2 : 4;
     const turnMessage: VisionMessage = {
       role: 'user',
       content: [
         { type: 'input_text' as const, text: turnText + inboxBlock },
         ...(images
-          ? images.slice(0, 4).map((url) => ({
+          ? images.slice(0, maxImages).map((url) => ({
               type: 'input_image' as const,
               detail: 'auto' as const,
               image_url: url,
@@ -68,6 +88,16 @@ export async function runAgentLoop(
     } else {
       compressHistory(history, 6);
     }
+
+    // Level 3: LLM-driven summarization when context pressure is critical
+    if (budget.applyLevel3) {
+      try {
+        await summarizeHistory(history, provider, task.id);
+      } catch {
+        // Non-critical: L3 failure doesn't break the loop
+      }
+    }
+
     history.push(turnMessage);
 
     callbacks.pushStatus('Thinking...');
@@ -76,17 +106,22 @@ export async function runAgentLoop(
       return finish(task, 'cancelled', callbacks, task.error);
     }
 
+    // Level 2: switch to compact system prompt when context pressure is high
+    const activeSystemPrompt = systemPromptCompact && budget.applyLevel2 ? systemPromptCompact : systemPrompt;
+
     let rawResponse: string;
     let usage: { inputTokens: number; outputTokens: number } | undefined;
     try {
-      const result = await callVision(provider, systemPrompt, history, task.id, openaiModel);
+      const result = await callVision(provider, activeSystemPrompt, history, task.id, openaiModel);
       rawResponse = result.text;
       usage = result.usage;
     } catch (e) {
       if (callbacks.isAborted()) {
         return finish(task, 'cancelled', callbacks, task.error);
       }
-      return finish(task, 'failed', callbacks, `Model call error: ${e instanceof Error ? e.message : String(e)}`);
+      const rawError = e instanceof Error ? e.message : String(e);
+      const formatted = formatError(rawError);
+      return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
     }
 
     if (callbacks.isAborted()) {
@@ -97,6 +132,7 @@ export async function runAgentLoop(
       if (!task.usage) task.usage = { inputTokens: 0, outputTokens: 0 };
       task.usage.inputTokens += usage.inputTokens;
       task.usage.outputTokens += usage.outputTokens;
+      lastReportedInputTokens = usage.inputTokens;
     }
 
     history.push({ role: 'assistant', content: [{ type: 'output_text', text: rawResponse }] });
@@ -109,6 +145,12 @@ export async function runAgentLoop(
       screenshotBase64: '',
       action,
       thought,
+      contextPct: budget.contextPct,
+      contextTokens: {
+        used: budget.usedTokens,
+        max: budget.maxTokens,
+        estimated: budget.estimated,
+      },
     };
 
     if (action.type === 'done') {
@@ -131,7 +173,9 @@ export async function runAgentLoop(
       }
       stepResult = await callbacks.executeAction!(action);
     } catch (e) {
-      stepError = e instanceof Error ? e.message : String(e);
+      const rawError = e instanceof Error ? e.message : String(e);
+      const formatted = formatError(rawError);
+      stepError = formatted.userMessage;
     }
 
     if (callbacks.isAborted()) {

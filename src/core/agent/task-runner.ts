@@ -13,6 +13,7 @@ import { runAgentLoop } from './loops/agent-loop';
 import { executeBrowserAction, setupBrowserLoop } from './loops/browser-loop';
 import { executeApiOnlyAction, setupCdpLoop } from './loops/cdp-loop';
 import { executeCodeAction, setupCodeLoop } from './loops/code-loop';
+import { executeOrchestratorAction, setupOrchestratorLoop } from './loops/orchestrator-loop';
 import { deriveRunner } from './task-routing';
 
 export type TaskRunnerCallbacks = {
@@ -25,6 +26,7 @@ export type TaskRunnerOpts = {
   memoryContext?: string;
   taskManager?: import('./task-manager').TaskManager | null;
   taskId?: string;
+  paperMode?: boolean;
 };
 
 export class TaskRunner {
@@ -42,6 +44,7 @@ export class TaskRunner {
       appBridge: this.appBridge,
       pushUpdate: () => this.pushUpdate(),
       pushStatus: (msg) => this.pushStatus(msg),
+      paperMode: this.opts.paperMode,
     };
   }
 
@@ -58,9 +61,40 @@ export class TaskRunner {
 
     // runner is persisted, but we derive as a safety net.
     const runner = this.task.runner ?? deriveRunner(this.task.mode, this.task.capabilities);
+    if (runner === 'orchestrator') return this.runOrchestrator();
     if (runner === 'code') return this.runCode();
     if (runner === 'cdp') return this.runCdp();
     return this.runBrowser();
+  }
+
+  private async runOrchestrator(): Promise<Task> {
+    const deps = {
+      task: this.task,
+      memoryContext: this.opts.memoryContext,
+      taskManager: this.opts.taskManager ?? null,
+      maxSteps: this.task.maxSteps,
+    };
+
+    const { systemPrompt, systemPromptCompact, history, callbacks } = setupOrchestratorLoop({
+      deps,
+      onStatus: (msg) => this.pushStatus(msg),
+      onUpdate: (t) => this.callbacks.onUpdate(t),
+      isAborted: () => this.aborted,
+    });
+
+    callbacks.executeAction = (action) => executeOrchestratorAction(this.executorCtx, action);
+
+    return runAgentLoop(
+      systemPrompt,
+      history,
+      this.task.maxSteps,
+      this.task,
+      this.opts.provider,
+      this.opts.openaiModel,
+      callbacks,
+      undefined,
+      systemPromptCompact
+    );
   }
 
   private async runBrowser(): Promise<Task> {
@@ -81,6 +115,7 @@ export class TaskRunner {
         engine: e,
         release: r,
         systemPrompt,
+        systemPromptCompact,
         history,
         callbacks,
       } = await setupBrowserLoop({
@@ -101,7 +136,9 @@ export class TaskRunner {
         this.task,
         this.opts.provider,
         this.opts.openaiModel,
-        callbacks
+        callbacks,
+        undefined,
+        systemPromptCompact
       );
     } catch (e) {
       if (release) await release().catch(() => {});
@@ -124,7 +161,7 @@ export class TaskRunner {
       maxSteps: this.task.maxSteps,
     };
 
-    const { systemPrompt, history, callbacks } = setupCdpLoop({
+    const { systemPrompt, systemPromptCompact, history, callbacks } = setupCdpLoop({
       deps,
       onStatus: (msg) => this.pushStatus(msg),
       onUpdate: (t) => this.callbacks.onUpdate(t),
@@ -140,7 +177,9 @@ export class TaskRunner {
       this.task,
       this.opts.provider,
       this.opts.openaiModel,
-      callbacks
+      callbacks,
+      undefined,
+      systemPromptCompact
     );
   }
 
@@ -153,7 +192,7 @@ export class TaskRunner {
       maxSteps: this.task.maxSteps,
     };
 
-    const { systemPrompt, history, callbacks } = setupCodeLoop({
+    const { systemPrompt, systemPromptCompact, history, callbacks } = setupCodeLoop({
       deps,
       onStatus: (msg) => this.pushStatus(msg),
       onUpdate: (t) => this.callbacks.onUpdate(t),
@@ -170,7 +209,9 @@ export class TaskRunner {
       this.task,
       this.opts.provider,
       this.opts.openaiModel,
-      callbacks
+      callbacks,
+      undefined,
+      systemPromptCompact
     );
   }
 

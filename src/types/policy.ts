@@ -26,6 +26,7 @@ export type PolicyState = {
   };
   taskMemoryEnabled: boolean;
   taskAutoApprove: boolean;
+  paperTradingEnabled: boolean;
 };
 
 export const DEFAULT_POLICY: PolicyState = {
@@ -44,6 +45,7 @@ export const DEFAULT_POLICY: PolicyState = {
   },
   taskMemoryEnabled: true,
   taskAutoApprove: false,
+  paperTradingEnabled: false,
 };
 
 export type SetLanguageRequest = {

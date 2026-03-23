@@ -241,6 +241,14 @@ const VALID_ACTION_TYPES = new Set([
   'task_send',
   'task_read',
   'task_message',
+  // Orchestrator actions
+  'plan',
+  'task_spawn',
+  'task_wait',
+  // Knowledge memory
+  'memory_save',
+  'memory_search',
+  'memory_context',
   // App scripting
   'app_script',
   // Sub-agent identity

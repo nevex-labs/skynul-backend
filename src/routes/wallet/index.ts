@@ -1,4 +1,10 @@
 import { Hono } from 'hono';
+import {
+  getPaperBalances,
+  getPaperPortfolioSummary,
+  getPaperTrades,
+  resetPaperPortfolio,
+} from '../../core/agent/paper-portfolio';
 import { getAllChains, getChainConfig, getDefaultChainId } from '../../core/chain/config';
 import { EvmWallet } from '../../core/chain/evm-wallet';
 
@@ -30,10 +36,7 @@ walletGroup.get('/balance/:chainId', async (c) => {
   if (!wallet) return c.json({ error: 'No wallet configured' }, 404);
 
   try {
-    const [native, usdc] = await Promise.all([
-      wallet.getNativeBalance(chainId),
-      wallet.getUsdcBalance(chainId),
-    ]);
+    const [native, usdc] = await Promise.all([wallet.getNativeBalance(chainId), wallet.getUsdcBalance(chainId)]);
     return c.json({ chainId, chainName: chain.name, native, usdc });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
@@ -61,4 +64,49 @@ walletGroup.get('/chains', (c) => {
     usdcAddress: ch.usdcAddress,
   }));
   return c.json({ chains, defaultChainId: getDefaultChainId() });
+});
+
+/** GET /api/wallet/paper — paper portfolio summary */
+walletGroup.get('/paper', (c) => {
+  try {
+    const summary = getPaperPortfolioSummary();
+    return c.json(summary);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+/** GET /api/wallet/paper/balances — paper balances */
+walletGroup.get('/paper/balances', (c) => {
+  try {
+    const balances = getPaperBalances();
+    return c.json({ balances });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+/** GET /api/wallet/paper/trades — paper trades */
+walletGroup.get('/paper/trades', (c) => {
+  try {
+    const venue = c.req.query('venue');
+    const limitRaw = c.req.query('limit');
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+    const trades = getPaperTrades({ venue, limit: Number.isFinite(limit) ? limit : undefined });
+    return c.json({ trades });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+/** POST /api/wallet/paper/reset — reset paper portfolio */
+walletGroup.post('/paper/reset', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const startingBalance = typeof body.startingBalance === 'number' ? body.startingBalance : undefined;
+    resetPaperPortfolio(startingBalance);
+    return c.json({ ok: true, startingBalance: startingBalance ?? 10_000 });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
 });

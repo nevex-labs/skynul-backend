@@ -1,5 +1,5 @@
-import type { TokenBalance, TxReceipt } from './types';
 import { getChainConfig } from './config';
+import type { TokenBalance, TxReceipt } from './types';
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -10,9 +10,11 @@ const ERC20_ABI = [
 
 export class EvmWallet {
   private readonly privateKey: string;
+  private readonly address: string;
 
-  private constructor(privateKey: string) {
+  private constructor(privateKey: string, address: string) {
     this.privateKey = privateKey;
+    this.address = address;
   }
 
   static async create(): Promise<{ address: string }> {
@@ -27,7 +29,9 @@ export class EvmWallet {
     const { getSecret } = await import('../stores/secret-store');
     const pk = (await getSecret('CHAIN_WALLET_PRIVATE_KEY')) ?? process.env.CHAIN_WALLET_PRIVATE_KEY;
     if (!pk) return null;
-    return new EvmWallet(pk);
+    const { Wallet } = (await import('ethers')) as any;
+    const address = new Wallet(pk).address;
+    return new EvmWallet(pk, address);
   }
 
   static async exists(): Promise<boolean> {
@@ -50,10 +54,7 @@ export class EvmWallet {
   }
 
   getAddress(): string {
-    // Synchronously derive address from private key using ethers
-    // We use a cached approach — init requires async, but address is deterministic
-    const { Wallet } = require('ethers') as any;
-    return new Wallet(this.privateKey).address;
+    return this.address;
   }
 
   async getNativeBalance(chainId: number): Promise<TokenBalance> {
@@ -100,12 +101,7 @@ export class EvmWallet {
     return this.getTokenBalance(chainId, chain.usdcAddress);
   }
 
-  async sendToken(
-    chainId: number,
-    tokenAddress: string,
-    to: string,
-    amount: string
-  ): Promise<TxReceipt> {
+  async sendToken(chainId: number, tokenAddress: string, to: string, amount: string): Promise<TxReceipt> {
     const { Contract, parseUnits } = (await import('ethers')) as any;
     const signer = await this.getSigner(chainId);
     const contract = new Contract(tokenAddress, ERC20_ABI, signer);

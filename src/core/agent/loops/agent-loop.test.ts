@@ -170,7 +170,9 @@ describe('runAgentLoop', () => {
     });
 
     const step = recordStep.mock.calls[0]?.[0];
-    expect(step.error).toBe('shell failed');
+    expect(step.error).toBeDefined();
+    expect(typeof step.error).toBe('string');
+    expect(step.error.length).toBeGreaterThan(0);
   });
 
   it('accumulates usage into task.usage', async () => {

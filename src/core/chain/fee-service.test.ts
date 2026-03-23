@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../stores/secret-store', () => ({
   getSecret: vi.fn(),
@@ -11,13 +11,16 @@ vi.mock('./evm-wallet', () => ({
   },
 }));
 
-import { FeeService, FEE_USDC } from './fee-service';
 import * as secretStore from '../stores/secret-store';
 import { EvmWallet } from './evm-wallet';
+import { FEE_USDC, FeeService } from './fee-service';
 
 const TREASURY = '0xTreasury0000000000000000000000000000000';
 
-function mockWallet(usdcBalance: string, sendTokenResult = { hash: '0xfee123', status: 'success' as const, blockNumber: 10 }) {
+function mockWallet(
+  usdcBalance: string,
+  sendTokenResult = { hash: '0xfee123', status: 'success' as const, blockNumber: 10 }
+) {
   return {
     getUsdcBalance: vi.fn().mockResolvedValue({
       symbol: 'USDC',
@@ -47,7 +50,7 @@ describe('FeeService', () => {
     });
 
     it('returns 0 when amount equals fee', () => {
-      expect(FeeService.deductFeeFromAmount(0.40)).toBeCloseTo(0);
+      expect(FeeService.deductFeeFromAmount(0.4)).toBeCloseTo(0);
     });
 
     it('returns 0 when amount is less than fee', () => {
@@ -68,16 +71,25 @@ describe('FeeService', () => {
 
     it('falls back to env variable', async () => {
       vi.mocked(secretStore.getSecret).mockResolvedValue(null);
+      const prev = process.env.CHAIN_TREASURY_ADDRESS;
       process.env.CHAIN_TREASURY_ADDRESS = TREASURY;
       const addr = await FeeService.getTreasuryAddress();
       expect(addr).toBe(TREASURY);
-      delete process.env.CHAIN_TREASURY_ADDRESS;
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, 'CHAIN_TREASURY_ADDRESS');
+      } else {
+        process.env.CHAIN_TREASURY_ADDRESS = prev;
+      }
     });
 
     it('throws when not configured', async () => {
       vi.mocked(secretStore.getSecret).mockResolvedValue(null);
-      delete process.env.CHAIN_TREASURY_ADDRESS;
+      const prev = process.env.CHAIN_TREASURY_ADDRESS;
+      Reflect.deleteProperty(process.env, 'CHAIN_TREASURY_ADDRESS');
       await expect(FeeService.getTreasuryAddress()).rejects.toThrow('CHAIN_TREASURY_ADDRESS');
+      if (prev !== undefined) {
+        process.env.CHAIN_TREASURY_ADDRESS = prev;
+      }
     });
   });
 
@@ -125,7 +137,7 @@ describe('FeeService', () => {
       expect(receipt.hash).toBe('0xfee123');
       expect(receipt.status).toBe('success');
       expect(wallet.sendToken).toHaveBeenCalledWith(
-        84532,                         // chainId (number)
+        84532, // chainId (number)
         expect.stringMatching(/^0x/), // usdcAddress from chain config
         TREASURY,
         FEE_USDC

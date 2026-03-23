@@ -28,6 +28,7 @@ function normalizePolicy(parsed: Record<string, unknown>): PolicyState {
     },
     taskMemoryEnabled: (parsed.taskMemoryEnabled as boolean) ?? DEFAULT_POLICY.taskMemoryEnabled,
     taskAutoApprove: (parsed.taskAutoApprove as boolean) ?? DEFAULT_POLICY.taskAutoApprove,
+    paperTradingEnabled: (parsed.paperTradingEnabled as boolean) ?? DEFAULT_POLICY.paperTradingEnabled,
   };
 }
 

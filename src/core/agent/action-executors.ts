@@ -3,6 +3,7 @@
  * Extracted from TaskRunner to enable testing and reduce complexity.
  */
 
+import { exec } from 'node:child_process';
 import os from 'os';
 import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
@@ -11,8 +12,17 @@ import { generateImage } from '../providers/image-gen';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
 import { sandboxPath, validateShellCommand } from './input-guard';
+import { adjustPaperBalance, getPaperBalance, getPaperBalances, recordPaperTrade } from './paper-portfolio';
+import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
-import { deleteFact, saveFact } from './task-memory';
+import {
+  deleteFact,
+  formatObservationsForPrompt,
+  getRecentObservations,
+  saveFact,
+  saveObservation,
+  searchObservations,
+} from './task-memory';
 import { scrapeUrl } from './web-scraper';
 
 export type ExecutorContext = {
@@ -21,6 +31,7 @@ export type ExecutorContext = {
   appBridge: AppBridge;
   pushUpdate: () => void;
   pushStatus: (msg: string) => void;
+  paperMode?: boolean;
 };
 
 export type ExecutorResult = { ok: true; value: string } | { ok: false; error: string };
@@ -106,6 +117,42 @@ export function executeFactAction(
   }
 }
 
+/** Execute knowledge memory actions. */
+export function executeMemoryAction(
+  _ctx: ExecutorContext,
+  action: Extract<TaskAction, { type: 'memory_save' | 'memory_search' | 'memory_context' }>
+): ExecutorResult {
+  switch (action.type) {
+    case 'memory_save': {
+      if (!action.title || !action.content) return errResult('"title" and "content" are required');
+      const id = saveObservation({
+        title: action.title,
+        content: action.content,
+        obs_type: action.obs_type,
+        project: action.project,
+        topic_key: action.topic_key,
+      });
+      if (id < 0) return errResult('Failed to save observation');
+      return result(`Observation saved (id=${id}): "${action.title}"`);
+    }
+    case 'memory_search': {
+      if (!action.query) return errResult('"query" is required');
+      const obs = searchObservations(action.query, {
+        type_filter: action.type_filter,
+        project: action.project,
+        limit: action.limit,
+      });
+      if (obs.length === 0) return result('No matching observations found.');
+      return result(formatObservationsForPrompt(obs));
+    }
+    case 'memory_context': {
+      const obs = getRecentObservations({ project: action.project, limit: action.limit });
+      if (obs.length === 0) return result('No observations in memory.');
+      return result(formatObservationsForPrompt(obs));
+    }
+  }
+}
+
 /** Execute set_identity action. */
 export function executeSetIdentity(
   ctx: ExecutorContext,
@@ -149,7 +196,6 @@ export function executeShell(command: string, cwd?: string, timeoutMs?: number):
     return Promise.resolve(errResult(e instanceof Error ? e.message : String(e)));
   }
   return new Promise((resolve) => {
-    const { exec } = require('child_process') as typeof import('child_process');
     const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
     const child = exec(
       command,
@@ -251,7 +297,6 @@ export function executeFileList(pattern: string, cwd?: string): Promise<Executor
   if (/[;&|`$()]/.test(pattern)) {
     return Promise.resolve(errResult('Invalid characters in file pattern'));
   }
-  const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {
     const fdCmd = `fd --type f --glob '${pattern.replace(/'/g, "'\\''")}'`;
@@ -282,7 +327,6 @@ export function executeFileSearch(
   if (/[;&|`$()]/.test(pattern) || (glob && /[;&|`$()]/.test(glob))) {
     return Promise.resolve(errResult('Invalid characters in search pattern'));
   }
-  const { exec } = require('child_process') as typeof import('child_process');
   const execOpts = { timeout: 10_000, maxBuffer: 512 * 1024, cwd: cwd || undefined };
   return new Promise((resolve) => {
     const escapedPattern = pattern.replace(/'/g, "'\\''");
@@ -321,11 +365,18 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
     return errResult(`Unknown polymarket action: ${(action as any).type}`);
   }
 
-  const client = new PolymarketClient({ mode: 'live' });
+  const client = new PolymarketClient({ mode: ctx.paperMode ? 'paper' : 'live' });
 
   switch (action.type) {
     case 'polymarket_get_account_summary': {
       try {
+        if (ctx.paperMode) {
+          const paperBals = getPaperBalances();
+          const usdcBal = getPaperBalance('USDC');
+          ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, 0 positions.`;
+          const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
+          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, 0 positions.\nPaper portfolio:\n${lines.join('\n')}`);
+        }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
           (p) =>
@@ -370,6 +421,26 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
     case 'polymarket_place_order': {
       try {
         const raw = action as Extract<TaskAction, { type: 'polymarket_place_order' }>;
+        if (ctx.paperMode) {
+          const cost = raw.price * raw.size;
+          adjustPaperBalance('USDC', -cost);
+          const orderId = recordPaperTrade({
+            task_id: ctx.task.id,
+            venue: 'polymarket',
+            action_type: 'polymarket_place_order',
+            symbol: raw.tokenId.slice(0, 16),
+            side: raw.side,
+            price: raw.price,
+            size: raw.size,
+            amount_usd: cost,
+          });
+          return result(
+            `[PAPER] Order placed (GTC): ${raw.side} ${raw.size} @ $${raw.price} on ${raw.tokenId.slice(0, 10)}... | orderId: ${orderId}`
+          );
+        }
+        const cost = raw.price * raw.size;
+        const riskCheck = checkTradeAllowed('polymarket', cost);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
         await client.placeOrder({
           tokenId: raw.tokenId,
           side: raw.side,
@@ -378,6 +449,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           tickSize: raw.tickSize,
           negRisk: raw.negRisk,
         });
+        recordTradeVolume('polymarket', cost);
+        openRiskPosition('polymarket', raw.tokenId.slice(0, 16), raw.side, cost, ctx.task.id);
         return result(`Order placed (GTC): ${raw.side} ${raw.size} @ $${raw.price} on ${raw.tokenId.slice(0, 10)}...`);
       } catch (e) {
         return errResult(String(e instanceof Error ? e.message : e));
@@ -387,6 +460,22 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
       try {
         const raw = action as Extract<TaskAction, { type: 'polymarket_close_position' }>;
         if (!raw.tokenId) return errResult('tokenId is required. Use polymarket_get_account_summary first.');
+        if (ctx.paperMode) {
+          const proceeds = (raw.size ?? 1) * 0.999;
+          adjustPaperBalance('USDC', proceeds);
+          const orderId = recordPaperTrade({
+            task_id: ctx.task.id,
+            venue: 'polymarket',
+            action_type: 'polymarket_close_position',
+            symbol: raw.tokenId.slice(0, 16),
+            side: 'sell',
+            size: raw.size,
+            amount_usd: proceeds,
+          });
+          return result(
+            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'} | orderId: ${orderId}`
+          );
+        }
         await client.closePosition({ tokenId: raw.tokenId, size: raw.size });
         return result(`Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'}`);
       } catch (e) {
@@ -414,6 +503,57 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
     return errResult(`Unknown chain action: ${(action as any).type}`);
   }
 
+  // ── Paper mode: simulate all chain operations without real clients ──────────
+  if (ctx.paperMode) {
+    switch (action.type) {
+      case 'chain_get_balance': {
+        const usdc = getPaperBalance('USDC');
+        const eth = getPaperBalance('ETH');
+        return result(`[PAPER] USDC balance: ${usdc} USDC | Native balance: ${eth} ETH`);
+      }
+      case 'chain_get_token_balance': {
+        const a = action as Extract<TaskAction, { type: 'chain_get_token_balance' }>;
+        const bal = getPaperBalance(a.tokenAddress);
+        return result(`[PAPER] ${a.tokenAddress} balance: ${bal}`);
+      }
+      case 'chain_send_token': {
+        const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
+        adjustPaperBalance(a.tokenAddress, -Number(a.amount));
+        const orderId = recordPaperTrade({
+          task_id: ctx.task.id,
+          venue: 'chain',
+          action_type: 'chain_send_token',
+          symbol: a.tokenAddress,
+          side: 'send',
+          amount_usd: Number(a.amount),
+        });
+        const hash = `0xpaper${orderId.replace(/-/g, '').slice(0, 40)}`;
+        return result(`[PAPER] Token sent. Tx: ${hash} | Status: success`);
+      }
+      case 'chain_swap': {
+        const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
+        const amtIn = Number(a.amountIn);
+        adjustPaperBalance(a.tokenIn, -amtIn);
+        adjustPaperBalance(a.tokenOut, amtIn); // 1:1 simulation
+        const orderId = recordPaperTrade({
+          task_id: ctx.task.id,
+          venue: 'chain',
+          action_type: 'chain_swap',
+          symbol: `${a.tokenIn}->${a.tokenOut}`,
+          size: amtIn,
+        });
+        const hash = `0xpaper${orderId.replace(/-/g, '').slice(0, 40)}`;
+        return result(`[PAPER] Swap executed. Tx: ${hash} | Status: success | Block: 99999`);
+      }
+      case 'chain_get_tx_status': {
+        const a = action as Extract<TaskAction, { type: 'chain_get_tx_status' }>;
+        return result(`[PAPER] Tx ${a.txHash}: success (block 99999)`);
+      }
+      default:
+        return errResult(`Unknown chain action`);
+    }
+  }
+
   const { ChainClient } = await import('../chain/chain-client');
   const client = new ChainClient(chainId);
 
@@ -438,7 +578,12 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
     case 'chain_send_token': {
       try {
         const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
+        const sendAmt = Number(a.amount);
+        const riskCheck = checkTradeAllowed('chain', sendAmt);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
         const receipt = await client.sendToken(a.tokenAddress, a.to, a.amount);
+        recordTradeVolume('chain', sendAmt);
+        openRiskPosition('chain', a.tokenAddress, 'send', sendAmt, ctx.task.id);
         return result(
           `Token sent. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
         );
@@ -449,12 +594,17 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
     case 'chain_swap': {
       try {
         const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
+        const swapAmt = Number(a.amountIn);
+        const riskCheck = checkTradeAllowed('chain', swapAmt);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
         const receipt = await client.swap({
           tokenIn: a.tokenIn,
           tokenOut: a.tokenOut,
           amountIn: a.amountIn,
           slippageBps: a.slippageBps,
         });
+        recordTradeVolume('chain', swapAmt);
+        openRiskPosition('chain', `${a.tokenIn}->${a.tokenOut}`, 'swap', swapAmt, ctx.task.id);
         return result(
           `Swap executed. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
         );
@@ -496,11 +646,18 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
   const { CoinbaseClient } = await import('../cex/coinbase-client');
   const { FeeService, FEE_USDC } = await import('../chain/fee-service');
 
-  const client = exchange === 'binance' ? new BinanceClient({ mode: 'live' }) : new CoinbaseClient({ mode: 'live' });
+  const mode = ctx.paperMode ? 'paper' : 'live';
+  const client = exchange === 'binance' ? new BinanceClient({ mode }) : new CoinbaseClient({ mode });
 
   switch (action.type) {
     case 'cex_get_balance': {
       try {
+        if (ctx.paperMode) {
+          const paperBals = getPaperBalances();
+          if (paperBals.length === 0) return result('[PAPER] No balances found.');
+          const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount} free, 0 locked`);
+          return result(`[PAPER] ${exchange} balances:\n${lines.join('\n')}`);
+        }
         const balances = await client.getBalances();
         if (balances.length === 0) return result('No balances found.');
         const lines = balances.map((b) => `  ${b.asset}: ${b.free} free, ${b.locked} locked`);
@@ -524,6 +681,23 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
     case 'cex_place_order': {
       try {
         const a = action as Extract<TaskAction, { type: 'cex_place_order' }>;
+        if (ctx.paperMode) {
+          adjustPaperBalance('USDC', -a.amount);
+          const orderId = recordPaperTrade({
+            task_id: ctx.task.id,
+            venue: exchange,
+            action_type: 'cex_place_order',
+            symbol: a.symbol,
+            side: a.side,
+            price: a.price,
+            amount_usd: a.amount,
+          });
+          return result(
+            `[PAPER] Order placed on ${exchange}: ${a.side} ${a.amount} ${a.symbol} | orderId: ${orderId} | status: FILLED`
+          );
+        }
+        const riskCheck = checkTradeAllowed(exchange as 'binance' | 'coinbase', a.amount);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
         const netAmount = FeeService.deductFeeFromAmount(a.amount);
         if (netAmount <= 0) {
           return errResult(`Order amount too small after fee deduction (fee: ${FEE_USDC} USDC).`);
@@ -535,6 +709,8 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
           amount: netAmount,
           price: a.price,
         });
+        recordTradeVolume(exchange as 'binance' | 'coinbase', a.amount);
+        openRiskPosition(exchange as 'binance' | 'coinbase', a.symbol, a.side, a.amount, ctx.task.id);
         return result(
           `Order placed on ${exchange}: ${a.side} ${netAmount} ${a.symbol} | orderId: ${res.orderId} | status: ${res.status}`
         );

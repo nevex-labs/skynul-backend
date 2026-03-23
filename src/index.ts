@@ -17,6 +17,8 @@ import { authMiddleware } from './middleware/auth';
 import { corsMiddleware } from './middleware/cors';
 import { agentGroup } from './routes/agent';
 import { aiGroup } from './routes/ai';
+import { coinbaseAuthGroup } from './routes/auth/coinbase';
+import { walletAuthGroup } from './routes/auth/wallet';
 import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
 import { tasksGroup } from './routes/tasks';
@@ -65,7 +67,9 @@ const routes = app
   .route('/api/agent', agentGroup)
   .route('/api/integrations', integrationsGroup)
   .route('/api/system', systemGroup)
-  .route('/api/wallet', walletGroup);
+  .route('/api/wallet', walletGroup)
+  .route('/auth/coinbase', coinbaseAuthGroup)
+  .route('/auth/wallet', walletAuthGroup);
 
 // ── Export type for hono/client (hc) ────────────────────────────────────────
 export type AppType = typeof routes;
@@ -102,6 +106,10 @@ const shutdown = async () => {
   taskManager.destroyAll();
   const { closeSharedPlaywrightChromeCdp } = await import('./core/browser/playwright-cdp');
   await closeSharedPlaywrightChromeCdp();
+  const { closeProjectDb } = await import('./core/stores/project-store');
+  closeProjectDb();
+  const { closeMemoryDb } = await import('./core/agent/task-memory');
+  closeMemoryDb();
   process.exit(0);
 };
 

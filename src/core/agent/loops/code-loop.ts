@@ -14,6 +14,7 @@ import {
   executeFileWrite,
   executeGenerateImage,
   executeInterTaskAction,
+  executeMemoryAction,
   executePolymarketAction,
   executeSetIdentity,
   executeShell,
@@ -40,11 +41,13 @@ export type CodeLoopSetup = {
 
 export function setupCodeLoop(setup: CodeLoopSetup): {
   systemPrompt: string;
+  systemPromptCompact: string;
   history: VisionMessage[];
   callbacks: LoopCallbacks;
 } {
   const { task, memoryContext, taskManager, parentTaskId } = setup.deps;
-  const systemPrompt = buildCodeSystemPrompt(task.capabilities, !!parentTaskId);
+  const systemPrompt = buildCodeSystemPrompt(task.capabilities, !!parentTaskId, false);
+  const systemPromptCompact = buildCodeSystemPrompt(task.capabilities, !!parentTaskId, true);
   const history: VisionMessage[] = [];
   const memCtx = memoryContext ?? '';
   const isAppScripting = task.capabilities.includes('app.scripting');
@@ -62,11 +65,14 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
 
   const callbacks: LoopCallbacks = {
     taskManager,
-    buildTurnMessage(stepIndex) {
+    buildTurnMessage(stepIndex, budget) {
       if (stepIndex === 0) {
         return { text: initialText };
       }
-      const recentSteps = task.steps.slice(-8);
+      // Level 1: reduce action log size when context pressure is high
+      const compact = budget?.applyLevel1;
+      const recentSteps = task.steps.slice(compact ? -4 : -8);
+      const resultLimit = compact ? 150 : 300;
       const actionLog = recentSteps
         .map((s) => {
           const a = s.action as Record<string, unknown>;
@@ -77,7 +83,7 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
           else if (a.type === 'file_edit') desc = `file_edit ${a.path}`;
           else if (a.type === 'file_list') desc = `file_list "${a.pattern}"`;
           else if (a.type === 'file_search') desc = `file_search "${a.pattern}"`;
-          const resultSuffix = s.result ? ` → ${s.result.slice(0, 300)}` : '';
+          const resultSuffix = s.result ? ` → ${s.result.slice(0, resultLimit)}` : '';
           const errorSuffix = s.error ? ` [ERROR: ${s.error.slice(0, 100)}]` : '';
           return `Step ${s.index + 1}: ${desc}${resultSuffix}${errorSuffix}`;
         })
@@ -95,7 +101,7 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
     isAborted: setup.isAborted,
   };
 
-  return { systemPrompt, history, callbacks };
+  return { systemPrompt, systemPromptCompact, history, callbacks };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -191,6 +197,12 @@ export async function executeCodeAction(
     case 'remember_fact':
     case 'forget_fact': {
       const res = executeFactAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'memory_save':
+    case 'memory_search':
+    case 'memory_context': {
+      const res = executeMemoryAction(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'set_identity': {

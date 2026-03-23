@@ -1,6 +1,7 @@
 import type { Task, TaskCapabilityId, TaskMode, TaskRunnerId } from '../../types';
 
-export function deriveRunner(mode: TaskMode, capabilities: TaskCapabilityId[]): TaskRunnerId {
+export function deriveRunner(mode: TaskMode, capabilities: TaskCapabilityId[], orchestrate?: boolean): TaskRunnerId {
+  if (orchestrate) return 'orchestrator';
   if (mode === 'code') return 'code';
   if (capabilities.includes('polymarket.trading')) return 'cdp';
   if (capabilities.includes('onchain.trading')) return 'cdp';

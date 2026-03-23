@@ -1,7 +1,7 @@
-import type { SwapParams, TokenBalance, TxReceipt } from './types';
 import { getDefaultChainId } from './config';
 import { EvmWallet } from './evm-wallet';
 import { FeeService } from './fee-service';
+import type { SwapParams, TokenBalance, TxReceipt } from './types';
 
 /**
  * High-level chain client combining wallet + fee + DEX swap.

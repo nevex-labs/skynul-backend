@@ -122,7 +122,6 @@ function getDesktopPath(): string {
     const user = process.env.LOGNAME || process.env.USER || 'user';
     // Try Windows desktop via WSL
     try {
-      const { execSync } = require('child_process');
       const winUser = execSync('powershell.exe -NoProfile -NonInteractive -Command "[Environment]::UserName"', {
         encoding: 'utf-8',
         timeout: 3000,

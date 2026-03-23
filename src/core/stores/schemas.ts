@@ -74,4 +74,5 @@ export const PolicyStateSchema = z.object({
     .optional(),
   taskMemoryEnabled: z.boolean().optional(),
   taskAutoApprove: z.boolean().optional(),
+  paperTradingEnabled: z.boolean().optional(),
 });

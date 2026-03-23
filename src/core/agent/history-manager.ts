@@ -3,8 +3,9 @@
  * Handles message compression, action logging, and inbox draining.
  */
 
-import type { TaskStep } from '../../types';
+import type { TaskStep, VisionContentPart } from '../../types';
 import type { VisionMessage } from '../../types';
+import type { ProviderId } from '../../types';
 import type { TaskManager } from './task-manager';
 
 /** Extract action type from an assistant message text. */
@@ -73,6 +74,77 @@ export function buildActionLog(
   }
 
   return log;
+}
+
+/** Map provider to its cheapest/fastest model for summarization. */
+export function getSummarizationModel(provider: ProviderId): string {
+  const map: Partial<Record<ProviderId, string>> = {
+    chatgpt: 'gpt-4.1-nano',
+    claude: 'claude-haiku-4-5-20251001',
+    gemini: 'gemini-2.0-flash',
+    deepseek: 'deepseek-chat',
+    glm: 'glm-4-flash',
+    minimax: 'MiniMax-Text-01',
+    kimi: 'moonshot-v1-8k',
+  };
+  return map[provider] ?? provider;
+}
+
+/**
+ * Summarize old history messages via a cheap LLM call.
+ * Preserves first message + last 6 messages, replaces middle with summary.
+ * Returns true if summarization occurred, false if skipped.
+ */
+export async function summarizeHistory(
+  history: VisionMessage[],
+  provider: ProviderId,
+  taskId: string
+): Promise<boolean> {
+  if (history.length <= 10) return false;
+
+  // Already summarized — don't re-summarize
+  const alreadySummarized = history.some((m) =>
+    m.content?.some((c) => 'text' in c && c.text.includes('[HISTORY SUMMARY]'))
+  );
+  if (alreadySummarized) return false;
+
+  const middle = history.slice(1, -6);
+  if (middle.length === 0) return false;
+
+  // Extract text from middle messages
+  const text = middle
+    .map((m) =>
+      m.content
+        ?.filter((c): c is Extract<VisionContentPart, { text: string }> => 'text' in c)
+        .map((c) => `${m.role}: ${c.text}`)
+        .join('\n')
+    )
+    .filter(Boolean)
+    .join('\n');
+
+  // Lazy import to avoid loading vision stack for loops that never hit L3
+  const { callVision } = await import('./vision-dispatch');
+
+  const prompt =
+    'Summarize this agent conversation history concisely. ' +
+    'PRESERVE: decisions made, current positions/holdings, prices/thresholds, ' +
+    'errors encountered, pending goals. Under 400 words.';
+
+  const model = getSummarizationModel(provider);
+  const result = await callVision(
+    provider,
+    prompt,
+    [{ role: 'user', content: [{ type: 'input_text', text }] }],
+    taskId,
+    model
+  );
+
+  history.splice(1, middle.length, {
+    role: 'user',
+    content: [{ type: 'input_text', text: `[HISTORY SUMMARY]\n${result.text}\n[/HISTORY SUMMARY]` }],
+  });
+
+  return true;
 }
 
 /** Drain inter-task messages and return them as a text block. */

@@ -14,10 +14,8 @@ export class BinanceClient {
 
   private async getCredentials(): Promise<{ apiKey: string; apiSecret: string }> {
     const { getSecret } = await import('../stores/secret-store');
-    const apiKey =
-      (await getSecret('BINANCE_API_KEY')) ?? process.env.BINANCE_API_KEY;
-    const apiSecret =
-      (await getSecret('BINANCE_API_SECRET')) ?? process.env.BINANCE_API_SECRET;
+    const apiKey = (await getSecret('BINANCE_API_KEY')) ?? process.env.BINANCE_API_KEY;
+    const apiSecret = (await getSecret('BINANCE_API_SECRET')) ?? process.env.BINANCE_API_SECRET;
 
     if (!apiKey || !apiSecret) {
       throw new Error('BINANCE_API_KEY and BINANCE_API_SECRET are not set. Configure them in Settings → Trading.');
@@ -38,9 +36,7 @@ export class BinanceClient {
     const { apiKey, apiSecret } = await this.getCredentials();
     const timestamp = Date.now();
     const allParams = { ...params, timestamp };
-    const queryString = new URLSearchParams(
-      Object.entries(allParams).map(([k, v]) => [k, String(v)])
-    ).toString();
+    const queryString = new URLSearchParams(Object.entries(allParams).map(([k, v]) => [k, String(v)])).toString();
     const signature = await this.sign(queryString, apiSecret);
     const fullQuery = `${queryString}&signature=${signature}`;
 
@@ -86,11 +82,11 @@ export class BinanceClient {
     );
 
     return data.balances
-      .filter((b) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0)
+      .filter((b) => Number.parseFloat(b.free) > 0 || Number.parseFloat(b.locked) > 0)
       .map((b) => ({
         asset: b.asset,
-        free: parseFloat(b.free),
-        locked: parseFloat(b.locked),
+        free: Number.parseFloat(b.free),
+        locked: Number.parseFloat(b.locked),
       }));
   }
 
@@ -99,19 +95,21 @@ export class BinanceClient {
     // Return open orders as proxy for positions.
     if (this.mode === 'paper') return [];
 
-    const orders = await this.signedRequest<Array<{
-      symbol: string;
-      side: string;
-      origQty: string;
-      price: string;
-    }>>('GET', '/openOrders', {});
+    const orders = await this.signedRequest<
+      Array<{
+        symbol: string;
+        side: string;
+        origQty: string;
+        price: string;
+      }>
+    >('GET', '/openOrders', {});
 
     return orders.map((o) => ({
       symbol: o.symbol,
       side: o.side === 'BUY' ? 'long' : 'short',
-      size: parseFloat(o.origQty),
-      entryPrice: parseFloat(o.price),
-      markPrice: parseFloat(o.price),
+      size: Number.parseFloat(o.origQty),
+      entryPrice: Number.parseFloat(o.price),
+      markPrice: Number.parseFloat(o.price),
       unrealizedPnl: 0,
     }));
   }
@@ -133,11 +131,7 @@ export class BinanceClient {
       params.timeInForce = 'GTC';
     }
 
-    const data = await this.signedRequest<{ orderId: number; status: string }>(
-      'POST',
-      '/order',
-      params
-    );
+    const data = await this.signedRequest<{ orderId: number; status: string }>('POST', '/order', params);
 
     return { orderId: String(data.orderId), status: data.status };
   }
@@ -150,20 +144,13 @@ export class BinanceClient {
     });
   }
 
-  async withdraw(
-    asset: string,
-    amount: number,
-    address: string,
-    network: string
-  ): Promise<string> {
+  async withdraw(asset: string, amount: number, address: string, network: string): Promise<string> {
     if (this.mode === 'paper') return `paper-withdraw-${Date.now()}`;
 
     const { apiKey, apiSecret } = await this.getCredentials();
     const timestamp = Date.now();
     const params = { coin: asset, address, amount, network, timestamp };
-    const queryString = new URLSearchParams(
-      Object.entries(params).map(([k, v]) => [k, String(v)])
-    ).toString();
+    const queryString = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
     const { createHmac } = await import('crypto');
     const signature = createHmac('sha256', apiSecret).update(queryString).digest('hex');
 
