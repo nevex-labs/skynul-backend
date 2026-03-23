@@ -10,6 +10,7 @@ import type { ProviderId } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
+import { formatError } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
@@ -118,7 +119,9 @@ export async function runAgentLoop(
       if (callbacks.isAborted()) {
         return finish(task, 'cancelled', callbacks, task.error);
       }
-      return finish(task, 'failed', callbacks, `Model call error: ${e instanceof Error ? e.message : String(e)}`);
+      const rawError = e instanceof Error ? e.message : String(e);
+      const formatted = formatError(rawError);
+      return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
     }
 
     if (callbacks.isAborted()) {
@@ -170,7 +173,9 @@ export async function runAgentLoop(
       }
       stepResult = await callbacks.executeAction!(action);
     } catch (e) {
-      stepError = e instanceof Error ? e.message : String(e);
+      const rawError = e instanceof Error ? e.message : String(e);
+      const formatted = formatError(rawError);
+      stepError = formatted.userMessage;
     }
 
     if (callbacks.isAborted()) {
