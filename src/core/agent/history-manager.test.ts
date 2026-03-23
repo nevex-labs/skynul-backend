@@ -1,7 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VisionMessage } from '../../types';
-import { buildActionLog, compressHistory, drainInbox, truncateHistory } from './history-manager';
+import { buildActionLog, compressHistory, drainInbox, getSummarizationModel, summarizeHistory, truncateHistory } from './history-manager';
 import type { TaskManager } from './task-manager';
+
+vi.mock('./vision-dispatch', () => ({
+  callVision: vi.fn().mockResolvedValue({ text: 'Summary of actions taken.' }),
+}));
+
+import { callVision } from './vision-dispatch';
 
 function makeMsg(role: 'user' | 'assistant', text: string): VisionMessage {
   return { role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] };
@@ -228,5 +234,96 @@ describe('drainInbox', () => {
     const tm = { drainMessages: vi.fn().mockReturnValue([]) } as any as TaskManager;
     drainInbox(tm, 'my-task-id');
     expect(tm.drainMessages).toHaveBeenCalledWith('my-task-id');
+  });
+});
+
+describe('getSummarizationModel', () => {
+  it('returns cheap model for known providers', () => {
+    expect(getSummarizationModel('chatgpt')).toBe('gpt-4.1-nano');
+    expect(getSummarizationModel('claude')).toBe('claude-haiku-4-5-20251001');
+    expect(getSummarizationModel('gemini')).toBe('gemini-2.0-flash');
+  });
+
+  it('returns provider name for unmapped provider', () => {
+    expect(getSummarizationModel('openrouter' as any)).toBe('openrouter');
+  });
+});
+
+describe('summarizeHistory', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeHistory(count: number): VisionMessage[] {
+    return Array.from({ length: count }, (_, i) =>
+      makeMsg(i % 2 === 0 ? 'user' : 'assistant', `message ${i}`)
+    );
+  }
+
+  it('returns false when history <= 10', async () => {
+    const history = makeHistory(10);
+    const result = await summarizeHistory(history, 'claude', 'task-1');
+    expect(result).toBe(false);
+    expect(callVision).not.toHaveBeenCalled();
+  });
+
+  it('returns false when already summarized', async () => {
+    const history = makeHistory(12);
+    history[3] = makeMsg('user', '[HISTORY SUMMARY] previous summary [/HISTORY SUMMARY]');
+    const result = await summarizeHistory(history, 'claude', 'task-1');
+    expect(result).toBe(false);
+    expect(callVision).not.toHaveBeenCalled();
+  });
+
+  it('returns false when middle is empty', async () => {
+    // 7 messages: first=1, tail=6, middle=0
+    const history = makeHistory(7);
+    const result = await summarizeHistory(history, 'claude', 'task-1');
+    expect(result).toBe(false);
+    expect(callVision).not.toHaveBeenCalled();
+  });
+
+  it('summarizes and splices correctly', async () => {
+    vi.mocked(callVision).mockResolvedValueOnce({ text: 'Summary of actions taken.' });
+    const history = makeHistory(15);
+    const result = await summarizeHistory(history, 'claude', 'task-1');
+    expect(result).toBe(true);
+    // first + 1 summary + last 6
+    expect(history.length).toBe(8);
+  });
+
+  it('preserves first message', async () => {
+    vi.mocked(callVision).mockResolvedValueOnce({ text: 'Summary of actions taken.' });
+    const history = makeHistory(15);
+    const originalFirst = history[0];
+    await summarizeHistory(history, 'claude', 'task-1');
+    expect(history[0]).toEqual(originalFirst);
+  });
+
+  it('preserves last 6 messages', async () => {
+    vi.mocked(callVision).mockResolvedValueOnce({ text: 'Summary of actions taken.' });
+    const history = makeHistory(15);
+    const originalTail = history.slice(-6);
+    await summarizeHistory(history, 'claude', 'task-1');
+    expect(history.slice(-6)).toEqual(originalTail);
+  });
+
+  it('summary message has correct markers', async () => {
+    vi.mocked(callVision).mockResolvedValueOnce({ text: 'Summary of actions taken.' });
+    const history = makeHistory(15);
+    await summarizeHistory(history, 'claude', 'task-1');
+    const summaryContent = history[1].content[0] as { text: string };
+    expect(summaryContent.text).toContain('[HISTORY SUMMARY]');
+    expect(summaryContent.text).toContain('[/HISTORY SUMMARY]');
+  });
+
+  it('calls callVision with correct args', async () => {
+    vi.mocked(callVision).mockResolvedValueOnce({ text: 'Summary of actions taken.' });
+    const history = makeHistory(15);
+    await summarizeHistory(history, 'claude', 'task-1');
+    expect(callVision).toHaveBeenCalledOnce();
+    const [, systemPrompt, , , model] = vi.mocked(callVision).mock.calls[vi.mocked(callVision).mock.calls.length - 1];
+    expect(systemPrompt).toContain('Summarize');
+    expect(model).toBe(getSummarizationModel('claude'));
   });
 });

@@ -10,7 +10,7 @@ import type { ProviderId } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
-import { compressHistory, drainInbox, truncateHistory } from '../history-manager';
+import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
 
@@ -87,6 +87,16 @@ export async function runAgentLoop(
     } else {
       compressHistory(history, 6);
     }
+
+    // Level 3: LLM-driven summarization when context pressure is critical
+    if (budget.applyLevel3) {
+      try {
+        await summarizeHistory(history, provider, task.id);
+      } catch {
+        // Non-critical: L3 failure doesn't break the loop
+      }
+    }
+
     history.push(turnMessage);
 
     callbacks.pushStatus('Thinking...');

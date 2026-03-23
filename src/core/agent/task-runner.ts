@@ -44,6 +44,7 @@ export class TaskRunner {
       appBridge: this.appBridge,
       pushUpdate: () => this.pushUpdate(),
       pushStatus: (msg) => this.pushStatus(msg),
+      paperMode: this.opts.paperMode,
     };
   }
 
