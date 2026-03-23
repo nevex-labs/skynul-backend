@@ -11,6 +11,7 @@ import {
   executeFactAction,
   executeGenerateImage,
   executeInterTaskAction,
+  executeMemoryAction,
   executePolymarketAction,
   executeSetIdentity,
 } from '../action-executors';
@@ -34,11 +35,13 @@ export type CdpLoopSetup = {
 
 export function setupCdpLoop(setup: CdpLoopSetup): {
   systemPrompt: string;
+  systemPromptCompact: string;
   history: VisionMessage[];
   callbacks: LoopCallbacks;
 } {
   const { task, memoryContext, taskManager, parentTaskId } = setup.deps;
-  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId);
+  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false);
+  const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true);
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -67,7 +70,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
 
   const callbacks: LoopCallbacks = {
     taskManager,
-    buildTurnMessage(stepIndex) {
+    buildTurnMessage(stepIndex, budget) {
       if (stepIndex === 0) {
         const activeModes: string[] = [];
         if (task.capabilities.includes('polymarket.trading')) activeModes.push('polymarket_* actions');
@@ -78,7 +81,12 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
           text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.`,
         };
       }
-      const actionLog = buildActionLog(task.steps, 8, { truncateResult: 200, truncateError: 100 });
+      // Level 1: reduce action log when context pressure is high
+      const compact = budget?.applyLevel1;
+      const actionLog = buildActionLog(task.steps, compact ? 4 : 8, {
+        truncateResult: compact ? 100 : 200,
+        truncateError: 100,
+      });
       return { text: `Step ${stepIndex + 1}.${actionLog}` };
     },
     recordStep() {
@@ -89,7 +97,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
     isAborted: setup.isAborted,
   };
 
-  return { systemPrompt, history, callbacks };
+  return { systemPrompt, systemPromptCompact, history, callbacks };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,6 +116,12 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'remember_fact':
     case 'forget_fact': {
       const res = executeFactAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'memory_save':
+    case 'memory_search':
+    case 'memory_context': {
+      const res = executeMemoryAction(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'set_identity': {

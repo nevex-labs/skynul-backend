@@ -11,6 +11,7 @@ import {
   executeFactAction,
   executeGenerateImage,
   executeInterTaskAction,
+  executeMemoryAction,
   executeSetIdentity,
   resolveAttachments,
 } from '../action-executors';
@@ -37,6 +38,7 @@ export type BrowserLoopResult = {
   engine: BrowserEngine;
   release: () => Promise<void>;
   systemPrompt: string;
+  systemPromptCompact: string;
   history: VisionMessage[];
   callbacks: LoopCallbacks;
 };
@@ -67,7 +69,8 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
     throw err;
   }
 
-  const systemPrompt = buildBrowserSystemPrompt(!!parentTaskId);
+  const systemPrompt = buildBrowserSystemPrompt(!!parentTaskId, false);
+  const systemPromptCompact = buildBrowserSystemPrompt(!!parentTaskId, true);
   const history: VisionMessage[] = [];
   const memCtx = memoryContext ? `\n\nContext from memory:\n${memoryContext}` : '';
 
@@ -81,7 +84,7 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
 
   const callbacks: LoopCallbacks = {
     taskManager,
-    async buildTurnMessage(stepIndex) {
+    async buildTurnMessage(stepIndex, budget) {
       let snap = { url: '', title: '', snapshot: '(page not available)' };
       try {
         snap = await engine.snapshot();
@@ -94,9 +97,11 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
           images: attachDataUrls.slice(0, 4),
         };
       }
-      const actionLog = buildActionLog(task.steps, 8, {
+      // Level 1: reduce action log size when context pressure is high
+      const compact = budget?.applyLevel1;
+      const actionLog = buildActionLog(task.steps, compact ? 4 : 8, {
         includeFailedSelectors: true,
-        truncateResult: 200,
+        truncateResult: compact ? 100 : 200,
         truncateError: 100,
       });
       return {
@@ -111,7 +116,7 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
     isAborted: setup.isAborted,
   };
 
-  return { engine, release: release!, systemPrompt, history, callbacks };
+  return { engine, release: release!, systemPrompt, systemPromptCompact, history, callbacks };
 }
 
 async function autoDelegateForSocialPost(
@@ -247,6 +252,12 @@ export async function executeBrowserAction(
     case 'remember_fact':
     case 'forget_fact': {
       const res = executeFactAction(ctx, action as any);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'memory_save':
+    case 'memory_search':
+    case 'memory_context': {
+      const res = executeMemoryAction(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'set_identity': {

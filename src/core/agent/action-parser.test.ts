@@ -274,3 +274,57 @@ describe('parseModelResponse — CEX trading actions', () => {
     expect((action as any).network).toBe('ETH');
   });
 });
+
+describe('orchestrator actions', () => {
+  it('parses task_spawn action', () => {
+    const raw = JSON.stringify({
+      thought: 'spawning research agent',
+      action: { type: 'task_spawn', prompt: 'Research BTC', mode: 'browser', agentRole: 'Research', agentName: 'Scout' }
+    });
+    const result = parseModelResponse(raw);
+    expect(result.action.type).toBe('task_spawn');
+    expect((result.action as any).prompt).toBe('Research BTC');
+    expect((result.action as any).mode).toBe('browser');
+    expect((result.action as any).agentRole).toBe('Research');
+  });
+
+  it('parses task_wait action with single taskId', () => {
+    const raw = JSON.stringify({
+      thought: 'waiting for research',
+      action: { type: 'task_wait', taskIds: ['task_abc123'] }
+    });
+    const result = parseModelResponse(raw);
+    expect(result.action.type).toBe('task_wait');
+    expect((result.action as any).taskIds).toEqual(['task_abc123']);
+  });
+
+  it('parses task_wait action with multiple taskIds and timeout', () => {
+    const raw = JSON.stringify({
+      action: { type: 'task_wait', taskIds: ['task_a', 'task_b'], timeoutMs: 60000 }
+    });
+    const result = parseModelResponse(raw);
+    expect(result.action.type).toBe('task_wait');
+    expect((result.action as any).taskIds).toEqual(['task_a', 'task_b']);
+    expect((result.action as any).timeoutMs).toBe(60000);
+  });
+
+  it('parses plan action with full OrchestratorPlan', () => {
+    const plan = {
+      objective: 'Research and summarize BTC news',
+      constraints: ['Use public sources only'],
+      subtasks: [{ id: 'r1', prompt: 'Find top 5 BTC news', role: 'Research' }],
+      successCriteria: ['Summary with 3+ sources'],
+      failureCriteria: ['No sources found'],
+      risks: ['Sources may be outdated'],
+    };
+    const raw = JSON.stringify({
+      thought: 'Creating plan',
+      action: { type: 'plan', plan }
+    });
+    const result = parseModelResponse(raw);
+    expect(result.action.type).toBe('plan');
+    expect((result.action as any).plan.objective).toBe('Research and summarize BTC news');
+    expect((result.action as any).plan.subtasks).toHaveLength(1);
+    expect((result.action as any).plan.subtasks[0].role).toBe('Research');
+  });
+});

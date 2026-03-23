@@ -12,7 +12,7 @@ import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
 import { sandboxPath, validateShellCommand } from './input-guard';
 import type { TaskManager } from './task-manager';
-import { deleteFact, saveFact } from './task-memory';
+import { deleteFact, formatObservationsForPrompt, getRecentObservations, saveObservation, saveFact, searchObservations } from './task-memory';
 import { scrapeUrl } from './web-scraper';
 
 export type ExecutorContext = {
@@ -102,6 +102,42 @@ export function executeFactAction(
       if (typeof action.factId !== 'number') return errResult('"factId" number required');
       deleteFact(action.factId);
       return result(`Forgot fact #${action.factId}`);
+    }
+  }
+}
+
+/** Execute knowledge memory actions. */
+export function executeMemoryAction(
+  _ctx: ExecutorContext,
+  action: Extract<TaskAction, { type: 'memory_save' | 'memory_search' | 'memory_context' }>
+): ExecutorResult {
+  switch (action.type) {
+    case 'memory_save': {
+      if (!action.title || !action.content) return errResult('"title" and "content" are required');
+      const id = saveObservation({
+        title: action.title,
+        content: action.content,
+        obs_type: action.obs_type,
+        project: action.project,
+        topic_key: action.topic_key,
+      });
+      if (id < 0) return errResult('Failed to save observation');
+      return result(`Observation saved (id=${id}): "${action.title}"`);
+    }
+    case 'memory_search': {
+      if (!action.query) return errResult('"query" is required');
+      const obs = searchObservations(action.query, {
+        type_filter: action.type_filter,
+        project: action.project,
+        limit: action.limit,
+      });
+      if (obs.length === 0) return result('No matching observations found.');
+      return result(formatObservationsForPrompt(obs));
+    }
+    case 'memory_context': {
+      const obs = getRecentObservations({ project: action.project, limit: action.limit });
+      if (obs.length === 0) return result('No observations in memory.');
+      return result(formatObservationsForPrompt(obs));
     }
   }
 }

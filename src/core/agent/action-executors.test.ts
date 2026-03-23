@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeFactAction, executeSetIdentity, executeShell, headTail } from './action-executors';
+import { executeFactAction, executeMemoryAction, executeSetIdentity, executeShell, headTail } from './action-executors';
 import type { ExecutorContext } from './action-executors';
+import { _initDbForTest } from './task-memory';
 
 describe('headTail', () => {
   it('returns text unchanged if under limit', () => {
@@ -68,6 +69,72 @@ describe('executeFactAction', () => {
     const ctx = makeCtx();
     const result = executeFactAction(ctx, { type: 'forget_fact' } as any);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('executeMemoryAction', () => {
+  beforeEach(() => {
+    _initDbForTest();
+  });
+
+  function makeCtx(): ExecutorContext {
+    return {
+      task: { id: 't1', prompt: '', status: 'running', mode: 'code', steps: [], capabilities: [], maxSteps: 10, timeoutMs: 60000, createdAt: 0, updatedAt: 0 } as any,
+      taskManager: null,
+      appBridge: { run: vi.fn() } as any,
+      pushUpdate: vi.fn(),
+      pushStatus: vi.fn(),
+    };
+  }
+
+  it('memory_save returns success with observation id', () => {
+    const ctx = makeCtx();
+    const res = executeMemoryAction(ctx, { type: 'memory_save', title: 'Test', content: 'Value' } as any);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value).toContain('Observation saved');
+    expect(res.ok && res.value).toContain('Test');
+  });
+
+  it('memory_save requires title and content', () => {
+    const ctx = makeCtx();
+    const res = executeMemoryAction(ctx, { type: 'memory_save', title: '', content: '' } as any);
+    expect(res.ok).toBe(false);
+  });
+
+  it('memory_search returns matching observations', () => {
+    const ctx = makeCtx();
+    executeMemoryAction(ctx, { type: 'memory_save', title: 'Redis caching', content: 'Use SET EX 3600' } as any);
+    const res = executeMemoryAction(ctx, { type: 'memory_search', query: 'Redis' } as any);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value).toContain('Redis caching');
+  });
+
+  it('memory_search returns no match message when nothing found', () => {
+    const ctx = makeCtx();
+    const res = executeMemoryAction(ctx, { type: 'memory_search', query: 'xyznonexistent' } as any);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value).toContain('No matching');
+  });
+
+  it('memory_search requires query', () => {
+    const ctx = makeCtx();
+    const res = executeMemoryAction(ctx, { type: 'memory_search', query: '' } as any);
+    expect(res.ok).toBe(false);
+  });
+
+  it('memory_context returns recent observations', () => {
+    const ctx = makeCtx();
+    executeMemoryAction(ctx, { type: 'memory_save', title: 'Pattern A', content: 'Always validate input' } as any);
+    const res = executeMemoryAction(ctx, { type: 'memory_context' } as any);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value).toContain('Pattern A');
+  });
+
+  it('memory_context returns empty message when nothing saved', () => {
+    const ctx = makeCtx();
+    const res = executeMemoryAction(ctx, { type: 'memory_context' } as any);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value).toContain('No observations');
   });
 });
 

@@ -1,3 +1,25 @@
+// ── Orchestrator Plan ─────────────────────────────────────────────────────────
+
+export type OrchestratorSubtask = {
+  /** Temporary label used for dependency references (e.g. "research-1"). */
+  id: string;
+  prompt: string;
+  role: string;
+  mode?: TaskMode;
+  capabilities?: TaskCapabilityId[];
+  /** Labels of subtasks that must complete before this one starts. */
+  dependsOn?: string[];
+};
+
+export type OrchestratorPlan = {
+  objective: string;
+  constraints: string[];
+  subtasks: OrchestratorSubtask[];
+  successCriteria: string[];
+  failureCriteria: string[];
+  risks: string[];
+};
+
 // ── Task Capability IDs ───────────────────────────────────────────────────────
 
 export const TASK_CAPABILITY_IDS = [
@@ -99,11 +121,37 @@ export type TaskAction =
   | { type: 'task_send'; prompt: string; agentName?: string; agentRole?: string }
   | { type: 'task_read'; taskId: string }
   | { type: 'task_message'; taskId: string; message: string }
+  // Orchestrator actions
+  | { type: 'plan'; plan: OrchestratorPlan }
+  | {
+      type: 'task_spawn';
+      prompt: string;
+      mode?: TaskMode;
+      capabilities?: TaskCapabilityId[];
+      agentName?: string;
+      agentRole?: string;
+      /** Max steps for the child task. Defaults are: Research=30, Risk=15, Executor=50, Monitor=20. */
+      maxSteps?: number;
+      /** Override the model for this child task (within the active provider). */
+      model?: string;
+    }
+  | { type: 'task_wait'; taskIds: string[]; timeoutMs?: number }
   // App scripting actions (require app.scripting capability)
   | { type: 'app_script'; app: string; script: string }
-  // Long-term memory
+  // Long-term memory (facts)
   | { type: 'remember_fact'; fact: string }
   | { type: 'forget_fact'; factId: number }
+  // Knowledge memory (structured observations)
+  | {
+      type: 'memory_save';
+      title: string;
+      content: string;
+      obs_type?: string;
+      project?: string;
+      topic_key?: string;
+    }
+  | { type: 'memory_search'; query: string; type_filter?: string; project?: string; limit?: number }
+  | { type: 'memory_context'; project?: string; limit?: number }
   // Sub-agent identity — first action in a sub-agent task
   | { type: 'set_identity'; name: string; role?: string }
   | { type: 'generate_image'; prompt: string; size?: '1024x1024' | '1792x1024' | '1024x1792' }
@@ -150,6 +198,15 @@ export type TaskStep = {
   result?: string;
   /** Error if action execution failed. */
   error?: string;
+  /** Context window usage ratio at the time of this step (0.0–1.0). */
+  contextPct?: number;
+  /** Detailed context token info for this step. */
+  contextTokens?: {
+    used: number;
+    max: number;
+    /** true = character-based estimate; false = provider-reported */
+    estimated: boolean;
+  };
 };
 
 // ── Task (the top-level entity) ───────────────────────────────────────────────
@@ -160,7 +217,7 @@ export type TaskMode = 'browser' | 'code';
 
 // The concrete execution loop selected by the backend.
 // This is derived from { mode, capabilities }.
-export type TaskRunnerId = 'browser' | 'code' | 'cdp';
+export type TaskRunnerId = 'browser' | 'code' | 'cdp' | 'orchestrator';
 
 export type Task = {
   id: string;
@@ -193,6 +250,14 @@ export type Task = {
   summary?: string;
   /** Where the task was created from. Channels only notify for their own tasks. */
   source?: TaskSource;
+  /** Structured plan produced by orchestrator agents. */
+  plan?: OrchestratorPlan;
+  /** IDs of child tasks spawned by this orchestrator. */
+  childTaskIds?: string[];
+  /** Per-task model override within the active provider. Falls back to policy model if not set. */
+  model?: string;
+  /** If true, skip memory/facts injection (set for orchestrator children that already have context). */
+  skipMemory?: boolean;
 };
 
 // ── API payloads ─────────────────────────────────────────────────────────────
@@ -216,6 +281,12 @@ export type TaskCreateRequest = {
   parentTaskId?: string;
   agentName?: string;
   agentRole?: string;
+  /** If true, uses the orchestrator runner to plan and delegate to sub-agents. */
+  orchestrate?: boolean;
+  /** Override the model for this task within the active provider. */
+  model?: string;
+  /** If true, skip memory/facts injection (used for orchestrator children that already have context). */
+  skipMemory?: boolean;
 };
 
 export type TaskInferRequest = {

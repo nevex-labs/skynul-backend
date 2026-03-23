@@ -102,6 +102,10 @@ const shutdown = async () => {
   taskManager.destroyAll();
   const { closeSharedPlaywrightChromeCdp } = await import('./core/browser/playwright-cdp');
   await closeSharedPlaywrightChromeCdp();
+  const { closeProjectDb } = await import('./core/stores/project-store');
+  closeProjectDb();
+  const { closeMemoryDb } = await import('./core/agent/task-memory');
+  closeMemoryDb();
   process.exit(0);
 };
 

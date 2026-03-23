@@ -21,6 +21,7 @@ import {
   searchFacts,
   searchMemories,
 } from './task-memory';
+import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
 import { deriveRunner } from './task-routing';
 import { TaskRunner } from './task-runner';
 
@@ -80,10 +81,12 @@ function pickAgentName(role: string, seed: string): string {
   return pool[idx]!;
 }
 
-/** Per-mode concurrency limits */
-const MAX_CONCURRENT: Record<TaskMode, number> = {
+/** Per-runner concurrency limits */
+const MAX_CONCURRENT: Record<string, number> = {
   browser: isPerTaskBrowserSessionMode(parseBrowserSessionMode()) ? 1 : 5,
   code: 10,
+  cdp: isPerTaskBrowserSessionMode(parseBrowserSessionMode()) ? 1 : 5,
+  orchestrator: 3,
 };
 
 export class TaskManager extends EventEmitter {
@@ -122,7 +125,7 @@ export class TaskManager extends EventEmitter {
       attachments: req.attachments,
       status: 'pending_approval',
       mode,
-      runner: deriveRunner(mode, capabilities),
+      runner: deriveRunner(mode, capabilities, req.orchestrate),
       capabilities,
       steps: [],
       createdAt: Date.now(),
@@ -130,6 +133,8 @@ export class TaskManager extends EventEmitter {
       maxSteps: req.maxSteps ?? DEFAULT_MAX_STEPS,
       timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       source: req.source ?? 'desktop',
+      model: req.model,
+      skipMemory: req.skipMemory,
     };
     this.tasks.set(id, task);
     void this.persistToDisk();
@@ -146,15 +151,17 @@ export class TaskManager extends EventEmitter {
       (acc, [id]) => {
         const t = this.tasks.get(id);
         if (!t) return acc;
-        acc[t.mode] = (acc[t.mode] ?? 0) + 1;
+        const key = t.runner ?? t.mode;
+        acc[key] = (acc[key] ?? 0) + 1;
         return acc;
       },
       {} as Record<string, number>
     );
-    const limit = MAX_CONCURRENT[task.mode];
-    const current = running[task.mode] ?? 0;
+    const runnerKey = task.runner ?? task.mode;
+    const limit = MAX_CONCURRENT[runnerKey] ?? MAX_CONCURRENT[task.mode] ?? 5;
+    const current = running[runnerKey] ?? 0;
     if (current >= limit) {
-      throw new Error(`Max ${limit} concurrent ${task.mode} tasks. Wait for one to finish.`);
+      throw new Error(`Max ${limit} concurrent ${runnerKey} tasks. Wait for one to finish.`);
     }
 
     task.status = 'approved';
@@ -167,9 +174,9 @@ export class TaskManager extends EventEmitter {
 
     const policy = this.getPolicy?.() ?? null;
     const provider = policy?.provider.active ?? 'chatgpt';
-    const openaiModel = policy?.provider.openaiModel ?? 'gpt-4.1';
+    const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
 
-    const memoryEnabled = policy?.taskMemoryEnabled ?? true;
+    const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
     const memories = memoryEnabled ? searchMemories(task.prompt) : [];
     const memoryContext = formatMemoriesForPrompt(memories);
 
@@ -179,14 +186,18 @@ export class TaskManager extends EventEmitter {
     const skills = await loadSkills();
     const skillContext = getActiveSkillPrompts(skills, task.prompt);
 
+    const feedbackContext = memoryEnabled ? buildFeedbackContext(task.capabilities) : '';
+    const paperMode = policy?.paperTradingEnabled ?? false;
+
     const runner = new TaskRunner(
       task,
       {
         provider,
         openaiModel,
-        memoryContext: memoryContext + factsContext + skillContext,
+        memoryContext: memoryContext + factsContext + skillContext + feedbackContext,
         taskManager: this,
         taskId: task.id,
+        paperMode,
       },
       {
         onUpdate: (updated) => {
@@ -207,6 +218,7 @@ export class TaskManager extends EventEmitter {
         this.tasks.set(final.id, final);
         this.runners.delete(taskId);
         if (memoryEnabled) this.extractAndSaveMemory(final, provider, Date.now() - startTime);
+        this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       })
       .catch((e) => {
@@ -217,6 +229,7 @@ export class TaskManager extends EventEmitter {
         this.pushUpdate(task);
         this.runners.delete(taskId);
         if (memoryEnabled) this.extractAndSaveMemory(task, provider, Date.now() - startTime);
+        this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       });
 
@@ -283,6 +296,98 @@ export class TaskManager extends EventEmitter {
       summary: result.summary ?? undefined,
       error: result.error ?? undefined,
     };
+  }
+
+  /**
+   * Non-blocking spawn: creates + approves a child task, returns its ID immediately.
+   * The caller can later use waitForTasks([childId]) to join.
+   */
+  async spawnTask(
+    prompt: string,
+    parentTaskId: string,
+    opts?: {
+      mode?: TaskMode;
+      capabilities?: TaskCapabilityId[];
+      agentName?: string;
+      agentRole?: string;
+      maxSteps?: number;
+      model?: string;
+    }
+  ): Promise<{ taskId: string }> {
+    const parent = this.tasks.get(parentTaskId);
+    const task = this.create({
+      prompt,
+      mode: opts?.mode,
+      capabilities: opts?.capabilities ?? parent?.capabilities ?? [],
+      parentTaskId,
+      agentName: opts?.agentName,
+      agentRole: opts?.agentRole,
+      maxSteps: opts?.maxSteps,
+      model: opts?.model,
+      skipMemory: true, // Orchestrator already gave context in the prompt
+    });
+
+    await this.approve(task.id);
+
+    return { taskId: task.id };
+  }
+
+  /**
+   * Wait for one or more tasks to reach a terminal status.
+   * Returns results for all requested task IDs (including failures/timeouts).
+   */
+  async waitForTasks(
+    taskIds: string[],
+    timeoutMs: number
+  ): Promise<Array<{ taskId: string; status: Task['status']; summary?: string; error?: string }>> {
+    const results: Array<{ taskId: string; status: Task['status']; summary?: string; error?: string }> = [];
+
+    const TERMINAL = new Set<Task['status']>(['completed', 'failed', 'cancelled']);
+
+    await Promise.all(
+      taskIds.map(
+        (id) =>
+          new Promise<void>((resolve) => {
+            const task = this.tasks.get(id);
+            if (!task) {
+              results.push({ taskId: id, status: 'failed', error: `Task ${id} not found` });
+              resolve();
+              return;
+            }
+
+            if (TERMINAL.has(task.status)) {
+              results.push({ taskId: id, status: task.status, summary: task.summary, error: task.error });
+              resolve();
+              return;
+            }
+
+            const timer = setTimeout(() => {
+              this.removeListener('taskUpdate', onUpdate);
+              results.push({ taskId: id, status: 'failed', error: `Task ${id} wait timed out` });
+              resolve();
+            }, timeoutMs);
+
+            const onUpdate = (updated: Task): void => {
+              if (updated.id !== id) return;
+              if (TERMINAL.has(updated.status)) {
+                clearTimeout(timer);
+                this.removeListener('taskUpdate', onUpdate);
+                results.push({
+                  taskId: id,
+                  status: updated.status,
+                  summary: updated.summary,
+                  error: updated.error,
+                });
+                resolve();
+              }
+            };
+
+            this.on('taskUpdate', onUpdate);
+          })
+      )
+    );
+
+    return results;
   }
 
   sendMessage(targetTaskId: string, fromTaskId: string, message: string): void {
@@ -439,6 +544,24 @@ export class TaskManager extends EventEmitter {
       provider,
       durationMs,
     });
+  }
+
+  private scoreTradeOutcome(task: Task, durationMs: number, isPaper: boolean): void {
+    try {
+      const extracted = extractTradesFromTask(task);
+      if (!extracted) return;
+      saveTradeScore({
+        task,
+        venue: extracted.venue,
+        capability: extracted.capability,
+        trades: extracted.trades,
+        durationMs,
+        isPaper,
+        hadOpenPositionsAtDone: extracted.hadOpenPositionsAtDone,
+      });
+    } catch {
+      // Non-critical
+    }
   }
 
   private getOrThrow(taskId: string): Task {
