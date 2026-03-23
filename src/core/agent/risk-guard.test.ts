@@ -1,19 +1,19 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  _initRiskDbForTest,
-  _setRiskConfigForTest,
-  checkTradeAllowed,
-  recordTradeVolume,
-  getDailyVolume,
-  getOpenPositionCount,
-  getOpenPositions,
-  openRiskPosition,
-  closeRiskPosition,
-  closeAllPositionsForTask,
-  getEffectiveLimits,
   DEFAULT_RISK_CONFIG,
   DEFAULT_RISK_LIMITS,
   type RiskConfig,
+  _initRiskDbForTest,
+  _setRiskConfigForTest,
+  checkTradeAllowed,
+  closeAllPositionsForTask,
+  closeRiskPosition,
+  getDailyVolume,
+  getEffectiveLimits,
+  getOpenPositionCount,
+  getOpenPositions,
+  openRiskPosition,
+  recordTradeVolume,
 } from './risk-guard';
 
 beforeEach(() => {

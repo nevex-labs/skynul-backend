@@ -187,9 +187,7 @@ describe('parseModelResponse — on-chain trading actions', () => {
   });
 
   it('parses chain_get_token_balance', () => {
-    const { action } = parseModelResponse(
-      '{"action":{"type":"chain_get_token_balance","tokenAddress":"0xusdc"}}'
-    );
+    const { action } = parseModelResponse('{"action":{"type":"chain_get_token_balance","tokenAddress":"0xusdc"}}');
     expect(action.type).toBe('chain_get_token_balance');
     expect((action as any).tokenAddress).toBe('0xusdc');
   });
@@ -211,9 +209,7 @@ describe('parseModelResponse — on-chain trading actions', () => {
   });
 
   it('parses chain_get_tx_status', () => {
-    const { action } = parseModelResponse(
-      '{"action":{"type":"chain_get_tx_status","txHash":"0xdeadbeef"}}'
-    );
+    const { action } = parseModelResponse('{"action":{"type":"chain_get_tx_status","txHash":"0xdeadbeef"}}');
     expect(action.type).toBe('chain_get_tx_status');
     expect((action as any).txHash).toBe('0xdeadbeef');
   });
@@ -259,9 +255,7 @@ describe('parseModelResponse — CEX trading actions', () => {
   });
 
   it('parses cex_get_positions', () => {
-    const { action } = parseModelResponse(
-      '{"action":{"type":"cex_get_positions","exchange":"coinbase"}}'
-    );
+    const { action } = parseModelResponse('{"action":{"type":"cex_get_positions","exchange":"coinbase"}}');
     expect(action.type).toBe('cex_get_positions');
   });
 
@@ -279,7 +273,13 @@ describe('orchestrator actions', () => {
   it('parses task_spawn action', () => {
     const raw = JSON.stringify({
       thought: 'spawning research agent',
-      action: { type: 'task_spawn', prompt: 'Research BTC', mode: 'browser', agentRole: 'Research', agentName: 'Scout' }
+      action: {
+        type: 'task_spawn',
+        prompt: 'Research BTC',
+        mode: 'browser',
+        agentRole: 'Research',
+        agentName: 'Scout',
+      },
     });
     const result = parseModelResponse(raw);
     expect(result.action.type).toBe('task_spawn');
@@ -291,7 +291,7 @@ describe('orchestrator actions', () => {
   it('parses task_wait action with single taskId', () => {
     const raw = JSON.stringify({
       thought: 'waiting for research',
-      action: { type: 'task_wait', taskIds: ['task_abc123'] }
+      action: { type: 'task_wait', taskIds: ['task_abc123'] },
     });
     const result = parseModelResponse(raw);
     expect(result.action.type).toBe('task_wait');
@@ -300,7 +300,7 @@ describe('orchestrator actions', () => {
 
   it('parses task_wait action with multiple taskIds and timeout', () => {
     const raw = JSON.stringify({
-      action: { type: 'task_wait', taskIds: ['task_a', 'task_b'], timeoutMs: 60000 }
+      action: { type: 'task_wait', taskIds: ['task_a', 'task_b'], timeoutMs: 60000 },
     });
     const result = parseModelResponse(raw);
     expect(result.action.type).toBe('task_wait');
@@ -319,7 +319,7 @@ describe('orchestrator actions', () => {
     };
     const raw = JSON.stringify({
       thought: 'Creating plan',
-      action: { type: 'plan', plan }
+      action: { type: 'plan', plan },
     });
     const result = parseModelResponse(raw);
     expect(result.action.type).toBe('plan');

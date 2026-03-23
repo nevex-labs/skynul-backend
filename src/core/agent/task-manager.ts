@@ -13,6 +13,7 @@ import { broadcast } from '../../ws/events';
 import { isPerTaskBrowserSessionMode, parseBrowserSessionMode } from '../browser/session-mode';
 import { getDataDir } from '../config';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
+import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
 import {
   closeMemoryDb,
   formatFactsForPrompt,
@@ -21,7 +22,6 @@ import {
   searchFacts,
   searchMemories,
 } from './task-memory';
-import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
 import { deriveRunner } from './task-routing';
 import { TaskRunner } from './task-runner';
 

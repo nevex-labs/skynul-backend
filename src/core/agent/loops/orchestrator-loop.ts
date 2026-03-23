@@ -3,9 +3,14 @@
  * Does NOT execute browser/code/cdp actions directly.
  */
 
-import type { Task, TaskAction, OrchestratorPlan } from '../../../types';
+import type { OrchestratorPlan, Task, TaskAction } from '../../../types';
 import type { VisionMessage } from '../../../types';
-import { executeFactAction, executeInterTaskAction, executeMemoryAction, type ExecutorContext } from '../action-executors';
+import {
+  type ExecutorContext,
+  executeFactAction,
+  executeInterTaskAction,
+  executeMemoryAction,
+} from '../action-executors';
 import { buildOrchestratorSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
@@ -101,10 +106,7 @@ export function setupOrchestratorLoop(setup: OrchestratorLoopSetup): {
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /** Execute an orchestrator-mode action. */
-export async function executeOrchestratorAction(
-  ctx: ExecutorContext,
-  action: TaskAction
-): Promise<string> {
+export async function executeOrchestratorAction(ctx: ExecutorContext, action: TaskAction): Promise<string> {
   const { task, taskManager, pushUpdate } = ctx;
 
   switch (action.type) {
@@ -153,10 +155,7 @@ export async function executeOrchestratorAction(
 
     case 'remember_fact':
     case 'forget_fact': {
-      const res = executeFactAction(
-        ctx,
-        action as Extract<TaskAction, { type: 'remember_fact' | 'forget_fact' }>
-      );
+      const res = executeFactAction(ctx, action as Extract<TaskAction, { type: 'remember_fact' | 'forget_fact' }>);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
 

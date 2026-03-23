@@ -101,9 +101,9 @@ export type PaperPortfolioSummary = {
 /** Get balance for a single asset. Auto-seeds portfolio on first call. */
 export function getPaperBalance(asset: string): number {
   ensureSeed();
-  const row = getDb()
-    .prepare('SELECT amount FROM paper_balances WHERE asset = ?')
-    .get(asset) as { amount: number } | undefined;
+  const row = getDb().prepare('SELECT amount FROM paper_balances WHERE asset = ?').get(asset) as
+    | { amount: number }
+    | undefined;
   return row?.amount ?? 0;
 }
 
@@ -120,22 +120,14 @@ export function adjustPaperBalance(asset: string, delta: number): void {
   ensureSeed();
   const db = getDb();
   const now = Date.now();
-  const existing = db
-    .prepare('SELECT amount FROM paper_balances WHERE asset = ?')
-    .get(asset) as { amount: number } | undefined;
+  const existing = db.prepare('SELECT amount FROM paper_balances WHERE asset = ?').get(asset) as
+    | { amount: number }
+    | undefined;
 
   if (existing) {
-    db.prepare('UPDATE paper_balances SET amount = amount + ?, updated_at = ? WHERE asset = ?').run(
-      delta,
-      now,
-      asset
-    );
+    db.prepare('UPDATE paper_balances SET amount = amount + ?, updated_at = ? WHERE asset = ?').run(delta, now, asset);
   } else {
-    db.prepare('INSERT INTO paper_balances (asset, amount, updated_at) VALUES (?, ?, ?)').run(
-      asset,
-      delta,
-      now
-    );
+    db.prepare('INSERT INTO paper_balances (asset, amount, updated_at) VALUES (?, ?, ?)').run(asset, delta, now);
   }
 }
 
@@ -173,7 +165,9 @@ export function getPaperTrades(opts: { venue?: string; limit?: number } = {}): P
   }
   sql += ' ORDER BY created_at DESC, id DESC LIMIT ?';
   args.push(opts.limit ?? 50);
-  return getDb().prepare(sql).all(...args) as PaperTrade[];
+  return getDb()
+    .prepare(sql)
+    .all(...args) as PaperTrade[];
 }
 
 /** Summarize the paper portfolio. */
@@ -187,9 +181,7 @@ export function getPaperPortfolioSummary(): PaperPortfolioSummary {
     return sum;
   }, 0);
 
-  const tradeCount = (
-    getDb().prepare('SELECT COUNT(*) as c FROM paper_trades').get() as { c: number }
-  ).c;
+  const tradeCount = (getDb().prepare('SELECT COUNT(*) as c FROM paper_trades').get() as { c: number }).c;
 
   const recentTrades = getPaperTrades({ limit: 10 });
 
@@ -214,7 +206,11 @@ export function resetPaperPortfolio(startingUsdc = STARTING_USDC): void {
  */
 export function _initPaperDbForTest(): void {
   if (_testDb) {
-    try { _testDb.close(); } catch { /* ok */ }
+    try {
+      _testDb.close();
+    } catch {
+      /* ok */
+    }
   }
   _testDb = new Database(':memory:');
   _testDb.pragma('journal_mode = WAL');

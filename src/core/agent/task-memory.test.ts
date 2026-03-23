@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  _initDbForTest,
+  deleteObservation,
+  formatObservationsForPrompt,
+  getRecentObservations,
+  hashNormalized,
   saveObservation,
   searchObservations,
-  getRecentObservations,
-  deleteObservation,
-  hashNormalized,
-  formatObservationsForPrompt,
-  _initDbForTest,
 } from './task-memory';
 
 beforeEach(() => {

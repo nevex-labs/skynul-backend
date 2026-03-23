@@ -145,7 +145,11 @@ TEAM OUTPUT RULES:
  * System prompt for code mode — developer agent with file ops, shell, git, and gh CLI.
  * No screen/CDP/visual actions.
  */
-export function buildCodeSystemPrompt(capabilities: TaskCapabilityId[] = [], isSubagent = false, compact = false): string {
+export function buildCodeSystemPrompt(
+  capabilities: TaskCapabilityId[] = [],
+  isSubagent = false,
+  compact = false
+): string {
   const subagentBlock = isSubagent ? buildSubagentBlock() : '';
   const hasAppScripting = capabilities.includes('app.scripting');
 
@@ -1092,4 +1096,3 @@ ${tradingGate}${memCtx}${getKnowledgeMemoryBlock(compact)}
 
 Respond with valid JSON only.`;
 }
-

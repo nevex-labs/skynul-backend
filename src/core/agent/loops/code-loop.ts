@@ -7,7 +7,6 @@ import type { VisionMessage } from '../../../types';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,
-  executeMemoryAction,
   executeFileEdit,
   executeFileList,
   executeFileRead,
@@ -15,6 +14,7 @@ import {
   executeFileWrite,
   executeGenerateImage,
   executeInterTaskAction,
+  executeMemoryAction,
   executePolymarketAction,
   executeSetIdentity,
   executeShell,

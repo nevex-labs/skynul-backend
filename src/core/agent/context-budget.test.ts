@@ -48,8 +48,8 @@ describe('getContextWindow', () => {
 describe('estimateTokens', () => {
   it('returns ceil(length / 4)', () => {
     expect(estimateTokens('')).toBe(0);
-    expect(estimateTokens('abcd')).toBe(1);      // 4 chars → 1 token
-    expect(estimateTokens('abcde')).toBe(2);     // 5 chars → ceil(5/4)=2
+    expect(estimateTokens('abcd')).toBe(1); // 4 chars → 1 token
+    expect(estimateTokens('abcde')).toBe(2); // 5 chars → ceil(5/4)=2
     expect(estimateTokens('a'.repeat(400))).toBe(100);
   });
 
@@ -85,9 +85,7 @@ describe('estimatePayloadTokens', () => {
   });
 
   it('counts text content in messages', () => {
-    const messages: VisionMessage[] = [
-      { role: 'user', content: [{ type: 'input_text', text: 'a'.repeat(400) }] },
-    ];
+    const messages: VisionMessage[] = [{ role: 'user', content: [{ type: 'input_text', text: 'a'.repeat(400) }] }];
     expect(estimatePayloadTokens('', messages)).toBe(100);
   });
 
@@ -102,9 +100,7 @@ describe('estimatePayloadTokens', () => {
     const messages: VisionMessage[] = [
       {
         role: 'user',
-        content: [
-          { type: 'input_image', image_url: 'data:image/png;base64,...', detail: 'auto' },
-        ],
+        content: [{ type: 'input_image', image_url: 'data:image/png;base64,...', detail: 'auto' }],
       },
     ];
     expect(estimatePayloadTokens('', messages)).toBe(800);
@@ -114,9 +110,7 @@ describe('estimatePayloadTokens', () => {
     const messages: VisionMessage[] = [
       {
         role: 'user',
-        content: [
-          { type: 'input_image', image_url: 'data:image/png;base64,...', detail: 'low' },
-        ],
+        content: [{ type: 'input_image', image_url: 'data:image/png;base64,...', detail: 'low' }],
       },
     ];
     expect(estimatePayloadTokens('', messages)).toBe(85);

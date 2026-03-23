@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { TaskManager } from './task-manager';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../types';
+import { TaskManager } from './task-manager';
 
 // Mock heavy deps
 vi.mock('../stores/skill-store', () => ({
@@ -30,7 +30,9 @@ vi.mock('../browser/session-mode', () => ({
 vi.mock('fs/promises', () => ({
   mkdir: vi.fn(async () => {}),
   writeFile: vi.fn(async () => {}),
-  readFile: vi.fn(async () => { throw new Error('no file'); }),
+  readFile: vi.fn(async () => {
+    throw new Error('no file');
+  }),
 }));
 vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
@@ -126,8 +128,8 @@ describe('TaskManager.waitForTasks', () => {
 
     const results = await tm.waitForTasks([t1.id, t2.id], 2000);
     expect(results).toHaveLength(2);
-    const r1 = results.find(r => r.taskId === t1.id);
-    const r2 = results.find(r => r.taskId === t2.id);
+    const r1 = results.find((r) => r.taskId === t1.id);
+    const r2 = results.find((r) => r.taskId === t2.id);
     expect(r1?.status).toBe('completed');
     expect(r2?.status).toBe('failed');
   });

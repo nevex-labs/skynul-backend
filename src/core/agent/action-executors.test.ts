@@ -79,7 +79,18 @@ describe('executeMemoryAction', () => {
 
   function makeCtx(): ExecutorContext {
     return {
-      task: { id: 't1', prompt: '', status: 'running', mode: 'code', steps: [], capabilities: [], maxSteps: 10, timeoutMs: 60000, createdAt: 0, updatedAt: 0 } as any,
+      task: {
+        id: 't1',
+        prompt: '',
+        status: 'running',
+        mode: 'code',
+        steps: [],
+        capabilities: [],
+        maxSteps: 10,
+        timeoutMs: 60000,
+        createdAt: 0,
+        updatedAt: 0,
+      } as any,
       taskManager: null,
       appBridge: { run: vi.fn() } as any,
       pushUpdate: vi.fn(),

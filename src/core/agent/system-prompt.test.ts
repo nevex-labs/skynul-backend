@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { buildBrowserSystemPrompt, buildCdpSystemPrompt, buildCodeSystemPrompt, buildOrchestratorSystemPrompt } from './system-prompt';
+import { describe, expect, it } from 'vitest';
+import {
+  buildBrowserSystemPrompt,
+  buildCdpSystemPrompt,
+  buildCodeSystemPrompt,
+  buildOrchestratorSystemPrompt,
+} from './system-prompt';
 
 describe('buildCdpSystemPrompt', () => {
   describe('onchain.trading capability', () => {
@@ -45,8 +50,8 @@ describe('buildCdpSystemPrompt', () => {
 
     it('includes exchange symbol format notes', () => {
       const prompt = buildCdpSystemPrompt(['cex.trading']);
-      expect(prompt).toContain('BTCUSDT');   // Binance format
-      expect(prompt).toContain('BTC-USD');   // Coinbase format
+      expect(prompt).toContain('BTCUSDT'); // Binance format
+      expect(prompt).toContain('BTC-USD'); // Coinbase format
     });
 
     it('includes fee disclosure', () => {
@@ -412,9 +417,9 @@ describe('buildOrchestratorSystemPrompt', () => {
   it('includes maxSteps guidance per role', () => {
     const prompt = buildOrchestratorSystemPrompt([]);
     expect(prompt).toContain('Research');
-    expect(prompt).toContain('30');  // Research maxSteps
-    expect(prompt).toContain('15');  // Risk maxSteps
-    expect(prompt).toContain('50');  // Executor maxSteps
+    expect(prompt).toContain('30'); // Research maxSteps
+    expect(prompt).toContain('15'); // Risk maxSteps
+    expect(prompt).toContain('50'); // Executor maxSteps
   });
 
   it('includes model guidance — use cheaper models for Research and Risk', () => {

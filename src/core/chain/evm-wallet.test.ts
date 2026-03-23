@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../stores/secret-store', () => ({
   getSecret: vi.fn(),
@@ -44,17 +44,15 @@ vi.mock('ethers', () => {
     Wallet: MockWallet,
     JsonRpcProvider: MockProvider,
     Contract: MockContract,
-    formatUnits: vi.fn().mockImplementation((val: bigint, dec: number) =>
-      (Number(val) / Math.pow(10, dec)).toFixed(dec)
-    ),
+    formatUnits: vi.fn().mockImplementation((val: bigint, dec: number) => (Number(val) / 10 ** dec).toFixed(dec)),
     parseEther: vi.fn().mockReturnValue(BigInt('1000000000000000000')),
     parseUnits: vi.fn().mockReturnValue(BigInt('1000000')),
     MaxUint256: BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'),
   };
 });
 
-import { EvmWallet } from './evm-wallet';
 import * as secretStore from '../stores/secret-store';
+import { EvmWallet } from './evm-wallet';
 
 const TEST_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const TEST_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
@@ -71,10 +69,7 @@ describe('EvmWallet', () => {
       const result = await EvmWallet.create();
 
       expect(result.address).toBe(TEST_ADDRESS);
-      expect(secretStore.setSecret).toHaveBeenCalledWith(
-        'CHAIN_WALLET_PRIVATE_KEY',
-        expect.stringMatching(/^0x/)
-      );
+      expect(secretStore.setSecret).toHaveBeenCalledWith('CHAIN_WALLET_PRIVATE_KEY', expect.stringMatching(/^0x/));
     });
   });
 

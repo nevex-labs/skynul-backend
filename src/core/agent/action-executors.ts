@@ -11,15 +11,17 @@ import { generateImage } from '../providers/image-gen';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
 import { sandboxPath, validateShellCommand } from './input-guard';
+import { adjustPaperBalance, getPaperBalance, getPaperBalances, recordPaperTrade } from './paper-portfolio';
+import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
-import { deleteFact, formatObservationsForPrompt, getRecentObservations, saveObservation, saveFact, searchObservations } from './task-memory';
 import {
-  adjustPaperBalance,
-  getPaperBalance,
-  getPaperBalances,
-  recordPaperTrade,
-} from './paper-portfolio';
-import { checkTradeAllowed, recordTradeVolume, openRiskPosition } from './risk-guard';
+  deleteFact,
+  formatObservationsForPrompt,
+  getRecentObservations,
+  saveFact,
+  saveObservation,
+  searchObservations,
+} from './task-memory';
 import { scrapeUrl } from './web-scraper';
 
 export type ExecutorContext = {
@@ -375,9 +377,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const usdcBal = getPaperBalance('USDC');
           ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, 0 positions.`;
           const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
-          return result(
-            `[PAPER] Balance: $${usdcBal.toFixed(2)}, 0 positions.\nPaper portfolio:\n${lines.join('\n')}`
-          );
+          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, 0 positions.\nPaper portfolio:\n${lines.join('\n')}`);
         }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
@@ -474,7 +474,9 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
             size: raw.size,
             amount_usd: proceeds,
           });
-          return result(`[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'} | orderId: ${orderId}`);
+          return result(
+            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'} | orderId: ${orderId}`
+          );
         }
         await client.closePosition({ tokenId: raw.tokenId, size: raw.size });
         return result(`Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'}`);

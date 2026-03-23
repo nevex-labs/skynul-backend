@@ -9,8 +9,8 @@
  * the file directly; no dedicated API endpoint needed.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import Database from 'better-sqlite3';
 import { getDataDir } from '../config';
 import { getMemoryDb } from './task-memory';
@@ -59,9 +59,7 @@ export type RiskConfig = {
   venues: Partial<Record<VenueId, Partial<RiskLimits>>>;
 };
 
-export type RiskCheckResult =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type RiskCheckResult = { allowed: true } | { allowed: false; reason: string };
 
 export type RiskPosition = {
   id: number;
@@ -98,7 +96,11 @@ function getDb(): Database.Database {
 
 export function _initRiskDbForTest(): void {
   if (_testDb) {
-    try { _testDb.close(); } catch { /* ok */ }
+    try {
+      _testDb.close();
+    } catch {
+      /* ok */
+    }
   }
   _testDb = new Database(':memory:');
   _testDb.pragma('journal_mode = WAL');
@@ -164,9 +166,9 @@ export function getDailyVolume(venue?: VenueId): number {
         .get(date, venue) as { volume_usd: number } | undefined;
       return row?.volume_usd ?? 0;
     }
-    const row = getDb()
-      .prepare('SELECT SUM(volume_usd) as total FROM risk_daily_volume WHERE date = ?')
-      .get(date) as { total: number | null };
+    const row = getDb().prepare('SELECT SUM(volume_usd) as total FROM risk_daily_volume WHERE date = ?').get(date) as {
+      total: number | null;
+    };
     return row?.total ?? 0;
   } catch {
     return 0;
@@ -183,7 +185,9 @@ export function recordTradeVolume(venue: VenueId, amountUsd: number): void {
         ON CONFLICT(date, venue) DO UPDATE SET volume_usd = volume_usd + excluded.volume_usd
       `)
       .run(date, venue, amountUsd);
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 // ── Position tracking ─────────────────────────────────────────────────────────
@@ -196,9 +200,9 @@ export function getOpenPositionCount(venue?: VenueId): number {
         .get(venue) as { c: number };
       return row.c;
     }
-    const row = getDb()
-      .prepare('SELECT COUNT(*) as c FROM risk_positions WHERE closed_at IS NULL')
-      .get() as { c: number };
+    const row = getDb().prepare('SELECT COUNT(*) as c FROM risk_positions WHERE closed_at IS NULL').get() as {
+      c: number;
+    };
     return row.c;
   } catch {
     return 0;
@@ -209,9 +213,14 @@ export function getOpenPositions(venue?: VenueId): RiskPosition[] {
   try {
     let sql = 'SELECT * FROM risk_positions WHERE closed_at IS NULL';
     const args: unknown[] = [];
-    if (venue) { sql += ' AND venue = ?'; args.push(venue); }
+    if (venue) {
+      sql += ' AND venue = ?';
+      args.push(venue);
+    }
     sql += ' ORDER BY opened_at DESC';
-    const rows = getDb().prepare(sql).all(...args) as Record<string, unknown>[];
+    const rows = getDb()
+      .prepare(sql)
+      .all(...args) as Record<string, unknown>[];
     return rows.map(rowToPosition);
   } catch {
     return [];
@@ -239,10 +248,10 @@ export function openRiskPosition(
 
 export function closeRiskPosition(positionId: number): void {
   try {
-    getDb()
-      .prepare('UPDATE risk_positions SET closed_at = ? WHERE id = ?')
-      .run(Date.now(), positionId);
-  } catch { /* non-critical */ }
+    getDb().prepare('UPDATE risk_positions SET closed_at = ? WHERE id = ?').run(Date.now(), positionId);
+  } catch {
+    /* non-critical */
+  }
 }
 
 export function closeAllPositionsForTask(taskId: string): void {
@@ -250,7 +259,9 @@ export function closeAllPositionsForTask(taskId: string): void {
     getDb()
       .prepare('UPDATE risk_positions SET closed_at = ? WHERE task_id = ? AND closed_at IS NULL')
       .run(Date.now(), taskId);
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 function rowToPosition(row: Record<string, unknown>): RiskPosition {

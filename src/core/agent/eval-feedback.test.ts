@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  extractTradesFromTask,
-  computeScore,
-  saveTradeScore,
-  getTaskScore,
-  getPerformanceSummary,
-  formatPerformanceForPrompt,
-  buildFeedbackContext,
-  _initEvalDbForTest,
-} from './eval-feedback';
-import type { ScoreInput, ExtractedTrade } from './eval-feedback';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Task, TaskStep } from '../../types';
+import {
+  _initEvalDbForTest,
+  buildFeedbackContext,
+  computeScore,
+  extractTradesFromTask,
+  formatPerformanceForPrompt,
+  getPerformanceSummary,
+  getTaskScore,
+  saveTradeScore,
+} from './eval-feedback';
+import type { ExtractedTrade, ScoreInput } from './eval-feedback';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,56 +50,70 @@ function makePolymarketTask(opts: {
   const steps: TaskStep[] = [];
 
   if (opts.hasTrade !== false) {
-    steps.push(makeStep({
-      index: 0,
-      action: {
-        type: 'polymarket_place_order',
-        tokenId: 'token123abc456def',
-        side: 'buy',
-        price: 0.65,
-        size: 10,
-      },
-      result: 'Order placed (GTC): buy 10 @ $0.65 on token123abc...',
-    }));
+    steps.push(
+      makeStep({
+        index: 0,
+        action: {
+          type: 'polymarket_place_order',
+          tokenId: 'token123abc456def',
+          side: 'buy',
+          price: 0.65,
+          size: 10,
+        },
+        result: 'Order placed (GTC): buy 10 @ $0.65 on token123abc...',
+      })
+    );
 
     if (opts.hasClose) {
-      steps.push(makeStep({
-        index: 1,
-        action: { type: 'polymarket_get_account_summary' },
-        result: 'Balance: $1000.00, 0 positions.',
-      }));
-      steps.push(makeStep({
-        index: 2,
-        action: {
-          type: 'polymarket_close_position',
-          tokenId: 'token123abc456def',
-        },
-        result: 'Position closed: token123abc... size=full',
-      }));
-      steps.push(makeStep({
-        index: 3,
-        action: { type: 'polymarket_get_account_summary' },
-        result: 'Balance: $1006.50, 0 positions.',
-      }));
+      steps.push(
+        makeStep({
+          index: 1,
+          action: { type: 'polymarket_get_account_summary' },
+          result: 'Balance: $1000.00, 0 positions.',
+        })
+      );
+      steps.push(
+        makeStep({
+          index: 2,
+          action: {
+            type: 'polymarket_close_position',
+            tokenId: 'token123abc456def',
+          },
+          result: 'Position closed: token123abc... size=full',
+        })
+      );
+      steps.push(
+        makeStep({
+          index: 3,
+          action: { type: 'polymarket_get_account_summary' },
+          result: 'Balance: $1006.50, 0 positions.',
+        })
+      );
     } else if (opts.openPositionsAtEnd) {
-      steps.push(makeStep({
-        index: 1,
-        action: { type: 'polymarket_get_account_summary' },
-        result: 'Balance: $993.50, 1 positions.\n  BTC above 100k [YES] 10 shares @ $0.65, PnL $-6.50',
-      }));
+      steps.push(
+        makeStep({
+          index: 1,
+          action: { type: 'polymarket_get_account_summary' },
+          result: 'Balance: $993.50, 1 positions.\n  BTC above 100k [YES] 10 shares @ $0.65, PnL $-6.50',
+        })
+      );
     } else {
-      steps.push(makeStep({
-        index: 1,
-        action: { type: 'polymarket_get_account_summary' },
-        result: 'Balance: $993.50, 0 positions.',
-      }));
+      steps.push(
+        makeStep({
+          index: 1,
+          action: { type: 'polymarket_get_account_summary' },
+          result: 'Balance: $993.50, 0 positions.',
+        })
+      );
     }
   }
 
-  steps.push(makeStep({
-    index: steps.length,
-    action: { type: 'done', summary: 'Trading complete' },
-  }));
+  steps.push(
+    makeStep({
+      index: steps.length,
+      action: { type: 'done', summary: 'Trading complete' },
+    })
+  );
 
   return makeTask({
     capabilities: ['polymarket.trading'],
@@ -357,7 +371,7 @@ describe('computeScore', () => {
       stepsUsed: 5,
     });
     const { scorePnl, scoreDiscipline, scoreEfficiency, scoreTotal } = computeScore(input);
-    const expected = (scorePnl * 0.40) + (scoreDiscipline * 0.35) + (scoreEfficiency * 0.25);
+    const expected = scorePnl * 0.4 + scoreDiscipline * 0.35 + scoreEfficiency * 0.25;
     expect(scoreTotal).toBeCloseTo(expected, 5);
   });
 
@@ -455,62 +469,80 @@ describe('getPerformanceSummary', () => {
 
   it('calculates correct winRate from mix of profitable and losing trades', () => {
     // 2 wins, 1 loss
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 't1' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1.0 }],
-    }));
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 't2' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.2, size: 10, pnlUsd: 2.0 }],
-    }));
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 't3' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 0.9, size: 10, pnlUsd: -1.0 }],
-    }));
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 't1' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1.0 }],
+      })
+    );
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 't2' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.2, size: 10, pnlUsd: 2.0 }],
+      })
+    );
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 't3' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 0.9, size: 10, pnlUsd: -1.0 }],
+      })
+    );
     const summary = getPerformanceSummary();
     expect(summary.totalTasks).toBe(3);
     expect(summary.winRate).toBeCloseTo(2 / 3, 1);
   });
 
   it('sums totalPnlUsd correctly', () => {
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'p1' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 5.0 }],
-    }));
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'p2' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 0.9, size: 10, pnlUsd: -2.0 }],
-    }));
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'p1' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 5.0 }],
+      })
+    );
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'p2' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 0.9, size: 10, pnlUsd: -2.0 }],
+      })
+    );
     const summary = getPerformanceSummary();
     expect(summary.totalPnlUsd).toBeCloseTo(3.0, 1);
   });
 
   it('filters by venue', () => {
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'v1' }),
-      venue: 'polymarket',
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
-    }));
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'v2' }),
-      venue: 'cex_binance',
-      trades: [{ symbol: 'Y', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
-    }));
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'v1' }),
+        venue: 'polymarket',
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
+      })
+    );
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'v2' }),
+        venue: 'cex_binance',
+        trades: [{ symbol: 'Y', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
+      })
+    );
     const poly = getPerformanceSummary({ venue: 'polymarket' });
     expect(poly.totalTasks).toBe(1);
   });
 
   it('filters by paperOnly', () => {
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'live1' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
-      isPaper: false,
-    }));
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'paper1' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
-      isPaper: true,
-    }));
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'live1' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
+        isPaper: false,
+      })
+    );
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'paper1' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
+        isPaper: true,
+      })
+    );
     const paperSummary = getPerformanceSummary({ paperOnly: true });
     expect(paperSummary.totalTasks).toBe(1);
     const liveSummary = getPerformanceSummary({ paperOnly: false });
@@ -519,10 +551,12 @@ describe('getPerformanceSummary', () => {
 
   it('returns recentTasks limited by limit parameter', () => {
     for (let i = 0; i < 5; i++) {
-      saveTradeScore(makeScoreInput({
-        task: makeTask({ id: `rt${i}` }),
-        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
-      }));
+      saveTradeScore(
+        makeScoreInput({
+          task: makeTask({ id: `rt${i}` }),
+          trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 1 }],
+        })
+      );
     }
     const summary = getPerformanceSummary({ limit: 3 });
     expect(summary.recentTasks.length).toBeLessThanOrEqual(3);
@@ -535,16 +569,18 @@ describe('formatPerformanceForPrompt', () => {
   it('returns empty string when totalTasks is 0', () => {
     const summary = getPerformanceSummary(); // empty db not needed, just use zeroed
     // manually create zeroed summary
-    expect(formatPerformanceForPrompt({
-      totalTasks: 0,
-      winRate: 0,
-      totalPnlUsd: 0,
-      avgScoreTotal: 0,
-      avgScoreDiscipline: 0,
-      avgScoreEfficiency: 0,
-      recentTasks: [],
-      byVenue: {} as any,
-    })).toBe('');
+    expect(
+      formatPerformanceForPrompt({
+        totalTasks: 0,
+        winRate: 0,
+        totalPnlUsd: 0,
+        avgScoreTotal: 0,
+        avgScoreDiscipline: 0,
+        avgScoreEfficiency: 0,
+        recentTasks: [],
+        byVenue: {} as any,
+      })
+    ).toBe('');
   });
 
   it('includes win rate and total PnL', () => {
@@ -598,10 +634,12 @@ describe('buildFeedbackContext', () => {
   });
 
   it('returns formatted block when trading history exists', () => {
-    saveTradeScore(makeScoreInput({
-      task: makeTask({ id: 'fb1' }),
-      trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 5 }],
-    }));
+    saveTradeScore(
+      makeScoreInput({
+        task: makeTask({ id: 'fb1' }),
+        trades: [{ symbol: 'X', side: 'buy', entryPrice: 1, exitPrice: 1.1, size: 10, pnlUsd: 5 }],
+      })
+    );
     const result = buildFeedbackContext(['polymarket.trading']);
     expect(result.length).toBeGreaterThan(0);
     expect(result).toContain('PERFORMANCE');

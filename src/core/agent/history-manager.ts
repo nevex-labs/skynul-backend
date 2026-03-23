@@ -98,7 +98,7 @@ export function getSummarizationModel(provider: ProviderId): string {
 export async function summarizeHistory(
   history: VisionMessage[],
   provider: ProviderId,
-  taskId: string,
+  taskId: string
 ): Promise<boolean> {
   if (history.length <= 10) return false;
 
@@ -136,7 +136,7 @@ export async function summarizeHistory(
     prompt,
     [{ role: 'user', content: [{ type: 'input_text', text }] }],
     taskId,
-    model,
+    model
   );
 
   history.splice(1, middle.length, {

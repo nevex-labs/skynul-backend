@@ -24,7 +24,11 @@ function getDb(): Database.Database {
 
 export function _initEvalDbForTest(): void {
   if (testDb) {
-    try { testDb.close(); } catch { /* ok */ }
+    try {
+      testDb.close();
+    } catch {
+      /* ok */
+    }
   }
   testDb = new Database(':memory:');
   testDb.pragma('journal_mode = WAL');
@@ -128,19 +132,13 @@ export type PerformanceSummary = {
 
 // ── Trade Extraction ──────────────────────────────────────────────────────────
 
-const TRADING_CAPS = new Set<TaskCapabilityId>([
-  'polymarket.trading',
-  'cex.trading',
-  'onchain.trading',
-]);
+const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'cex.trading', 'onchain.trading']);
 
 /**
  * Parse task steps to extract trade data.
  * Returns null if the task has no trading capabilities or no trade actions.
  */
-export function extractTradesFromTask(task: Task): (
-  ReturnType<typeof buildExtraction>
-) | null {
+export function extractTradesFromTask(task: Task): ReturnType<typeof buildExtraction> | null {
   const tradingCap = task.capabilities.find((c) => TRADING_CAPS.has(c));
   if (!tradingCap) return null;
 
@@ -170,7 +168,7 @@ export function extractTradesFromTask(task: Task): (
       // Parse size from result: "Order placed on binance: buy 99.6 BTCUSDT | ..."
       const sizeMatch = step.result?.match(/:\s*(buy|sell)\s+([\d.]+)\s+(\S+)/);
       const parsedSide = a.side;
-      const parsedSize = sizeMatch ? parseFloat(sizeMatch[2]) : a.amount;
+      const parsedSize = sizeMatch ? Number.parseFloat(sizeMatch[2]) : a.amount;
       trades.push({
         symbol: a.symbol,
         side: parsedSide,
@@ -185,7 +183,7 @@ export function extractTradesFromTask(task: Task): (
         side: 'buy',
         entryPrice: 0,
         exitPrice: null,
-        size: parseFloat(a.amountIn) || 0,
+        size: Number.parseFloat(a.amountIn) || 0,
         pnlUsd: 0,
       });
     } else if (a.type === 'done' || a.type === 'fail') {
@@ -198,7 +196,7 @@ export function extractTradesFromTask(task: Task): (
   // Check if positions were open at done
   if (lastAccountSummaryBeforeDone) {
     const posMatch = lastAccountSummaryBeforeDone.match(/(\d+)\s+positions?\./i);
-    if (posMatch && parseInt(posMatch[1], 10) > 0) {
+    if (posMatch && Number.parseInt(posMatch[1], 10) > 0) {
       hadOpenPositionsAtDone = true;
     }
   }
@@ -245,7 +243,7 @@ export function computeScore(input: ScoreInput): {
 
   // Aggregate PnL
   const totalPnlUsd = trades.reduce((sum, t) => sum + t.pnlUsd, 0);
-  const totalInvested = trades.reduce((sum, t) => sum + (t.entryPrice * t.size), 0);
+  const totalInvested = trades.reduce((sum, t) => sum + t.entryPrice * t.size, 0);
   const pnlPct = totalInvested > 0 ? (totalPnlUsd / totalInvested) * 100 : 0;
 
   // scorePnl (weight 0.40)
@@ -275,11 +273,7 @@ export function computeScore(input: ScoreInput): {
     scoreEfficiency = clamp(0.3 - stepRatio, 0, 1.0);
   }
 
-  const scoreTotal = clamp(
-    scorePnl * 0.40 + scoreDiscipline * 0.35 + scoreEfficiency * 0.25,
-    0,
-    1.0
-  );
+  const scoreTotal = clamp(scorePnl * 0.4 + scoreDiscipline * 0.35 + scoreEfficiency * 0.25, 0, 1.0);
 
   return { scorePnl, scoreDiscipline, scoreEfficiency, scoreTotal, totalPnlUsd, pnlPct };
 }
@@ -356,9 +350,9 @@ function rowToTradeScore(row: Record<string, unknown>): TradeScore {
 }
 
 export function getTaskScore(taskId: string): TradeScore | null {
-  const row = getDb()
-    .prepare(`SELECT * FROM trade_scores WHERE task_id = ?`)
-    .get(taskId) as Record<string, unknown> | undefined;
+  const row = getDb().prepare(`SELECT * FROM trade_scores WHERE task_id = ?`).get(taskId) as
+    | Record<string, unknown>
+    | undefined;
   return row ? rowToTradeScore(row) : null;
 }
 
@@ -375,12 +369,14 @@ const ZEROED_SUMMARY: PerformanceSummary = {
   byVenue: {},
 };
 
-export function getPerformanceSummary(opts: {
-  days?: number;
-  venue?: TradeVenue;
-  paperOnly?: boolean;
-  limit?: number;
-} = {}): PerformanceSummary {
+export function getPerformanceSummary(
+  opts: {
+    days?: number;
+    venue?: TradeVenue;
+    paperOnly?: boolean;
+    limit?: number;
+  } = {}
+): PerformanceSummary {
   try {
     let where = 'WHERE 1=1';
     const args: unknown[] = [];

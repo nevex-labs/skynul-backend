@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VisionMessage } from '../../types';
-import { buildActionLog, compressHistory, drainInbox, getSummarizationModel, summarizeHistory, truncateHistory } from './history-manager';
+import {
+  buildActionLog,
+  compressHistory,
+  drainInbox,
+  getSummarizationModel,
+  summarizeHistory,
+  truncateHistory,
+} from './history-manager';
 import type { TaskManager } from './task-manager';
 
 vi.mock('./vision-dispatch', () => ({
@@ -255,9 +262,7 @@ describe('summarizeHistory', () => {
   });
 
   function makeHistory(count: number): VisionMessage[] {
-    return Array.from({ length: count }, (_, i) =>
-      makeMsg(i % 2 === 0 ? 'user' : 'assistant', `message ${i}`)
-    );
+    return Array.from({ length: count }, (_, i) => makeMsg(i % 2 === 0 ? 'user' : 'assistant', `message ${i}`));
   }
 
   it('returns false when history <= 10', async () => {

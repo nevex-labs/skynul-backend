@@ -1,5 +1,5 @@
-import type { TokenBalance, TxReceipt } from './types';
 import { getChainConfig } from './config';
+import type { TokenBalance, TxReceipt } from './types';
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -100,12 +100,7 @@ export class EvmWallet {
     return this.getTokenBalance(chainId, chain.usdcAddress);
   }
 
-  async sendToken(
-    chainId: number,
-    tokenAddress: string,
-    to: string,
-    amount: string
-  ): Promise<TxReceipt> {
+  async sendToken(chainId: number, tokenAddress: string, to: string, amount: string): Promise<TxReceipt> {
     const { Contract, parseUnits } = (await import('ethers')) as any;
     const signer = await this.getSigner(chainId);
     const contract = new Contract(tokenAddress, ERC20_ABI, signer);

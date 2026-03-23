@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
-import { getAllChains, getChainConfig, getDefaultChainId } from '../../core/chain/config';
-import { EvmWallet } from '../../core/chain/evm-wallet';
 import {
-  getPaperPortfolioSummary,
   getPaperBalances,
+  getPaperPortfolioSummary,
   getPaperTrades,
   resetPaperPortfolio,
 } from '../../core/agent/paper-portfolio';
+import { getAllChains, getChainConfig, getDefaultChainId } from '../../core/chain/config';
+import { EvmWallet } from '../../core/chain/evm-wallet';
 
 export const walletGroup = new Hono();
 
@@ -36,10 +36,7 @@ walletGroup.get('/balance/:chainId', async (c) => {
   if (!wallet) return c.json({ error: 'No wallet configured' }, 404);
 
   try {
-    const [native, usdc] = await Promise.all([
-      wallet.getNativeBalance(chainId),
-      wallet.getUsdcBalance(chainId),
-    ]);
+    const [native, usdc] = await Promise.all([wallet.getNativeBalance(chainId), wallet.getUsdcBalance(chainId)]);
     return c.json({ chainId, chainName: chain.name, native, usdc });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);

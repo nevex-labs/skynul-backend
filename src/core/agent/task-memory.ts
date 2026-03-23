@@ -197,7 +197,11 @@ export function getMemoryDb(): Database.Database {
 /** Replace the module-level db with a fresh in-memory instance (tests only). */
 export function _initDbForTest(): void {
   if (db) {
-    try { db.close(); } catch { /* ok */ }
+    try {
+      db.close();
+    } catch {
+      /* ok */
+    }
   }
   db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
@@ -399,8 +403,17 @@ export function saveObservation(params: {
             `UPDATE observations SET title=?, content=?, type=?, project=?, scope=?, normalized_hash=?,
              revision_count=?, updated_at=? WHERE id=?`
           )
-          .run(params.title, params.content, type, params.project ?? null, scope, hash,
-               existing.revision_count + 1, now, existing.id);
+          .run(
+            params.title,
+            params.content,
+            type,
+            params.project ?? null,
+            scope,
+            hash,
+            existing.revision_count + 1,
+            now,
+            existing.id
+          );
         return existing.id;
       }
     }
@@ -408,7 +421,9 @@ export function saveObservation(params: {
     // 2. Hash dedup within 15-minute window
     const cutoff = now - DEDUP_WINDOW_MS;
     const dup = getDb()
-      .prepare(`SELECT id, duplicate_count FROM observations WHERE normalized_hash = ? AND created_at >= ? AND deleted_at IS NULL LIMIT 1`)
+      .prepare(
+        `SELECT id, duplicate_count FROM observations WHERE normalized_hash = ? AND created_at >= ? AND deleted_at IS NULL LIMIT 1`
+      )
       .get(hash, cutoff) as { id: number; duplicate_count: number } | undefined;
     if (dup) {
       getDb()
@@ -457,11 +472,19 @@ export function searchObservations(
       WHERE observations_fts MATCH ? AND o.deleted_at IS NULL
     `;
     const args: unknown[] = [ftsQ];
-    if (opts.type_filter) { sql += ` AND o.type = ?`; args.push(opts.type_filter); }
-    if (opts.project) { sql += ` AND o.project = ?`; args.push(opts.project); }
+    if (opts.type_filter) {
+      sql += ` AND o.type = ?`;
+      args.push(opts.type_filter);
+    }
+    if (opts.project) {
+      sql += ` AND o.project = ?`;
+      args.push(opts.project);
+    }
     sql += ` ORDER BY rank LIMIT ?`;
     args.push(opts.limit ?? 10);
-    return getDb().prepare(sql).all(...args) as Observation[];
+    return getDb()
+      .prepare(sql)
+      .all(...args) as Observation[];
   } catch {
     return [];
   }
@@ -474,11 +497,19 @@ export function getRecentObservations(
   try {
     let sql = `SELECT * FROM observations WHERE deleted_at IS NULL`;
     const args: unknown[] = [];
-    if (opts.type_filter) { sql += ` AND type = ?`; args.push(opts.type_filter); }
-    if (opts.project) { sql += ` AND project = ?`; args.push(opts.project); }
+    if (opts.type_filter) {
+      sql += ` AND type = ?`;
+      args.push(opts.type_filter);
+    }
+    if (opts.project) {
+      sql += ` AND project = ?`;
+      args.push(opts.project);
+    }
     sql += ` ORDER BY updated_at DESC, id DESC LIMIT ?`;
     args.push(opts.limit ?? 20);
-    return getDb().prepare(sql).all(...args) as Observation[];
+    return getDb()
+      .prepare(sql)
+      .all(...args) as Observation[];
   } catch {
     return [];
   }

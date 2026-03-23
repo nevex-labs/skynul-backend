@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { setupOrchestratorLoop, executeOrchestratorAction } from './orchestrator-loop';
-import type { Task, OrchestratorPlan } from '../../../types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OrchestratorPlan, Task } from '../../../types';
 import type { ExecutorContext } from '../action-executors';
+import { executeOrchestratorAction, setupOrchestratorLoop } from './orchestrator-loop';
 
 vi.mock('../../config', () => ({ getDataDir: vi.fn(() => '/tmp') }));
 

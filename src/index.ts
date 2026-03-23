@@ -17,12 +17,12 @@ import { authMiddleware } from './middleware/auth';
 import { corsMiddleware } from './middleware/cors';
 import { agentGroup } from './routes/agent';
 import { aiGroup } from './routes/ai';
+import { coinbaseAuthGroup } from './routes/auth/coinbase';
+import { walletAuthGroup } from './routes/auth/wallet';
 import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
 import { tasksGroup } from './routes/tasks';
 import { walletGroup } from './routes/wallet';
-import { coinbaseAuthGroup } from './routes/auth/coinbase';
-import { walletAuthGroup } from './routes/auth/wallet';
 import { addClient, clientCount, removeClient } from './ws/events';
 
 const app = new Hono();

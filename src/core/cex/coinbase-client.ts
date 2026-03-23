@@ -13,10 +13,8 @@ export class CoinbaseClient {
 
   private async getCredentials(): Promise<{ apiKey: string; apiSecret: string }> {
     const { getSecret } = await import('../stores/secret-store');
-    const apiKey =
-      (await getSecret('COINBASE_API_KEY')) ?? process.env.COINBASE_API_KEY;
-    const apiSecret =
-      (await getSecret('COINBASE_API_SECRET')) ?? process.env.COINBASE_API_SECRET;
+    const apiKey = (await getSecret('COINBASE_API_KEY')) ?? process.env.COINBASE_API_KEY;
+    const apiSecret = (await getSecret('COINBASE_API_SECRET')) ?? process.env.COINBASE_API_SECRET;
 
     if (!apiKey || !apiSecret) {
       throw new Error('COINBASE_API_KEY and COINBASE_API_SECRET are not set. Configure them in Settings → Trading.');
@@ -86,11 +84,11 @@ export class CoinbaseClient {
     }>('GET', '/api/v3/brokerage/accounts');
 
     return (data.accounts ?? [])
-      .filter((a) => parseFloat(a.available_balance.value) > 0 || parseFloat(a.hold.value) > 0)
+      .filter((a) => Number.parseFloat(a.available_balance.value) > 0 || Number.parseFloat(a.hold.value) > 0)
       .map((a) => ({
         asset: a.currency,
-        free: parseFloat(a.available_balance.value),
-        locked: parseFloat(a.hold.value),
+        free: Number.parseFloat(a.available_balance.value),
+        locked: Number.parseFloat(a.hold.value),
       }));
   }
 
@@ -110,9 +108,9 @@ export class CoinbaseClient {
     return (data.orders ?? []).map((o) => ({
       symbol: o.product_id,
       side: o.side === 'BUY' ? 'long' : 'short',
-      size: parseFloat(o.base_size),
-      entryPrice: parseFloat(o.average_filled_price ?? o.limit_price ?? '0'),
-      markPrice: parseFloat(o.average_filled_price ?? o.limit_price ?? '0'),
+      size: Number.parseFloat(o.base_size),
+      entryPrice: Number.parseFloat(o.average_filled_price ?? o.limit_price ?? '0'),
+      markPrice: Number.parseFloat(o.average_filled_price ?? o.limit_price ?? '0'),
       unrealizedPnl: 0,
     }));
   }
@@ -163,12 +161,7 @@ export class CoinbaseClient {
     });
   }
 
-  async withdraw(
-    asset: string,
-    amount: number,
-    address: string,
-    network: string
-  ): Promise<string> {
+  async withdraw(asset: string, amount: number, address: string, network: string): Promise<string> {
     if (this.mode === 'paper') return `paper-withdraw-${Date.now()}`;
 
     const data = await this.request<{ id: string }>('POST', '/api/v3/brokerage/transfers', {

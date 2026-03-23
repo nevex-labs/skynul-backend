@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   _initPaperDbForTest,
+  adjustPaperBalance,
   getPaperBalance,
   getPaperBalances,
-  adjustPaperBalance,
-  recordPaperTrade,
-  getPaperTrades,
   getPaperPortfolioSummary,
+  getPaperTrades,
+  recordPaperTrade,
   resetPaperPortfolio,
 } from './paper-portfolio';
 

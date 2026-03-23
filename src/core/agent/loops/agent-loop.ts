@@ -106,8 +106,7 @@ export async function runAgentLoop(
     }
 
     // Level 2: switch to compact system prompt when context pressure is high
-    const activeSystemPrompt =
-      systemPromptCompact && budget.applyLevel2 ? systemPromptCompact : systemPrompt;
+    const activeSystemPrompt = systemPromptCompact && budget.applyLevel2 ? systemPromptCompact : systemPrompt;
 
     let rawResponse: string;
     let usage: { inputTokens: number; outputTokens: number } | undefined;
