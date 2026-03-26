@@ -45,4 +45,8 @@ describe('deriveRunner', () => {
   it('returns browser when orchestrate is false', () => {
     expect(deriveRunner('browser', [], false)).toBe('browser');
   });
+
+  it('returns cdp when browser mode with fiat.transfers cap', () => {
+    expect(deriveRunner('browser', ['fiat.transfers'])).toBe('cdp');
+  });
 });

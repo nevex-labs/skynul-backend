@@ -8,6 +8,7 @@ import type { ExecutorContext } from '../action-executors';
 import {
   executeCexAction,
   executeChainAction,
+  executeFiatAction,
   executeFactAction,
   executeGenerateImage,
   executeInterTaskAction,
@@ -76,6 +77,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         if (task.capabilities.includes('polymarket.trading')) activeModes.push('polymarket_* actions');
         if (task.capabilities.includes('onchain.trading')) activeModes.push('chain_* actions');
         if (task.capabilities.includes('cex.trading')) activeModes.push('cex_* actions');
+        if (task.capabilities.includes('fiat.transfers')) activeModes.push('fiat_* actions');
         const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
         return {
           text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.`,
@@ -154,6 +156,14 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'cex_get_positions':
     case 'cex_withdraw': {
       const res = await executeCexAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'fiat_get_balance':
+    case 'fiat_get_accounts':
+    case 'fiat_send_transfer':
+    case 'fiat_get_transfer_status':
+    case 'fiat_get_transfer_history': {
+      const res = await executeFiatAction(ctx, action);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'wait':

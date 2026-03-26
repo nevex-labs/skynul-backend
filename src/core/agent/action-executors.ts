@@ -745,6 +745,115 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
   }
 }
 
+/** Execute fiat transfer actions. */
+export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  const raw = action as Record<string, unknown>;
+  const provider = raw.provider as 'prometeo' | 'plaid' | undefined;
+
+  const fiatTypes = [
+    'fiat_get_balance',
+    'fiat_get_accounts',
+    'fiat_send_transfer',
+    'fiat_get_transfer_status',
+    'fiat_get_transfer_history',
+  ];
+  if (!fiatTypes.includes(action.type)) {
+    return errResult(`Unknown fiat action: ${(action as any).type}`);
+  }
+
+  if (!provider || !['prometeo', 'plaid'].includes(provider)) {
+    return errResult(`Invalid or missing "provider" field. Must be "prometeo" or "plaid".`);
+  }
+
+  const mode = ctx.paperMode ? 'paper' : 'live';
+  const { PrometeoClient } = await import('../fiat/prometeo-client');
+  const { PlaidClient } = await import('../fiat/plaid-client');
+  const client = provider === 'prometeo' ? new PrometeoClient({ mode }) : new PlaidClient({ mode });
+
+  switch (action.type) {
+    case 'fiat_get_balance': {
+      try {
+        const balances = await client.getBalance();
+        if (balances.length === 0) return result('No balances found.');
+        const lines = balances.map((b) => `  ${b.currency}: ${b.available} available, ${b.total} total`);
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} balances:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'fiat_get_accounts': {
+      try {
+        const accounts = await client.getAccounts();
+        if (accounts.length === 0) return result('No accounts found.');
+        const lines = accounts.map(
+          (a) => `  [${a.id}] ${a.label} — ${a.currency} ${a.type} @ ${a.institution}`
+        );
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} accounts:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'fiat_send_transfer': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'fiat_send_transfer' }>;
+        const riskVenue = provider === 'prometeo' ? ('fiat_prometeo' as const) : ('fiat_plaid' as const);
+        if (!ctx.paperMode) {
+          const riskCheck = checkTradeAllowed(riskVenue, a.amount);
+          if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        }
+        const transferResult = await client.sendTransfer({
+          amount: a.amount,
+          currency: a.currency,
+          destinationAccount: a.destinationAccount,
+          concept: a.concept,
+        });
+        if (!ctx.paperMode) {
+          recordTradeVolume(riskVenue, a.amount);
+          openRiskPosition(riskVenue, a.destinationAccount, 'transfer', a.amount, ctx.task.id);
+        }
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(
+          `${prefix}Transfer initiated via ${provider}: id=${transferResult.transferId} status=${transferResult.status}` +
+            (transferResult.authorizationRequired ? ` (auth required: ${transferResult.authorizationRequired})` : '')
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'fiat_get_transfer_status': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'fiat_get_transfer_status' }>;
+        const statusResult = await client.getTransferStatus(a.transferId);
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(
+          `${prefix}Transfer ${statusResult.transferId}: ${statusResult.status} (updated ${new Date(statusResult.updatedAt).toISOString()})`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'fiat_get_transfer_history': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'fiat_get_transfer_history' }>;
+        const history = await client.getTransferHistory(a.limit);
+        if (history.length === 0) return result('No transfer history found.');
+        const lines = history.map(
+          (t) =>
+            `  [${t.transferId}] ${t.amount} ${t.currency} → ${t.destination} | ${t.status} | ${new Date(t.createdAt).toISOString()}`
+        );
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} transfer history:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    default:
+      return errResult(`Unknown fiat action`);
+  }
+}
+
 /** Resolve data URL attachments to temp files. */
 export async function resolveAttachments(attachments?: string[]): Promise<{
   filePaths: string[];

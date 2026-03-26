@@ -555,6 +555,7 @@ export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagen
   const hasPolymarket = capabilities.includes('polymarket.trading');
   const hasOnchain = capabilities.includes('onchain.trading');
   const hasCex = capabilities.includes('cex.trading');
+  const hasFiat = capabilities.includes('fiat.transfers');
   const hasAppScripting = capabilities.includes('app.scripting');
   const appScriptingBlock = hasAppScripting
     ? `
@@ -669,6 +670,31 @@ Available actions:
 `
     : '';
 
+  const fiatBlock = hasFiat
+    ? `
+## FIAT TRANSFER ACTIONS (HIGHEST PRIORITY when fiat.transfers is granted):
+- CRITICAL: Use ONLY the fiat_* actions below for bank transfer operations. Do NOT use shell, navigate, or evaluate.
+- Specify "provider": "prometeo" (LATAM: Mexico MXN, Brazil BRL, Peru PEN) or "plaid" (USA) in every action.
+- NOTE: Prometeo is currently live in Mexico, Brazil, and Peru. Argentina support is coming soon.
+
+**START HERE — check balance first:**
+{"thought": "Check my bank balance via Prometeo.", "action": {"type": "fiat_get_balance", "provider": "prometeo"}}
+
+Available actions:
+{"thought": "Check balances.", "action": {"type": "fiat_get_balance", "provider": "prometeo"}}
+{"thought": "List bank accounts.", "action": {"type": "fiat_get_accounts", "provider": "prometeo"}}
+{"thought": "Send a bank transfer (BRL).", "action": {"type": "fiat_send_transfer", "provider": "prometeo", "amount": 500, "currency": "BRL", "destinationAccount": "001-99887766-5", "concept": "Pago servicios"}}
+{"thought": "Check transfer status.", "action": {"type": "fiat_get_transfer_status", "provider": "prometeo", "transferId": "abc-123"}}
+{"thought": "View transfer history.", "action": {"type": "fiat_get_transfer_history", "provider": "prometeo", "limit": 10}}
+
+## FIAT TRANSFER NOTES:
+- Prometeo: for LATAM banks (Mexico MXN, Brazil BRL, Peru PEN). Argentina coming soon. Requires PROMETEO_API_KEY and PROMETEO_SESSION_KEY.
+- Plaid + Dwolla: for USA bank accounts (ACH transfers). Requires PLAID_ACCESS_TOKEN and DWOLLA credentials.
+- If a transfer returns status "requires_auth", a 2FA authorization is needed — report this to the user.
+- Always check balance before sending transfers.
+`
+    : '';
+
   if (compact) {
     return `${subagentBlock}You are an intelligent agent with CDP browser access. ONE JSON action per response. No markdown.
 
@@ -692,7 +718,7 @@ Available actions:
 
 ## Capabilities: ${capList || 'none'}
 
-${polymarketBlock}${onchainBlock}${cexBlock}${appScriptingBlock}${getInterTaskBlockCompact()}
+${polymarketBlock}${onchainBlock}${cexBlock}${fiatBlock}${appScriptingBlock}${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
 
 Respond with valid JSON only.`;
@@ -814,6 +840,7 @@ After launch, you will receive a screenshot. Use screen-style actions (click by 
 ${polymarketBlock}
 ${onchainBlock}
 ${cexBlock}
+${fiatBlock}
 ${appScriptingBlock}
 ${getOfficeBlock(capabilities)}
 ${compact ? getInterTaskBlockCompact() : getInterTaskBlock()}
@@ -971,7 +998,7 @@ Your "thought" must answer: What did I accomplish? What's the next step? Why thi
 Respond with valid JSON only.`;
 }
 
-const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'onchain.trading', 'cex.trading']);
+const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'onchain.trading', 'cex.trading', 'fiat.transfers']);
 
 function hasTradingCap(capabilities: TaskCapabilityId[]): boolean {
   return capabilities.some((c) => TRADING_CAPS.has(c));

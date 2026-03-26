@@ -6,6 +6,7 @@ export function deriveRunner(mode: TaskMode, capabilities: TaskCapabilityId[], o
   if (capabilities.includes('polymarket.trading')) return 'cdp';
   if (capabilities.includes('onchain.trading')) return 'cdp';
   if (capabilities.includes('cex.trading')) return 'cdp';
+  if (capabilities.includes('fiat.transfers')) return 'cdp';
   return 'browser';
 }
 

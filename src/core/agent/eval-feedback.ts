@@ -132,7 +132,7 @@ export type PerformanceSummary = {
 
 // ── Trade Extraction ──────────────────────────────────────────────────────────
 
-const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'cex.trading', 'onchain.trading']);
+const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'cex.trading', 'onchain.trading', 'fiat.transfers']);
 
 /**
  * Parse task steps to extract trade data.

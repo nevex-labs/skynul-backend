@@ -146,6 +146,14 @@ function isInformationQuestion(prompt: string): boolean {
     'git',
     'endpoint',
     'api',
+    'cbu',
+    'cvu',
+    'transferir',
+    'prometeo',
+    'plaid',
+    'wire transfer',
+    'bank transfer',
+    'transferencia bancaria',
   ];
 
   return !hasAny(p, toolSignals);
@@ -194,6 +202,17 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
     caps.add('onchain.trading');
   }
   if (hasAny(p, ['binance', 'coinbase', 'cex', 'spot order', 'limit order', 'market order'])) caps.add('cex.trading');
+  // Fiat bank transfers: require high-specificity signals to avoid false positives.
+  // Generic words like "pagar" or "banco" are NOT enough — they fire on "pagar en Amazon".
+  // We require either an explicit provider name, a banking identifier (CBU/CVU/alias),
+  // or a combination of transfer verb + fiat amount keyword.
+  const hasFiatProvider = hasAny(p, ['prometeo', 'plaid', 'dwolla']);
+  const hasBankingId = hasAny(p, ['cbu', 'cvu', ' alias bancario', 'cuenta bancaria', 'clabe', 'iban', 'routing number', 'account number', 'ach transfer', 'wire transfer', 'bank transfer', 'transferencia bancaria']);
+  const hasFiatTransferVerb = hasAny(p, ['transferir', 'hacer una transferencia', 'mandar plata', 'mandar dinero', 'enviar dinero', 'enviar plata', 'send money', 'fiat transfer']);
+  const hasFiatBalance = hasAny(p, ['saldo bancario', 'saldo en el banco', 'bank balance', 'bank account balance']);
+  if (hasFiatProvider || hasBankingId || hasFiatTransferVerb || hasFiatBalance) {
+    caps.add('fiat.transfers');
+  }
 
   // Apps / Office / Creative tooling (brands are useful regardless of UI language)
   if (hasAny(p, ['launch', 'open app', 'whatsapp', 'telegram', 'discord', 'slack', 'spotify'])) caps.add('app.launch');
@@ -229,8 +248,8 @@ function inferModeRules(prompt: string, capabilities: TaskCapabilityId[], attach
   if (isSimpleMathPrompt(prompt)) return 'code';
   if (isInformationQuestion(prompt)) return 'code';
 
-  // If it's explicitly a trading task, we treat it as browser-mode entrypoint (TaskRunner will route to CDP).
-  if (capabilities.some((c) => c.endsWith('.trading'))) return 'browser';
+  // If it's explicitly a trading/transfers task, we treat it as browser-mode entrypoint (TaskRunner will route to CDP).
+  if (capabilities.some((c) => c.endsWith('.trading') || c === 'fiat.transfers')) return 'browser';
 
   // Strong code signals
   const codeSignals = [
@@ -289,7 +308,7 @@ export function inferTaskSetupRules(input: TaskInferenceInput): TaskInferenceRes
   const p = normalizePrompt(input.prompt);
   let confidence = 0.4;
   if (isSimpleMathPrompt(input.prompt) || isInformationQuestion(input.prompt)) confidence = 0.95;
-  else if (capabilities.some((c) => c.endsWith('.trading'))) confidence = 0.95;
+  else if (capabilities.some((c) => c.endsWith('.trading') || c === 'fiat.transfers')) confidence = 0.95;
   else if (
     capabilities.includes('app.scripting') ||
     capabilities.includes('office.professional') ||
@@ -326,7 +345,8 @@ export async function inferTaskSetupLLM(opts: {
     '(1) If the user is asking a simple question (facts, explanations, math), use mode="code", capabilities=[]. ' +
     '(2) Only include browser.cdp if the user explicitly wants web navigation/search/scraping/download/opening websites. ' +
     '(3) For trading intents, include the specific *.trading capability and set runner="cdp" (mode can stay "browser"). ' +
-    '(4) confidence is a number 0..1.';
+    '(4) Use fiat.transfers when the user wants to execute a bank transfer, send money to a bank account, check a bank balance, or mentions banking identifiers (CBU, CVU, CLABE, IBAN, routing number, ACH, wire transfer) or providers (Prometeo, Plaid). Set runner="cdp". ' +
+    '(5) confidence is a number 0..1.';
 
   const user =
     `Prompt: ${prompt}\n` +

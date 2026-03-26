@@ -30,6 +30,7 @@ export const TASK_CAPABILITY_IDS = [
   'app.scripting',
   'onchain.trading',
   'cex.trading',
+  'fiat.transfers',
 ] as const;
 
 export type TaskCapabilityId = (typeof TASK_CAPABILITY_IDS)[number];
@@ -65,6 +66,11 @@ export const ALL_TASK_CAPABILITIES: Array<{
     id: 'cex.trading',
     title: 'CEX Trading',
     desc: 'Trade on centralized exchanges (Binance, Coinbase).',
+  },
+  {
+    id: 'fiat.transfers',
+    title: 'Fiat Transfers',
+    desc: 'Execute fiat bank transfers via Prometeo (LATAM) or Plaid (USA).',
   },
 ];
 
@@ -181,7 +187,20 @@ export type TaskAction =
       amount: number;
       address: string;
       network: string;
-    };
+    }
+  // Fiat transfer actions (require fiat.transfers capability)
+  | { type: 'fiat_get_balance'; provider: 'prometeo' | 'plaid' }
+  | { type: 'fiat_get_accounts'; provider: 'prometeo' | 'plaid' }
+  | {
+      type: 'fiat_send_transfer';
+      provider: 'prometeo' | 'plaid';
+      amount: number;
+      currency: string;
+      destinationAccount: string;
+      concept?: string;
+    }
+  | { type: 'fiat_get_transfer_status'; provider: 'prometeo' | 'plaid'; transferId: string }
+  | { type: 'fiat_get_transfer_history'; provider: 'prometeo' | 'plaid'; limit?: number };
 
 // ── Task Step (one turn of the agent loop) ────────────────────────────────────
 

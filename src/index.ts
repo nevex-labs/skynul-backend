@@ -18,6 +18,8 @@ import { corsMiddleware } from './middleware/cors';
 import { agentGroup } from './routes/agent';
 import { aiGroup } from './routes/ai';
 import { coinbaseAuthGroup } from './routes/auth/coinbase';
+import { plaidAuthGroup } from './routes/auth/plaid';
+import { prometeoAuthGroup } from './routes/auth/prometeo';
 import { walletAuthGroup } from './routes/auth/wallet';
 import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
@@ -69,6 +71,8 @@ const routes = app
   .route('/api/system', systemGroup)
   .route('/api/wallet', walletGroup)
   .route('/auth/coinbase', coinbaseAuthGroup)
+  .route('/auth/prometeo', prometeoAuthGroup)
+  .route('/auth/plaid', plaidAuthGroup)
   .route('/auth/wallet', walletAuthGroup);
 
 // ── Export type for hono/client (hc) ────────────────────────────────────────

@@ -40,7 +40,7 @@ export const RISK_SCHEMA = `
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type VenueId = 'polymarket' | 'chain' | 'binance' | 'coinbase';
+export type VenueId = 'polymarket' | 'chain' | 'binance' | 'coinbase' | 'fiat_prometeo' | 'fiat_plaid';
 
 export type RiskLimits = {
   /** Max USD value for a single trade. Default: 500 */
