@@ -199,8 +199,7 @@ export class SignalChannel extends Channel {
     }
 
     try {
-      const task = await this.createTaskFromMessage(body);
-      await this.sendMessage(this.formatSummary(task));
+      await this.createTaskFromMessage(body);
     } catch (e) {
       await this.sendMessage(`No se pudo crear la tarea: ${e instanceof Error ? e.message : String(e)}`);
     }

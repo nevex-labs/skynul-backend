@@ -46,7 +46,7 @@ export async function dispatchChat(provider: ProviderId, messages: ChatMessage[]
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-4.1-mini', messages: messages.slice(-20) }),
+      body: JSON.stringify({ model: 'gpt-4.1-mini', max_tokens: 8192, messages: messages.slice(-20) }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');

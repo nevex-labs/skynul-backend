@@ -69,40 +69,14 @@ export function formatStepUpdate(task: Task): string {
 }
 
 export function formatTaskComplete(task: Task): string {
-  const duration = durationText(task);
-  const durationLine = duration ? `\u23f1 Duración: ${duration}` : '';
-
-  const lines = [`\u2705 *Listo!*`, '', `\u{1f4dd} *Pedido:* ${truncate(task.prompt, 150)}`];
-
-  if (task.summary) {
-    lines.push('');
-    lines.push(linkify(task.summary));
-  } else {
-    lines.push('');
-    lines.push(`\u{1f4cb} _Tarea completada sin detalles adicionales._`);
-  }
-
-  if (durationLine) {
-    lines.push('');
-    lines.push(durationLine);
-  }
-
-  return lines.join('\n');
+  if (task.summary) return linkify(task.summary);
+  return 'Tarea completada.';
 }
 
 export function formatTaskFailed(task: Task): string {
-  const lines = [`\u274c *Tarea fallida*`, '', `\u{1f4dd} *Pedido:* ${truncate(task.prompt, 150)}`];
-
-  if (task.error) {
-    lines.push('');
-    lines.push(`\u{1f6a8} *Error:* ${truncate(task.error, 200)}`);
-  }
-
-  if (task.status === 'cancelled') {
-    lines[0] = `\u26d4 *Tarea cancelada*`;
-  }
-
-  return lines.join('\n');
+  if (task.error) return task.error;
+  if (task.status === 'cancelled') return 'Tarea cancelada.';
+  return 'La tarea falló.';
 }
 
 export function formatTaskList(tasks: Task[]): string {
