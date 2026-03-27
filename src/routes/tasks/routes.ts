@@ -104,8 +104,12 @@ const tasks = new Hono()
         skipMemory: body.skipMemory,
       };
 
+      console.log(`[task-create] capabilities=${JSON.stringify(capabilities)}, mode=${mode}, runner will be=${capabilities.some(c => c.endsWith('.trading')) ? 'cdp' : 'browser'}`);
       const task = tm.create(req);
-      return c.json({ task });
+
+      // Auto-approve: permissions are managed in settings, no need for manual approval.
+      const approved = await tm.approve(task.id);
+      return c.json({ task: approved });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
@@ -139,6 +143,16 @@ const tasks = new Hono()
     try {
       tm.sendMessage(id, 'user', message);
       return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    }
+  })
+  .post('/:id/resume', zValidator('json', z.object({ message: z.string() })), async (c) => {
+    const id = c.req.param('id');
+    const { message } = c.req.valid('json');
+    try {
+      const task = await tm.resume(id, message);
+      return c.json({ task });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }

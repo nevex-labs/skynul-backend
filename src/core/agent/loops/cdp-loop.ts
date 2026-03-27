@@ -28,6 +28,7 @@ export type CdpLoopSetup = {
     taskManager: TaskManager | null;
     parentTaskId?: string;
     maxSteps: number;
+    paperMode?: boolean;
   };
   onStatus: (msg: string) => void;
   onUpdate: (task: Task) => void;
@@ -41,8 +42,13 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   callbacks: LoopCallbacks;
 } {
   const { task, memoryContext, taskManager, parentTaskId } = setup.deps;
-  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false);
-  const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true);
+  const paperMode = setup.deps.paperMode ?? false;
+  console.log(`[cdp-loop] paperMode=${paperMode}, capabilities=${task.capabilities.join(',')}`);
+  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, paperMode);
+  const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, paperMode);
+  console.log(`[cdp-loop] systemPrompt includes PAPER: ${systemPrompt.includes('TRADING MODE: PAPER')}`);
+  console.log(`[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`);
+  console.log(`[cdp-loop] systemPrompt first 500 chars of polymarket block:`, systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500));
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -60,7 +66,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history.push({
     role: 'user',
     content: [
-      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}` },
+      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".` },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
         detail: 'auto' as const,
@@ -80,7 +86,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         if (task.capabilities.includes('fiat.transfers')) activeModes.push('fiat_* actions');
         const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
         return {
-          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.`,
+          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.\n\nCRITICAL: You are an AUTONOMOUS agent. Do NOT ask the user questions. Do NOT call "done" to ask for clarification. If the user gave you enough context to act, START IMMEDIATELY with the first action (e.g. check balance). Infer reasonable defaults for anything not specified. Your first action should ALWAYS be an API call, never "done" or "fail".`,
         };
       }
       // Level 1: reduce action log when context pressure is high

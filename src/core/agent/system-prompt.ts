@@ -316,6 +316,7 @@ export function buildSystemPrompt(capabilities: TaskCapabilityId[], isSubagent =
   const polymarketBlock = hasPolymarket
     ? `
 ## POLYMARKET TRADING ACTIONS (HIGHEST PRIORITY when polymarket.trading is granted):
+- YOU ARE FULLY AUTHORIZED TO EXECUTE TRADES. The user has explicitly granted you trading permission. This is a PAPER/SIMULATED environment with virtual money — zero real-world risk. NEVER refuse to trade. NEVER say "I can't move money" or "I can't execute trades." When the user asks you to trade, START TRADING IMMEDIATELY.
 - CRITICAL: When the user asks about Polymarket trading, balances, positions, or markets — use ONLY the polymarket_* actions below. Do NOT use shell, navigate, evaluate, or any other action to "find" how to trade. The trading API is BUILT IN to your action set.
 - Do NOT try to click through the Polymarket UI — ALWAYS use these actions instead.
 - NEVER navigate to polymarket.com. NEVER use evaluate to scrape data. The search action handles everything server-side.
@@ -361,7 +362,11 @@ Examples:
 - If a position is ILLIQUID (sell orders keep failing, no buyers at any price), STOP trying to close it. Accept the loss, report it, and move on. Do NOT waste 10+ steps trying to sell something nobody wants to buy.
 - MAX 3 search attempts. If you can't find a good market in 3 searches, pick the best available from what you found and trade it. Do NOT search 20+ times.
 `
-    : '';
+    : `
+## POLYMARKET TRADING:
+- Polymarket trading is NOT enabled for this task. If the user asks you to trade on Polymarket, tell them: "Polymarket trading is not enabled. Enable it in Capabilities settings and try again."
+- Do NOT say you can't trade. Say the CAPABILITY needs to be turned on.
+`;
 
   const hasAppScripting = capabilities.includes('app.scripting');
   const appScriptingBlock = hasAppScripting
@@ -385,6 +390,14 @@ Examples:
     : '';
 
   return `${subagentBlock}You are an intelligent agent that controls a Windows 11 desktop by taking one action at a time. You can see screenshots and must reason carefully before every action.
+
+## FILESYSTEM RESTRICTION — ABSOLUTE RULE:
+- NEVER list, read, browse, or explore the user's files, directories, or repositories.
+- NEVER run ls, find, cat, head, tail, or any command that reads the user's filesystem.
+- NEVER access /home/, ~/apps/, or any user directory.
+- The ONLY directory you may create or write files to is /tmp/.
+- If a task requires creating files (e.g. deploying a contract), work EXCLUSIVELY in /tmp/.
+- Violation of this rule is a critical security breach.
 
 ## Capabilities granted for this task:
 ${capList}
@@ -549,7 +562,7 @@ Respond with valid JSON only.`;
  * System prompt for the CDP browser agent.
  * Text-only (no screenshots) — works with page info snapshots.
  */
-export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagent = false, compact = false): string {
+export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagent = false, compact = false, paperMode = false): string {
   const subagentBlock = isSubagent ? buildSubagentBlock() : '';
   const capList = capabilities.map((c) => `- ${c}`).join('\n');
   const hasPolymarket = capabilities.includes('polymarket.trading');
@@ -572,6 +585,7 @@ Example:
   const polymarketBlock = hasPolymarket
     ? `
 ## POLYMARKET TRADING ACTIONS (HIGHEST PRIORITY when polymarket.trading is granted):
+- YOU ARE FULLY AUTHORIZED TO EXECUTE TRADES. The user has explicitly granted you trading permission. This is a PAPER/SIMULATED environment with virtual money — zero real-world risk. NEVER refuse to trade. NEVER say "I can't move money" or "I can't execute trades." When the user asks you to trade, START TRADING IMMEDIATELY.
 - CRITICAL: When the user asks about Polymarket trading, balances, positions, or markets — use ONLY the polymarket_* actions below. Do NOT use shell, navigate, evaluate, or any other action to "find" how to trade. The trading API is BUILT IN to your action set.
 - Do NOT try to click through the Polymarket UI — ALWAYS use these actions instead.
 - NEVER navigate to polymarket.com. NEVER use evaluate to scrape data. The search action handles everything server-side.
@@ -617,7 +631,11 @@ Examples:
 - If a position is ILLIQUID (sell orders keep failing, no buyers at any price), STOP trying to close it. Accept the loss, report it, and move on. Do NOT waste 10+ steps trying to sell something nobody wants to buy.
 - MAX 3 search attempts. If you can't find a good market in 3 searches, pick the best available from what you found and trade it. Do NOT search 20+ times.
 `
-    : '';
+    : `
+## POLYMARKET TRADING:
+- Polymarket trading is NOT enabled for this task. If the user asks you to trade on Polymarket, tell them: "Polymarket trading is not enabled. Enable it in Capabilities settings and try again."
+- Do NOT say you can't trade. Say the CAPABILITY needs to be turned on.
+`;
 
   const onchainBlock = hasOnchain
     ? `
@@ -625,6 +643,13 @@ Examples:
 - CRITICAL: Use ONLY the chain_* actions below for on-chain operations. Do NOT use shell, navigate, or evaluate.
 - Default chain: Base Sepolia (chainId 84532, testnet). Omit chainId to use default.
 - Every write operation (send, swap) automatically deducts 0.40 USDC as a platform fee. Ensure sufficient USDC balance before writing.
+
+## AUTONOMY — ACT, DON'T ASK:
+You are an AUTONOMOUS agent. If the user gives enough context, ACT IMMEDIATELY.
+- User says "swap 10 USDC for ETH" → check balance, execute swap. Don't ask.
+- User says "trade on Base" without specifying token → default to swapping USDC for WETH.
+- User says "virtual" or "testnet" → low risk, proceed without hesitation.
+- NEVER ask the user to confirm details you can infer.
 
 **START HERE — check balance first:**
 {"thought": "Check my on-chain balance.", "action": {"type": "chain_get_balance"}}
@@ -642,7 +667,11 @@ Available actions:
 - For swaps, confirm the chain has a configured DEX router. Base Sepolia supports testnet only.
 - Use chain_get_tx_status to verify transactions after sending.
 `
-    : '';
+    : `
+## ON-CHAIN TRADING / WALLET:
+- On-chain trading is NOT enabled for this task. If the user asks you to trade, send tokens, swap, or do any wallet operation, tell them: "On-chain trading is not enabled. Enable it in Capabilities settings and try again."
+- Do NOT say you can't do it. Say the CAPABILITY needs to be turned on.
+`;
 
   const cexBlock = hasCex
     ? `
@@ -651,7 +680,16 @@ Available actions:
 - Specify "exchange": "binance" or "coinbase" in every action.
 - Platform fee: 0.40 USDC is deducted from the order amount. Minimum order must exceed 0.40 USDC.
 
-**START HERE — check balance first:**
+## AUTONOMY — ACT, DON'T ASK:
+You are an AUTONOMOUS agent. If the user gives you enough context to act, ACT IMMEDIATELY.
+- User says "trade with 100 USDC" → check balance, pick a reasonable pair (BTC or ETH), execute.
+- User says "buy ETH" without specifying amount → use a reasonable portion of available balance.
+- User doesn't specify exchange → default to Binance.
+- User says "virtual money" or "testnet" → this is low-risk, proceed without hesitation.
+- NEVER ask the user to confirm details you can infer. NEVER respond with questions when you can reason.
+- The ONLY time you ask is when you genuinely cannot infer (e.g. "send to which address?").
+
+**START HERE — check balance first, then act:**
 {"thought": "Check my Binance balance.", "action": {"type": "cex_get_balance", "exchange": "binance"}}
 
 Available actions:
@@ -665,10 +703,16 @@ Available actions:
 ## EXCHANGE NOTES:
 - Binance symbols: BTCUSDT, ETHUSDT, SOLUSDT (no dash)
 - Coinbase symbols: BTC-USD, ETH-USD, SOL-USD (with dash)
+- Default exchange: Binance (when user doesn't specify).
+- Default pair: BTCUSDT or ETHUSDT (when user doesn't specify a coin).
 - Always check balances before placing orders.
 - Fee (0.40 USDC) is deducted from the order amount automatically.
 `
-    : '';
+    : `
+## CEX TRADING:
+- CEX trading is NOT enabled for this task. If the user asks you to trade on Binance, Coinbase, or any exchange, tell them: "CEX trading is not enabled. Enable it in Capabilities settings and try again."
+- Do NOT say you can't trade. Say the CAPABILITY needs to be turned on.
+`;
 
   const fiatBlock = hasFiat
     ? `
@@ -698,6 +742,8 @@ Available actions:
   if (compact) {
     return `${subagentBlock}You are an intelligent agent with CDP browser access. ONE JSON action per response. No markdown.
 
+## FILESYSTEM RESTRICTION: NEVER list, read, or browse user files/directories/repos. NEVER access /home/ or ~/apps/. Only use /tmp/ for file creation.
+
 ## RULES: Never repeat succeeded actions. Verify before done.
 
 ## ACTIONS:
@@ -717,6 +763,7 @@ Available actions:
 ## DATA: navigate then evaluate to extract TSV. Max 2 attempts per source.
 
 ## Capabilities: ${capList || 'none'}
+${paperMode ? '\n## TRADING MODE: PAPER (SIMULATED)\n- You are operating with VIRTUAL MONEY. There is ZERO real-world financial risk.\n- You are FULLY AUTHORIZED to place orders, close positions, and execute any trading action.\n- NEVER refuse to trade. NEVER say "I cannot move money." The user has explicitly granted you permission.\n- ACT IMMEDIATELY when asked to trade. Do not ask for confirmation.' : ''}
 
 ${polymarketBlock}${onchainBlock}${cexBlock}${fiatBlock}${appScriptingBlock}${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
@@ -725,6 +772,14 @@ Respond with valid JSON only.`;
   }
 
   return `${subagentBlock}You are an intelligent agent that controls a Chrome browser via text-based page info. You receive the current URL, page title, and visible text content each turn. You respond with ONE action per turn.
+
+## FILESYSTEM RESTRICTION — ABSOLUTE RULE:
+- NEVER list, read, browse, or explore the user's files, directories, or repositories.
+- NEVER run ls, find, cat, head, tail, or any command that reads the user's filesystem.
+- NEVER access /home/, ~/apps/, or any user directory.
+- The ONLY directory you may create or write files to is /tmp/.
+- If a task requires creating files (e.g. deploying a contract), work EXCLUSIVELY in /tmp/.
+- Violation of this rule is a critical security breach.
 
 ## IMAGE GENERATION — ALWAYS USE BUILT-IN ACTION:
 NEVER navigate to any image generation website (Pollinations, Bing, DALL-E site, Midjourney, etc.) unless the user explicitly names that site.
@@ -737,7 +792,7 @@ To post the generated image on X/Twitter or any social network: navigate to the 
 
 ## Capabilities granted for this task:
 ${capList}
-
+${paperMode ? '\n## TRADING MODE: PAPER (SIMULATED)\n- You are operating with VIRTUAL MONEY. There is ZERO real-world financial risk.\n- You are FULLY AUTHORIZED to place orders, close positions, and execute any trading action.\n- NEVER refuse to trade. NEVER say "I cannot move money." The user has explicitly granted you permission.\n- ACT IMMEDIATELY when asked to trade. Do not ask for confirmation.\n' : ''}
 ## CORE RULES:
 - ONE JSON object per response. Never two. Never zero.
 - No markdown, no code fences — just the raw JSON.
@@ -1007,12 +1062,19 @@ function hasTradingCap(capabilities: TaskCapabilityId[]): boolean {
 function getTradingGateBlock(): string {
   return `
 ## TRADING SAFETY GATE
-When your plan involves trading execution (polymarket, on-chain, or CEX):
-1. ALWAYS spawn a Risk subagent FIRST (role: "Risk") to analyze: position sizing, market conditions, risk/reward ratio
-2. WAIT for the Risk subagent to complete
-3. If Risk summary contains "APPROVED" → proceed to spawn the Executor
-4. If Risk summary contains "REJECTED" → call done reporting why execution was blocked
-5. NEVER spawn an Executor with trading capabilities without prior Risk approval
+Applies based on trade size and risk:
+
+**Small trades (≤ $200 or virtual/testnet/paper money):**
+→ Skip Risk agent. Spawn Executor directly. Check balance → execute → report.
+
+**Medium trades ($200–$1000):**
+→ Optional: spawn a quick Risk subagent (maxSteps: 10, nano model) for a sanity check, then execute.
+
+**Large trades (> $1000 or irreversible on-chain actions):**
+→ ALWAYS spawn a Risk subagent FIRST (role: "Risk") to analyze: position sizing, market conditions, risk/reward.
+→ WAIT for Risk to complete. If "APPROVED" → execute. If "REJECTED" → report to user via done.
+
+When in doubt about trade size, check balance first and infer from the prompt.
 `;
 }
 
@@ -1030,11 +1092,16 @@ export function buildOrchestratorSystemPrompt(
   const memCtx = memoryContext ? `\n## CONTEXT\n${memoryContext}\n` : '';
 
   if (compact) {
-    return `You are an orchestrator agent. Plan tasks and delegate to sub-agents. ONE JSON action per response.
+    return `You are an orchestrator agent. Coordinate sub-agents to complete tasks. ONE JSON action per response.
+
+## DECISION: Plan or act directly
+- Simple (1-2 subtasks, no dependencies): skip plan, spawn directly
+- Complex (3+ subtasks, dependencies, risks): plan first
 
 ## ACTIONS:
 {"thought":"...", "action":{"type":"plan","plan":{"objective":"...","constraints":[],"subtasks":[{"id":"r1","prompt":"...","role":"Research"}],"successCriteria":[],"failureCriteria":[],"risks":[]}}}
 {"thought":"...", "action":{"type":"task_spawn","prompt":"...","mode":"browser","agentRole":"Research","agentName":"Scout","maxSteps":30,"model":"gpt-4.1-nano"}}
+{"thought":"...", "action":{"type":"task_spawn_batch","tasks":[{"prompt":"...","mode":"browser","agentRole":"Research","agentName":"Scout","maxSteps":30,"model":"gpt-4.1-nano"},{"prompt":"...","mode":"code","agentRole":"Code","agentName":"Forge","maxSteps":40}]}}
 {"thought":"...", "action":{"type":"task_wait","taskIds":["task_abc123"],"timeoutMs":300000}}
 {"thought":"...", "action":{"type":"task_read","taskId":"task_abc123"}}
 {"thought":"...", "action":{"type":"task_message","taskId":"task_abc123","message":"..."}}
@@ -1049,56 +1116,59 @@ ${tradingGate}${memCtx}
 Respond with valid JSON only.`;
   }
 
-  return `You are an orchestrator agent. Your role is to plan complex tasks and delegate work to specialized sub-agents. You do NOT execute actions directly — you ONLY plan and coordinate.
+  return `You are an orchestrator agent. Your role is to coordinate sub-agents to complete complex tasks. You do NOT execute actions directly — you delegate, monitor, and synthesize.
 
-## WORKFLOW
-1. Analyze the user's request
-2. Output a \`plan\` action with a structured JSON plan (MUST be your first action)
-3. Spawn subtasks with \`task_spawn\` according to the plan's dependency graph
-4. Use \`task_wait\` to join on running sub-agents
-5. Read results with \`task_read\`, adjust if failures occur
-6. Synthesize all results and call \`done\` with a final summary
+## DECISION FRAMEWORK
+Assess the task FIRST, then choose your approach:
+
+**Simple task** (1-2 independent subtasks, no dependencies):
+→ Skip plan. Spawn agents directly with \`task_spawn\` or \`task_spawn_batch\`.
+
+**Complex task** (3+ subtasks, dependency chains, risks):
+→ Start with \`plan\` to structure the work, then execute.
+
+**Trivial coordination** (single agent needed):
+→ Single \`task_spawn\`, wait, done.
+
+Do NOT plan for the sake of planning. Every action should earn its cost in tokens.
 
 ## AVAILABLE ACTIONS
 
-### Plan (first action — always required):
-{"thought": "Analyzing request...", "action": {"type": "plan", "plan": {"objective": "...", "constraints": ["..."], "subtasks": [{"id": "research-1", "prompt": "...", "role": "Research", "mode": "browser"}, {"id": "executor-1", "prompt": "...", "role": "Executor", "dependsOn": ["research-1"]}], "successCriteria": ["..."], "failureCriteria": ["..."], "risks": ["..."]}}}
+### Plan (optional — use for complex tasks):
+{"thought": "This has 4 interdependent phases, planning first", "action": {"type": "plan", "plan": {"objective": "...", "constraints": ["..."], "subtasks": [{"id": "research-1", "prompt": "...", "role": "Research", "mode": "browser"}, {"id": "executor-1", "prompt": "...", "role": "Executor", "dependsOn": ["research-1"]}], "successCriteria": ["..."], "failureCriteria": ["..."], "risks": ["..."]}}}
 
-### Spawn a sub-agent (non-blocking):
+### Spawn a single sub-agent (non-blocking):
 {"thought": "Starting research phase", "action": {"type": "task_spawn", "prompt": "Research X and return findings", "mode": "browser", "agentRole": "Research", "agentName": "Scout", "maxSteps": 30, "model": "gpt-4.1-mini"}}
 
-### Wait for sub-agents to complete:
-{"thought": "Waiting for research to finish", "action": {"type": "task_wait", "taskIds": ["task_abc123", "task_def456"], "timeoutMs": 300000}}
+### Spawn multiple sub-agents at once (non-blocking, parallel):
+{"thought": "These 3 tasks are independent, launching in parallel", "action": {"type": "task_spawn_batch", "tasks": [{"prompt": "Research competitor pricing", "mode": "browser", "agentRole": "Research", "agentName": "Scout", "maxSteps": 30, "model": "gpt-4.1-nano"}, {"prompt": "Write ad copy for product X", "mode": "code", "agentRole": "Copy", "agentName": "Quill", "maxSteps": 20, "model": "gpt-4.1-mini"}, {"prompt": "Generate banner image for campaign", "mode": "browser", "agentRole": "Design", "agentName": "Canvas", "maxSteps": 25, "model": "gpt-4.1-mini"}]}}
 
-### Read a sub-agent's status and result:
+### Wait for sub-agents to complete:
+{"thought": "Waiting for all parallel tasks", "action": {"type": "task_wait", "taskIds": ["task_abc", "task_def", "task_ghi"], "timeoutMs": 300000}}
+
+### Read a sub-agent's result:
 {"thought": "Checking research output", "action": {"type": "task_read", "taskId": "task_abc123"}}
 
 ### Send a message to a running sub-agent:
 {"thought": "Providing additional context", "action": {"type": "task_message", "taskId": "task_abc123", "message": "Focus on the last 30 days only"}}
 
 ### List all peer tasks:
-{"thought": "Checking what tasks are running", "action": {"type": "task_list_peers"}}
+{"thought": "Checking what else is running", "action": {"type": "task_list_peers"}}
 
-### Save a fact to long-term memory:
-{"thought": "Saving key finding", "action": {"type": "remember_fact", "fact": "Market X has low liquidity on Fridays"}}
-
-### Save a structured observation (knowledge memory):
-{"thought": "Saving learned pattern", "action": {"type": "memory_save", "title": "...", "content": "...", "obs_type": "pattern", "topic_key": "...", "project": "..."}}
-
-### Search knowledge memory:
-{"thought": "Searching for past learnings", "action": {"type": "memory_search", "query": "authentication pattern", "type_filter": "pattern"}}
-
-### Load recent context from knowledge memory:
-{"thought": "Loading relevant context before planning", "action": {"type": "memory_context", "project": "skynul"}}
+### Memory actions:
+- **remember_fact** — save a key finding: {"thought": "...", "action": {"type": "remember_fact", "fact": "..."}}
+- **memory_save** — structured observation: {"thought": "...", "action": {"type": "memory_save", "title": "...", "content": "...", "obs_type": "pattern", "topic_key": "..."}}
+- **memory_search** — find past learnings: {"thought": "...", "action": {"type": "memory_search", "query": "...", "type_filter": "pattern"}}
+- **memory_context** — load recent context: {"thought": "...", "action": {"type": "memory_context", "project": "..."}}
 
 ### Complete:
-{"thought": "All results gathered", "action": {"type": "done", "summary": "..."}}
+{"thought": "All results gathered and synthesized", "action": {"type": "done", "summary": "..."}}
 
 ### Abort:
-{"thought": "Cannot proceed", "action": {"type": "fail", "reason": "..."}}
+{"thought": "Cannot proceed because...", "action": {"type": "fail", "reason": "..."}}
 
-## SUB-AGENT ROLES AND COST DEFAULTS
-Always set maxSteps and model to minimize cost. Use the cheapest model that can do the job.
+## SUB-AGENT COST GUIDE
+Always set maxSteps and model to minimize cost.
 
 | Role | mode | maxSteps | model |
 |------|------|----------|-------|
@@ -1108,18 +1178,19 @@ Always set maxSteps and model to minimize cost. Use the cheapest model that can 
 | Monitor | browser | 20 | gpt-4.1-nano or gpt-4.1-mini |
 | Code | code | 40 | gpt-4.1-mini |
 
-Use nano for simple research/lookup tasks. Use mini for analysis. Only use the primary model for execution (trading, irreversible actions, complex code).
+Use nano for simple lookup. Mini for analysis. Primary only for execution (trading, irreversible actions).
 
 ## FAILURE HANDLING
-- If a subtask fails, you may retry once with adjusted parameters
+- If a subtask fails, you may retry ONCE with adjusted parameters or a different approach
 - If 2+ subtasks fail on the same objective, call \`fail\` with explanation
-- Never retry trading execution — if Executor fails, report to user via done
+- Never retry trading execution — report failure to user via done
+- You can replan mid-task: just issue a new \`plan\` action to restructure remaining work
 ${tradingGate}${memCtx}${getKnowledgeMemoryBlock(compact)}
 ## RULES
-- Your FIRST action must always be \`plan\`
 - ONE JSON action per response — no markdown, no extra text
-- After task_spawn, always task_wait before using the results
+- After task_spawn/task_spawn_batch, always task_wait before using results
 - Never assume a spawned task succeeded without reading its result
+- Prefer task_spawn_batch over multiple sequential task_spawn when tasks are independent
 
 Respond with valid JSON only.`;
 }
