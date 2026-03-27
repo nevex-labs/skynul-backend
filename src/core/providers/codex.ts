@@ -49,6 +49,7 @@ export async function codexRespond(opts: { messages: ChatMessage[] }): Promise<s
     headers,
     body: JSON.stringify({
       model: 'gpt-5.2',
+      max_output_tokens: 8192,
       instructions: 'You are a helpful assistant.',
       store: false,
       stream: true,

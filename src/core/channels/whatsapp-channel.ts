@@ -189,8 +189,7 @@ export class WhatsAppChannel extends Channel {
 
     // Any other text = create task
     try {
-      const task = await this.createTaskFromMessage(body);
-      await this.client!.sendMessage(chatId, this.formatSummary(task));
+      await this.createTaskFromMessage(body);
     } catch (e) {
       await this.client!.sendMessage(
         chatId,

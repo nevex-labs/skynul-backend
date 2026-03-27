@@ -420,6 +420,115 @@ export class TaskManager extends EventEmitter {
     return inbox;
   }
 
+  /**
+   * Resume a completed/failed/cancelled task with a new user message.
+   * Appends the message as a user_message step and re-runs the task,
+   * preserving all previous context (steps, prompt, capabilities).
+   */
+  async resume(taskId: string, message: string): Promise<Task> {
+    const task = this.getOrThrow(taskId);
+    const terminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
+    if (!terminal) throw new Error(`Task ${taskId} is still ${task.status}, use sendMessage instead`);
+    if (this.runners.has(taskId)) throw new Error(`Task ${taskId} already has an active runner`);
+
+    // Build conversation context from previous steps (kept separate from task.prompt)
+    const conversationLines: string[] = [];
+    for (const step of task.steps) {
+      const actionData = step.action as Record<string, unknown>;
+      if (step.action.type === 'user_message' && actionData.text) {
+        conversationLines.push(`[USER]: ${String(actionData.text)}`);
+      } else if (step.action.type === 'done' && actionData.summary) {
+        conversationLines.push(`[AGENT]: ${String(actionData.summary)}`);
+      } else if (step.action.type === 'fail' && actionData.reason) {
+        conversationLines.push(`[AGENT FAILED]: ${String(actionData.reason)}`);
+      }
+    }
+    conversationLines.push(`[USER]: ${message}`);
+
+    // Store conversation context on the task for the runner to pick up
+    (task as Record<string, unknown>).resumeContext =
+      `\n\n[PRIOR CONVERSATION — do NOT repeat questions already answered]\n${conversationLines.join('\n')}\n[/PRIOR CONVERSATION]\nContinue from where you left off.`;
+
+    // Add the user message as a visible step (keeps chat history in UI)
+    task.steps.push({
+      index: task.steps.length,
+      timestamp: Date.now(),
+      screenshotBase64: '',
+      action: { type: 'user_message' as const, text: message },
+    });
+    task.error = undefined;
+    task.status = 'running';
+    task.updatedAt = Date.now();
+    this.tasks.set(taskId, task);
+    this.pushUpdate(task);
+
+    // Re-launch the runner (same logic as approve)
+    const policy = this.getPolicy?.() ?? null;
+    const provider = policy?.provider.active ?? 'chatgpt';
+    const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
+
+    const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
+    const memories = memoryEnabled ? searchMemories(task.prompt) : [];
+    const memoryContext = formatMemoriesForPrompt(memories);
+
+    const facts = memoryEnabled ? searchFacts(task.prompt) : [];
+    const factsContext = formatFactsForPrompt(facts);
+
+    const skills = await loadSkills();
+    const skillContext = getActiveSkillPrompts(skills, task.prompt);
+
+    const feedbackContext = memoryEnabled ? buildFeedbackContext(task.capabilities) : '';
+    const paperMode = policy?.paperTradingEnabled ?? false;
+
+    const runner = new TaskRunner(
+      task,
+      {
+        provider,
+        openaiModel,
+        memoryContext: memoryContext + factsContext + skillContext + feedbackContext + (((task as Record<string, unknown>).resumeContext as string) ?? ''),
+        taskManager: this,
+        taskId: task.id,
+        paperMode,
+      },
+      {
+        onUpdate: (updated) => {
+          this.tasks.set(updated.id, updated);
+          this.pushUpdate(updated);
+          this.schedulePersist();
+        },
+      }
+    );
+
+    // Clean up the temporary resumeContext so it doesn't persist
+    delete (task as Record<string, unknown>).resumeContext;
+
+    this.runners.set(taskId, runner);
+    const startTime = Date.now();
+
+    void runner
+      .run()
+      .then((final) => {
+        this.tasks.set(final.id, final);
+        this.runners.delete(taskId);
+        if (memoryEnabled) this.extractAndSaveMemory(final, provider, Date.now() - startTime);
+        this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
+        void this.persistToDisk();
+      })
+      .catch((e) => {
+        task.status = 'failed';
+        task.error = e instanceof Error ? e.message : String(e);
+        task.updatedAt = Date.now();
+        this.tasks.set(taskId, task);
+        this.pushUpdate(task);
+        this.runners.delete(taskId);
+        if (memoryEnabled) this.extractAndSaveMemory(task, provider, Date.now() - startTime);
+        this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
+        void this.persistToDisk();
+      });
+
+    return task;
+  }
+
   cancel(taskId: string, reason = 'Cancelled by user'): Task {
     const task = this.getOrThrow(taskId);
 

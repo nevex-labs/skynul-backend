@@ -159,6 +159,7 @@ export class TaskRunner {
       taskManager: this.opts.taskManager ?? null,
       parentTaskId: this.task.parentTaskId,
       maxSteps: this.task.maxSteps,
+      paperMode: this.opts.paperMode,
     };
 
     const { systemPrompt, systemPromptCompact, history, callbacks } = setupCdpLoop({

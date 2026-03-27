@@ -11,8 +11,9 @@ import { PolymarketClient } from '../polymarket-client';
 import { generateImage } from '../providers/image-gen';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
+import { getSecret } from '../stores/secret-store';
 import { sandboxPath, validateShellCommand } from './input-guard';
-import { adjustPaperBalance, getPaperBalance, getPaperBalances, recordPaperTrade } from './paper-portfolio';
+import { adjustPaperBalance, getPaperBalance, getPaperBalances, getPaperTrades, recordPaperTrade } from './paper-portfolio';
 import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
 import {
@@ -189,17 +190,25 @@ export async function executeGenerateImage(
 }
 
 /** Execute shell command with timeout. */
-export function executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<ExecutorResult> {
+export async function executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<ExecutorResult> {
   try {
     validateShellCommand(command);
   } catch (e) {
-    return Promise.resolve(errResult(e instanceof Error ? e.message : String(e)));
+    return errResult(e instanceof Error ? e.message : String(e));
   }
+
+  // Inject wallet private key as env var for deploy scripts
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  if (command.includes('DEPLOYER_PRIVATE_KEY') || command.includes('hardhat')) {
+    const walletKey = await getSecret('CHAIN_WALLET_PRIVATE_KEY');
+    if (walletKey) env.DEPLOYER_PRIVATE_KEY = walletKey;
+  }
+
   return new Promise((resolve) => {
     const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
     const child = exec(
       command,
-      { timeout, maxBuffer: 1024 * 1024, cwd: cwd || undefined },
+      { timeout, maxBuffer: 1024 * 1024, cwd: cwd || undefined, env },
       (err: Error | null, stdout: string, stderr: string) => {
         const out = headTail(stdout.toString(), 4000);
         const errOut = stderr.toString().slice(0, 1000);
@@ -353,6 +362,9 @@ export function executeFileSearch(
 
 /** Execute Polymarket trading actions. */
 export async function executePolymarketAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  if (!ctx.task.capabilities.includes('polymarket.trading')) {
+    return errResult('Polymarket trading capability is not enabled for this task. Enable it in Capabilities settings.');
+  }
   if (
     ![
       'polymarket_get_account_summary',
@@ -373,9 +385,11 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         if (ctx.paperMode) {
           const paperBals = getPaperBalances();
           const usdcBal = getPaperBalance('USDC');
-          ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, 0 positions.`;
+          const positions = paperBals.filter((b) => b.asset !== 'USDC' && b.asset !== 'USDT' && b.asset !== 'DAI');
+          const posCount = positions.length;
+          ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, ${posCount} positions.`;
           const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
-          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, 0 positions.\nPaper portfolio:\n${lines.join('\n')}`);
+          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} positions.\nPaper portfolio:\n${lines.join('\n')}`);
         }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
@@ -423,7 +437,12 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         const raw = action as Extract<TaskAction, { type: 'polymarket_place_order' }>;
         if (ctx.paperMode) {
           const cost = raw.price * raw.size;
+          const usdcBal = getPaperBalance('USDC');
+          if (cost > usdcBal) return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
           adjustPaperBalance('USDC', -cost);
+          // Instant fill: add token position (shares = size)
+          const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
+          adjustPaperBalance(tokenKey, raw.size);
           const orderId = recordPaperTrade({
             task_id: ctx.task.id,
             venue: 'polymarket',
@@ -435,7 +454,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
             amount_usd: cost,
           });
           return result(
-            `[PAPER] Order placed (GTC): ${raw.side} ${raw.size} @ $${raw.price} on ${raw.tokenId.slice(0, 10)}... | orderId: ${orderId}`
+            `[PAPER] FILLED: ${raw.side} ${raw.size} shares @ $${raw.price} on ${raw.tokenId.slice(0, 10)}... | cost: $${cost.toFixed(2)} | orderId: ${orderId}`
           );
         }
         const cost = raw.price * raw.size;
@@ -461,7 +480,20 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         const raw = action as Extract<TaskAction, { type: 'polymarket_close_position' }>;
         if (!raw.tokenId) return errResult('tokenId is required. Use polymarket_get_account_summary first.');
         if (ctx.paperMode) {
-          const proceeds = (raw.size ?? 1) * 0.999;
+          const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
+          const held = getPaperBalance(tokenKey);
+          const sellSize = raw.size ?? held;
+          if (sellSize <= 0 || held <= 0) return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
+          const actualSell = Math.min(sellSize, held);
+          // Get REAL current price from Polymarket API
+          const realPrice = await client.getTokenPrice(raw.tokenId);
+          const trades = getPaperTrades({ venue: 'polymarket', limit: 50 });
+          const lastBuy = trades.find((t) => t.symbol === raw.tokenId.slice(0, 16) && t.side === 'buy');
+          const buyPrice = lastBuy?.price ?? 0;
+          const sellPrice = realPrice ?? buyPrice;
+          const proceeds = actualSell * sellPrice * 0.999; // 0.1% fee
+          const pnl = proceeds - (actualSell * buyPrice);
+          adjustPaperBalance(tokenKey, -actualSell);
           adjustPaperBalance('USDC', proceeds);
           const orderId = recordPaperTrade({
             task_id: ctx.task.id,
@@ -469,11 +501,13 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
             action_type: 'polymarket_close_position',
             symbol: raw.tokenId.slice(0, 16),
             side: 'sell',
-            size: raw.size,
+            price: sellPrice,
+            size: actualSell,
             amount_usd: proceeds,
           });
+          const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
           return result(
-            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'} | orderId: ${orderId}`
+            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... sold ${actualSell} shares @ $${sellPrice.toFixed(4)} (bought @ $${buyPrice.toFixed(4)}) | proceeds: $${proceeds.toFixed(2)} | PnL: ${pnlStr} | orderId: ${orderId}`
           );
         }
         await client.closePosition({ tokenId: raw.tokenId, size: raw.size });
@@ -489,6 +523,10 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
 
 /** Execute on-chain trading actions. */
 export async function executeChainAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  if (!ctx.task.capabilities.includes('onchain.trading')) {
+    return errResult('On-chain trading capability is not enabled for this task. Enable it in Capabilities settings.');
+  }
+
   const raw = action as Record<string, unknown>;
   const chainId = typeof raw.chainId === 'number' ? raw.chainId : undefined;
 
@@ -630,6 +668,10 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
 
 /** Execute CEX trading actions. */
 export async function executeCexAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  if (!ctx.task.capabilities.includes('cex.trading')) {
+    return errResult('CEX trading capability is not enabled for this task. Enable it in Capabilities settings.');
+  }
+
   const raw = action as Record<string, unknown>;
   const exchange = raw.exchange as 'binance' | 'coinbase' | undefined;
 

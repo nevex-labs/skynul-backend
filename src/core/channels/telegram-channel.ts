@@ -311,8 +311,7 @@ export class TelegramChannel extends Channel {
       const prompt = ctx.message.text.trim();
       if (!prompt) return;
       try {
-        const task = await this.createTaskFromMessage(prompt);
-        await ctx.reply(toHtml(this.formatSummary(task)), { parse_mode: 'HTML' });
+        await this.createTaskFromMessage(prompt);
       } catch (e) {
         await ctx.reply(`No se pudo crear la tarea: ${e instanceof Error ? e.message : String(e)}`);
       }

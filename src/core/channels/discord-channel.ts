@@ -188,8 +188,7 @@ export class DiscordChannel extends Channel {
 
     // Any other text = create task
     try {
-      const task = await this.createTaskFromMessage(content);
-      await msg.reply(this.formatSummary(task));
+      await this.createTaskFromMessage(content);
     } catch (e) {
       await msg.reply(`No se pudo crear la tarea: ${e instanceof Error ? e.message : String(e)}`);
     }
