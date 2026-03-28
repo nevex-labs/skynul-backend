@@ -31,6 +31,7 @@ export const TASK_CAPABILITY_IDS = [
   'onchain.trading',
   'cex.trading',
   'fiat.transfers',
+  'crypto.transfers',
 ] as const;
 
 export type TaskCapabilityId = (typeof TASK_CAPABILITY_IDS)[number];
@@ -71,6 +72,11 @@ export const ALL_TASK_CAPABILITIES: Array<{
     id: 'fiat.transfers',
     title: 'Fiat Transfers',
     desc: 'Execute fiat bank transfers via Prometeo (LATAM) or Plaid (USA).',
+  },
+  {
+    id: 'crypto.transfers',
+    title: 'Crypto Stablecoin Transfers',
+    desc: 'Send stablecoins (USDT, USDC, DAI) to external wallet addresses.',
   },
 ];
 
@@ -212,7 +218,28 @@ export type TaskAction =
       concept?: string;
     }
   | { type: 'fiat_get_transfer_status'; provider: 'prometeo' | 'plaid'; transferId: string }
-  | { type: 'fiat_get_transfer_history'; provider: 'prometeo' | 'plaid'; limit?: number };
+  | { type: 'fiat_get_transfer_history'; provider: 'prometeo' | 'plaid'; limit?: number }
+  // Crypto stablecoin transfer actions (require crypto.transfers capability)
+  | { type: 'crypto_get_balance'; provider: 'coinbase' | 'manual' | 'transak' | 'ripio' }
+  | { type: 'crypto_get_addresses'; provider: 'coinbase' | 'manual' | 'transak' | 'ripio' }
+  | {
+      type: 'crypto_send_transfer';
+      provider: 'coinbase' | 'manual' | 'transak' | 'ripio';
+      asset: string;
+      amount: number;
+      destination: string;
+      network: string;
+      memo?: string;
+    }
+  | { type: 'crypto_get_transfer_status'; provider: 'coinbase' | 'manual' | 'transak' | 'ripio'; transferId: string }
+  | { type: 'crypto_get_transfer_history'; provider: 'coinbase' | 'manual' | 'transak' | 'ripio'; limit?: number }
+  | {
+      type: 'crypto_estimate_fee';
+      provider: 'coinbase' | 'manual' | 'transak' | 'ripio';
+      asset: string;
+      network: string;
+      amount: number;
+    };
 
 // ── Task Step (one turn of the agent loop) ────────────────────────────────────
 

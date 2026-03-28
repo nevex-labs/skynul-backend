@@ -3,6 +3,7 @@
  */
 
 import type { VisionMessage } from '../../types';
+import { getSecret } from '../stores/secret-store';
 import { createVisionProvider } from './base-vision';
 import { extractDataUrl, toText } from './vision-utils';
 
@@ -12,7 +13,9 @@ const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.0-flash
 export const geminiVisionRespond = createVisionProvider({
   name: 'Gemini',
   maxRetries: 1,
-  buildRequest: (opts) => {
+  buildRequest: async (opts) => {
+    const apiKey = await getSecret('gemini.apiKey');
+    if (!apiKey) throw new Error('gemini API key is not set. Configure it in Settings.');
     const contents: Array<{ role: 'user' | 'model'; parts: unknown[] }> = [];
     if (opts.systemPrompt.trim()) contents.push({ role: 'user', parts: [{ text: opts.systemPrompt }] });
     for (const m of opts.messages) {
@@ -31,7 +34,7 @@ export const geminiVisionRespond = createVisionProvider({
       contents.push({ role: 'user', parts });
     }
     return {
-      url: `${GEMINI_BASE_URL}/models/${encodeURIComponent(GEMINI_VISION_MODEL)}:generateContent`,
+      url: `${GEMINI_BASE_URL}/models/${encodeURIComponent(GEMINI_VISION_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       headers: { 'Content-Type': 'application/json' },
       body: { contents, generationConfig: { maxOutputTokens: 4096 } },
     };

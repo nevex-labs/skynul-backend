@@ -7,13 +7,21 @@ import { exec } from 'node:child_process';
 import os from 'os';
 import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
+import type { CryptoProvider } from '../crypto/crypto-provider';
+import type { FiatProvider } from '../fiat/fiat-provider';
 import { PolymarketClient } from '../polymarket-client';
 import { generateImage } from '../providers/image-gen';
+import { getSecret } from '../stores/secret-store';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
-import { getSecret } from '../stores/secret-store';
 import { sandboxPath, validateShellCommand } from './input-guard';
-import { adjustPaperBalance, getPaperBalance, getPaperBalances, getPaperTrades, recordPaperTrade } from './paper-portfolio';
+import {
+  adjustPaperBalance,
+  getPaperBalance,
+  getPaperBalances,
+  getPaperTrades,
+  recordPaperTrade,
+} from './paper-portfolio';
 import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
 import {
@@ -389,7 +397,9 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const posCount = positions.length;
           ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, ${posCount} positions.`;
           const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
-          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} positions.\nPaper portfolio:\n${lines.join('\n')}`);
+          return result(
+            `[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} positions.\nPaper portfolio:\n${lines.join('\n')}`
+          );
         }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
@@ -438,7 +448,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         if (ctx.paperMode) {
           const cost = raw.price * raw.size;
           const usdcBal = getPaperBalance('USDC');
-          if (cost > usdcBal) return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
+          if (cost > usdcBal)
+            return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
           adjustPaperBalance('USDC', -cost);
           // Instant fill: add token position (shares = size)
           const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
@@ -483,7 +494,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
           const held = getPaperBalance(tokenKey);
           const sellSize = raw.size ?? held;
-          if (sellSize <= 0 || held <= 0) return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
+          if (sellSize <= 0 || held <= 0)
+            return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
           const actualSell = Math.min(sellSize, held);
           // Get REAL current price from Polymarket API
           const realPrice = await client.getTokenPrice(raw.tokenId);
@@ -492,7 +504,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const buyPrice = lastBuy?.price ?? 0;
           const sellPrice = realPrice ?? buyPrice;
           const proceeds = actualSell * sellPrice * 0.999; // 0.1% fee
-          const pnl = proceeds - (actualSell * buyPrice);
+          const pnl = proceeds - actualSell * buyPrice;
           adjustPaperBalance(tokenKey, -actualSell);
           adjustPaperBalance('USDC', proceeds);
           const orderId = recordPaperTrade({
@@ -790,7 +802,7 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
 /** Execute fiat transfer actions. */
 export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
   const raw = action as Record<string, unknown>;
-  const provider = raw.provider as 'prometeo' | 'plaid' | undefined;
+  const provider = raw.provider as 'prometeo' | 'plaid' | 'manual' | undefined;
 
   const fiatTypes = [
     'fiat_get_balance',
@@ -803,14 +815,22 @@ export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction
     return errResult(`Unknown fiat action: ${(action as any).type}`);
   }
 
-  if (!provider || !['prometeo', 'plaid'].includes(provider)) {
-    return errResult(`Invalid or missing "provider" field. Must be "prometeo" or "plaid".`);
+  if (!provider || !['prometeo', 'plaid', 'manual'].includes(provider)) {
+    return errResult(`Invalid or missing "provider" field. Must be "prometeo", "plaid", or "manual".`);
   }
 
   const mode = ctx.paperMode ? 'paper' : 'live';
   const { PrometeoClient } = await import('../fiat/prometeo-client');
   const { PlaidClient } = await import('../fiat/plaid-client');
-  const client = provider === 'prometeo' ? new PrometeoClient({ mode }) : new PlaidClient({ mode });
+  const { ManualClient } = await import('../fiat/manual-client');
+  let client: FiatProvider;
+  if (provider === 'prometeo') {
+    client = new PrometeoClient({ mode });
+  } else if (provider === 'plaid') {
+    client = new PlaidClient({ mode });
+  } else {
+    client = new ManualClient({ mode });
+  }
 
   switch (action.type) {
     case 'fiat_get_balance': {
@@ -828,9 +848,7 @@ export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction
       try {
         const accounts = await client.getAccounts();
         if (accounts.length === 0) return result('No accounts found.');
-        const lines = accounts.map(
-          (a) => `  [${a.id}] ${a.label} — ${a.currency} ${a.type} @ ${a.institution}`
-        );
+        const lines = accounts.map((a) => `  [${a.id}] ${a.label} — ${a.currency} ${a.type} @ ${a.institution}`);
         const prefix = ctx.paperMode ? '[PAPER] ' : '';
         return result(`${prefix}${provider} accounts:\n${lines.join('\n')}`);
       } catch (e) {
@@ -840,7 +858,12 @@ export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction
     case 'fiat_send_transfer': {
       try {
         const a = action as Extract<TaskAction, { type: 'fiat_send_transfer' }>;
-        const riskVenue = provider === 'prometeo' ? ('fiat_prometeo' as const) : ('fiat_plaid' as const);
+        const riskVenue =
+          provider === 'prometeo'
+            ? ('fiat_prometeo' as const)
+            : provider === 'plaid'
+              ? ('fiat_plaid' as const)
+              : ('fiat_manual' as const);
         if (!ctx.paperMode) {
           const riskCheck = checkTradeAllowed(riskVenue, a.amount);
           if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
@@ -856,6 +879,11 @@ export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction
           openRiskPosition(riskVenue, a.destinationAccount, 'transfer', a.amount, ctx.task.id);
         }
         const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        if (provider === 'manual') {
+          // ManualClient has extra method getTransferInstructions
+          const instructions = (client as any).getTransferInstructions(transferResult.transferId);
+          return result(`${prefix}Transfer initiated via manual.\n${instructions}`);
+        }
         return result(
           `${prefix}Transfer initiated via ${provider}: id=${transferResult.transferId} status=${transferResult.status}` +
             (transferResult.authorizationRequired ? ` (auth required: ${transferResult.authorizationRequired})` : '')
@@ -893,6 +921,168 @@ export async function executeFiatAction(ctx: ExecutorContext, action: TaskAction
     }
     default:
       return errResult(`Unknown fiat action`);
+  }
+}
+
+/** Execute crypto stablecoin transfer actions. */
+export async function executeCryptoAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
+  if (!ctx.task.capabilities.includes('crypto.transfers')) {
+    return errResult('Crypto transfers capability is not enabled for this task. Enable it in Capabilities settings.');
+  }
+
+  const raw = action as Record<string, unknown>;
+  const provider = raw.provider as 'coinbase' | 'manual' | 'transak' | 'ripio' | undefined;
+
+  const cryptoTypes = [
+    'crypto_get_balance',
+    'crypto_get_addresses',
+    'crypto_send_transfer',
+    'crypto_get_transfer_status',
+    'crypto_get_transfer_history',
+    'crypto_estimate_fee',
+  ];
+  if (!cryptoTypes.includes(action.type)) {
+    return errResult(`Unknown crypto action: ${(action as any).type}`);
+  }
+
+  if (!provider || !['coinbase', 'manual', 'transak', 'ripio'].includes(provider)) {
+    return errResult(`Invalid or missing "provider" field. Must be "coinbase", "manual", "transak", or "ripio".`);
+  }
+
+  const mode = ctx.paperMode ? 'paper' : 'live';
+  let client: CryptoProvider;
+  if (provider === 'coinbase') {
+    const { CoinbaseCryptoClient } = await import('../crypto/coinbase-crypto-client');
+    client = new CoinbaseCryptoClient({ mode });
+  } else if (provider === 'transak') {
+    const { TransakOffRamp } = await import('../crypto/transak-off-ramp');
+    client = new TransakOffRamp({ mode });
+  } else if (provider === 'manual') {
+    const { ManualCryptoClient } = await import('../crypto/manual-crypto-client');
+    client = new ManualCryptoClient({ mode });
+  } else if (provider === 'ripio') {
+    const { RipioOffRamp } = await import('../crypto/ripio-off-ramp');
+    client = new RipioOffRamp({ mode });
+  } else {
+    throw new Error(`Unsupported crypto provider: ${provider}`);
+  }
+
+  switch (action.type) {
+    case 'crypto_get_balance': {
+      try {
+        const balances = await client.getBalance();
+        if (balances.length === 0) return result('No stablecoin balances found.');
+        const lines = balances.map((b) => `  ${b.asset} (${b.network}): ${b.available} available, ${b.total} total`);
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} stablecoin balances:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'crypto_get_addresses': {
+      try {
+        const addresses = await client.getAddresses();
+        if (addresses.length === 0) return result('No verified addresses found.');
+        const lines = addresses.map(
+          (a) =>
+            `  [${a.network}] ${a.address.slice(0, 10)}...${a.address.slice(-8)} — ${a.label ?? 'No label'} (${a.verified ? 'verified' : 'unverified'})`
+        );
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} verified addresses:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'crypto_send_transfer': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'crypto_send_transfer' }>;
+        const riskVenue =
+          provider === 'coinbase'
+            ? ('crypto_coinbase' as const)
+            : provider === 'transak'
+              ? ('crypto_transak' as const)
+              : provider === 'ripio'
+                ? ('crypto_ripio' as const)
+                : ('crypto_manual' as const);
+
+        if (!ctx.paperMode) {
+          const riskCheck = checkTradeAllowed(riskVenue, a.amount);
+          if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        }
+
+        const transferResult = await client.sendTransfer({
+          amount: a.amount,
+          asset: a.asset,
+          destination: a.destination,
+          network: a.network,
+          memo: a.memo,
+        });
+
+        if (!ctx.paperMode) {
+          recordTradeVolume(riskVenue, a.amount);
+          openRiskPosition(riskVenue, `${a.asset}:${a.network}`, 'transfer', a.amount, ctx.task.id);
+        }
+
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(
+          `${prefix}Stablecoin transfer initiated via ${provider}: id=${transferResult.transferId} status=${transferResult.status}` +
+            (transferResult.txHash ? ` | tx=${transferResult.txHash.slice(0, 16)}...` : '') +
+            (transferResult.fee ? ` | fee=${transferResult.fee}` : '')
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'crypto_get_transfer_status': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'crypto_get_transfer_status' }>;
+        const statusResult = await client.getTransferStatus(a.transferId);
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(
+          `${prefix}Transfer ${statusResult.transferId}: ${statusResult.status}` +
+            (statusResult.txHash ? ` (tx: ${statusResult.txHash.slice(0, 16)}...)` : '') +
+            ` (updated ${new Date(statusResult.updatedAt).toISOString()})`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'crypto_get_transfer_history': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'crypto_get_transfer_history' }>;
+        const history = await client.getTransferHistory(a.limit);
+        if (history.length === 0) return result('No transfer history found.');
+        const lines = history.map(
+          (t) =>
+            `  [${t.transferId}] ${t.amount} ${t.asset} (${t.network}) → ${t.destination.slice(0, 10)}... | ${t.status}` +
+            (t.txHash ? ` | tx=${t.txHash.slice(0, 8)}...` : '') +
+            ` | ${new Date(t.createdAt).toISOString()}`
+        );
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(`${prefix}${provider} stablecoin transfer history:\n${lines.join('\n')}`);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'crypto_estimate_fee': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'crypto_estimate_fee' }>;
+        const feeResult = await client.estimateFee({
+          asset: a.asset,
+          network: a.network,
+          amount: a.amount,
+        });
+        const prefix = ctx.paperMode ? '[PAPER] ' : '';
+        return result(
+          `${prefix}Fee estimate for ${a.amount} ${a.asset} on ${a.network}: ${feeResult.fee} USD` +
+            (feeResult.estimatedGas ? ` (gas: ${feeResult.estimatedGas})` : '')
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    default:
+      return errResult(`Unknown crypto action`);
   }
 }
 

@@ -1,4 +1,4 @@
-export type FiatProviderId = 'prometeo' | 'plaid';
+export type FiatProviderId = 'prometeo' | 'plaid' | 'manual';
 
 export type FiatBalance = {
   currency: string;

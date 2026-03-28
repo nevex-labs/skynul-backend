@@ -213,9 +213,31 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
   // Generic words like "pagar" or "banco" are NOT enough — they fire on "pagar en Amazon".
   // We require either an explicit provider name, a banking identifier (CBU/CVU/alias),
   // or a combination of transfer verb + fiat amount keyword.
-  const hasFiatProvider = hasAny(p, ['prometeo', 'plaid', 'dwolla']);
-  const hasBankingId = hasAny(p, ['cbu', 'cvu', ' alias bancario', 'cuenta bancaria', 'clabe', 'iban', 'routing number', 'account number', 'ach transfer', 'wire transfer', 'bank transfer', 'transferencia bancaria']);
-  const hasFiatTransferVerb = hasAny(p, ['transferir', 'hacer una transferencia', 'mandar plata', 'mandar dinero', 'enviar dinero', 'enviar plata', 'send money', 'fiat transfer']);
+  const hasFiatProvider = hasAny(p, ['prometeo', 'plaid', 'dwolla', 'manual']);
+  const hasBankingId = hasAny(p, [
+    'cbu',
+    'cvu',
+    ' alias bancario',
+    'cuenta bancaria',
+    'clabe',
+    'iban',
+    'routing number',
+    'account number',
+    'ach transfer',
+    'wire transfer',
+    'bank transfer',
+    'transferencia bancaria',
+  ]);
+  const hasFiatTransferVerb = hasAny(p, [
+    'transferir',
+    'hacer una transferencia',
+    'mandar plata',
+    'mandar dinero',
+    'enviar dinero',
+    'enviar plata',
+    'send money',
+    'fiat transfer',
+  ]);
   const hasFiatBalance = hasAny(p, ['saldo bancario', 'saldo en el banco', 'bank balance', 'bank account balance']);
   if (hasFiatProvider || hasBankingId || hasFiatTransferVerb || hasFiatBalance) {
     caps.add('fiat.transfers');

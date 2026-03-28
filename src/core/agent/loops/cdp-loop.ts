@@ -8,8 +8,9 @@ import type { ExecutorContext } from '../action-executors';
 import {
   executeCexAction,
   executeChainAction,
-  executeFiatAction,
+  executeCryptoAction,
   executeFactAction,
+  executeFiatAction,
   executeGenerateImage,
   executeInterTaskAction,
   executeMemoryAction,
@@ -47,8 +48,13 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, paperMode);
   const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, paperMode);
   console.log(`[cdp-loop] systemPrompt includes PAPER: ${systemPrompt.includes('TRADING MODE: PAPER')}`);
-  console.log(`[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`);
-  console.log(`[cdp-loop] systemPrompt first 500 chars of polymarket block:`, systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500));
+  console.log(
+    `[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`
+  );
+  console.log(
+    `[cdp-loop] systemPrompt first 500 chars of polymarket block:`,
+    systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500)
+  );
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -66,7 +72,10 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history.push({
     role: 'user',
     content: [
-      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".` },
+      {
+        type: 'input_text',
+        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".`,
+      },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
         detail: 'auto' as const,
@@ -170,6 +179,15 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'fiat_get_transfer_status':
     case 'fiat_get_transfer_history': {
       const res = await executeFiatAction(ctx, action);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'crypto_get_balance':
+    case 'crypto_get_addresses':
+    case 'crypto_send_transfer':
+    case 'crypto_get_transfer_status':
+    case 'crypto_get_transfer_history':
+    case 'crypto_estimate_fee': {
+      const res = await executeCryptoAction(ctx, action);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'wait':

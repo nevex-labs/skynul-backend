@@ -562,13 +562,19 @@ Respond with valid JSON only.`;
  * System prompt for the CDP browser agent.
  * Text-only (no screenshots) — works with page info snapshots.
  */
-export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagent = false, compact = false, paperMode = false): string {
+export function buildCdpSystemPrompt(
+  capabilities: TaskCapabilityId[],
+  isSubagent = false,
+  compact = false,
+  paperMode = false
+): string {
   const subagentBlock = isSubagent ? buildSubagentBlock() : '';
   const capList = capabilities.map((c) => `- ${c}`).join('\n');
   const hasPolymarket = capabilities.includes('polymarket.trading');
   const hasOnchain = capabilities.includes('onchain.trading');
   const hasCex = capabilities.includes('cex.trading');
   const hasFiat = capabilities.includes('fiat.transfers');
+  const hasCrypto = capabilities.includes('crypto.transfers');
   const hasAppScripting = capabilities.includes('app.scripting');
   const appScriptingBlock = hasAppScripting
     ? `
@@ -718,7 +724,7 @@ Available actions:
     ? `
 ## FIAT TRANSFER ACTIONS (HIGHEST PRIORITY when fiat.transfers is granted):
 - CRITICAL: Use ONLY the fiat_* actions below for bank transfer operations. Do NOT use shell, navigate, or evaluate.
-- Specify "provider": "prometeo" (LATAM: Mexico MXN, Brazil BRL, Peru PEN) or "plaid" (USA) in every action.
+- Specify "provider": "prometeo" (LATAM: Mexico MXN, Brazil BRL, Peru PEN), "plaid" (USA), or "manual" (no credentials needed) in every action.
 - NOTE: Prometeo is currently live in Mexico, Brazil, and Peru. Argentina support is coming soon.
 
 **START HERE — check balance first:**
@@ -734,8 +740,38 @@ Available actions:
 ## FIAT TRANSFER NOTES:
 - Prometeo: for LATAM banks (Mexico MXN, Brazil BRL, Peru PEN). Argentina coming soon. Requires PROMETEO_API_KEY and PROMETEO_SESSION_KEY.
 - Plaid + Dwolla: for USA bank accounts (ACH transfers). Requires PLAID_ACCESS_TOKEN and DWOLLA credentials.
+- Manual: for manual transfers (no credentials needed). Generates instructions for the user to manually transfer funds.
 - If a transfer returns status "requires_auth", a 2FA authorization is needed — report this to the user.
 - Always check balance before sending transfers.
+`
+    : '';
+
+  const cryptoBlock = hasCrypto
+    ? `
+## CRYPTO STABLECOIN TRANSFER ACTIONS (HIGHEST PRIORITY when crypto.transfers is granted):
+- CRITICAL: Use ONLY the crypto_* actions below for stablecoin and off-ramp operations. Do NOT use shell, navigate, or evaluate.
+- Specify "provider": "coinbase" (send stablecoins to wallet), "transak" (off-ramp to ARS), or "ripio" (off-ramp to ARS via Ripio) in every action.
+
+**START HERE — check balance first:**
+{"thought": "Check my stablecoin balance.", "action": {"type": "crypto_get_balance", "provider": "coinbase"}}
+
+Available actions:
+{"thought": "Check stablecoin balances.", "action": {"type": "crypto_get_balance", "provider": "coinbase"}}
+{"thought": "List verified withdrawal addresses.", "action": {"type": "crypto_get_addresses", "provider": "coinbase"}}
+{"thought": "Send USDT to a wallet address.", "action": {"type": "crypto_send_transfer", "provider": "coinbase", "asset": "USDT", "network": "ethereum", "amount": 100, "destination": "0x742d35Cc6634C0532935334AdCb2f44d923604d5"}}
+{"thought": "Convert USDT to ARS via Ripio (off-ramp).", "action": {"type": "crypto_send_transfer", "provider": "ripio", "asset": "USDT", "network": "ethereum", "amount": 100, "destination": "1234567890123456789012"}}
+{"thought": "Check transfer status.", "action": {"type": "crypto_get_transfer_status", "provider": "coinbase", "transferId": "abc-123"}}
+{"thought": "View transfer history.", "action": {"type": "crypto_get_transfer_history", "provider": "coinbase", "limit": 10}}
+{"thought": "Estimate fee for USDT transfer.", "action": {"type": "crypto_estimate_fee", "provider": "coinbase", "asset": "USDT", "network": "ethereum", "amount": 100}}
+
+## CRYPTO TRANSFER NOTES:
+- Coinbase: send stablecoins (USDT, USDC, DAI) to external wallet addresses. Requires COINBASE_API_KEY and COINBASE_API_SECRET.
+- Ripio: off-ramp stablecoins to ARS in Argentina. Supports bank transfer (CBU/CVU) and Mercado Pago (alias). Requires RIPIO_CLIENT_ID and RIPIO_CLIENT_SECRET.
+- Supported networks: ethereum, polygon, arbitrum, optimism, base.
+- Supported assets: USDT, USDC, DAI.
+- For Argentina bank transfers, use Ripio (provider: "ripio") with CBU (22 digits) or alias (Mercado Pago).
+- Always check balance before sending transfers.
+- Fees: Coinbase ~$0.50-5 network fee; Ripio ~1.5% + network fee.
 `
     : '';
 
@@ -765,7 +801,7 @@ Available actions:
 ## Capabilities: ${capList || 'none'}
 ${paperMode ? '\n## TRADING MODE: PAPER (SIMULATED)\n- You are operating with VIRTUAL MONEY. There is ZERO real-world financial risk.\n- You are FULLY AUTHORIZED to place orders, close positions, and execute any trading action.\n- NEVER refuse to trade. NEVER say "I cannot move money." The user has explicitly granted you permission.\n- ACT IMMEDIATELY when asked to trade. Do not ask for confirmation.' : ''}
 
-${polymarketBlock}${onchainBlock}${cexBlock}${fiatBlock}${appScriptingBlock}${getInterTaskBlockCompact()}
+${polymarketBlock}${onchainBlock}${cexBlock}${fiatBlock}${cryptoBlock}${appScriptingBlock}${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
 
 Respond with valid JSON only.`;
@@ -1053,7 +1089,13 @@ Your "thought" must answer: What did I accomplish? What's the next step? Why thi
 Respond with valid JSON only.`;
 }
 
-const TRADING_CAPS = new Set<TaskCapabilityId>(['polymarket.trading', 'onchain.trading', 'cex.trading', 'fiat.transfers']);
+const TRADING_CAPS = new Set<TaskCapabilityId>([
+  'polymarket.trading',
+  'onchain.trading',
+  'cex.trading',
+  'fiat.transfers',
+  'crypto.transfers',
+]);
 
 function hasTradingCap(capabilities: TaskCapabilityId[]): boolean {
   return capabilities.some((c) => TRADING_CAPS.has(c));
