@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { CapabilityId, LanguageCode, PolicyState, ProviderId, ThemeMode } from '../../types/policy';
 import type { ScheduleFrequency } from '../../types/schedule';
 import type { TaskCapabilityId, TaskMode } from '../../types/task';
+import type { TradingSettings } from '../../types/trading';
 
 export const SkillSchema = z.object({
   id: z.string(),
@@ -76,3 +77,41 @@ export const PolicyStateSchema = z.object({
   taskAutoApprove: z.boolean().optional(),
   paperTradingEnabled: z.boolean().optional(),
 });
+
+const CexExchangeIdSchema = z.enum([
+  'binance',
+  'coinbase',
+  'okx',
+  'bybit',
+  'kucoin',
+  'gate',
+  'htx',
+  'mexc',
+  'cryptocom',
+]);
+
+export const TradingSettingsSchema = z.object({
+  version: z.literal(1),
+  cex: z.object({
+    defaultExchange: CexExchangeIdSchema,
+    exchanges: z.record(
+      CexExchangeIdSchema,
+      z.object({
+        enabled: z.boolean(),
+        scopes: z.object({
+          spot: z.boolean(),
+          futures: z.boolean(),
+          withdraw: z.boolean(),
+        }),
+      })
+    ),
+  }),
+  dex: z.object({
+    evm: z.object({
+      enabledChainIds: z.array(z.number()),
+      defaultChainId: z.number(),
+    }),
+    solana: z.object({ enabled: z.boolean() }),
+    bitcoin: z.object({ enabled: z.boolean() }),
+  }),
+}) as z.ZodType<TradingSettings>;

@@ -186,8 +186,7 @@ export class SlackChannel extends Channel {
 
     // Any other text = create task
     try {
-      const task = await this.createTaskFromMessage(content);
-      await say(this.formatSummary(task));
+      await this.createTaskFromMessage(content);
     } catch (e) {
       await say(`No se pudo crear la tarea: ${e instanceof Error ? e.message : String(e)}`);
     }

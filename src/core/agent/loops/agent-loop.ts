@@ -186,6 +186,11 @@ export async function runAgentLoop(
     step.error = stepError;
     task.steps.push(step);
     callbacks.recordStep(step);
+
+    // monitor_position hands off to system-level monitoring — exit the agent loop
+    if (action.type === 'monitor_position' && task.status === 'monitoring') {
+      return task;
+    }
   }
 
   if (callbacks.isAborted()) return finish(task, 'cancelled', callbacks);

@@ -45,6 +45,33 @@ vi.mock('./risk-guard', () => ({
   closeAllPositionsForTask: vi.fn(),
 }));
 
+// Trading settings: enable withdrawals in tests (executor-level behavior).
+vi.mock('../stores/trading-store', () => ({
+  loadTradingSettings: vi.fn(async () => ({
+    version: 1,
+    cex: {
+      defaultExchange: 'binance',
+      exchanges: {
+        binance: { enabled: true, scopes: { spot: true, futures: false, withdraw: true } },
+        coinbase: { enabled: true, scopes: { spot: true, futures: false, withdraw: true } },
+        okx: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        bybit: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        kucoin: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        gate: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        htx: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        mexc: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+        cryptocom: { enabled: false, scopes: { spot: true, futures: false, withdraw: false } },
+      },
+    },
+    dex: {
+      evm: { enabledChainIds: [8453, 42161], defaultChainId: 8453 },
+      solana: { enabled: false },
+      bitcoin: { enabled: false },
+    },
+  })),
+  saveTradingSettings: vi.fn(async () => undefined),
+}));
+
 import { BinanceClient } from '../cex/binance-client';
 import { CoinbaseClient } from '../cex/coinbase-client';
 import { ChainClient } from '../chain/chain-client';
@@ -333,7 +360,7 @@ describe('executeCexAction', () => {
     const ctx = makeCtx();
     const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'kraken' } as any);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain('exchange');
+    if (!result.ok) expect(result.error).toContain('not enabled');
   });
 
   describe('cex_get_balance', () => {

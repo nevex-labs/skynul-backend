@@ -403,6 +403,29 @@ export class PolymarketClient {
   }
 
   /**
+   * Get current midpoint price for a token. Used by position monitor.
+   */
+  async getTokenPrice(tokenId: string): Promise<number | null> {
+    if (this.mode === 'paper') return null; // Paper mode doesn't track live prices
+
+    try {
+      const client = (await this.getLiveSdkClient()) as any;
+      const book = await client.getOrderBook(tokenId);
+      if (!book) return null;
+
+      const bestBid = book.bids?.[0]?.price;
+      const bestAsk = book.asks?.[0]?.price;
+
+      if (bestBid && bestAsk) return (Number(bestBid) + Number(bestAsk)) / 2;
+      if (bestBid) return Number(bestBid);
+      if (bestAsk) return Number(bestAsk);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Close or reduce an existing position.
    */
   async closePosition(params: { tokenId: string; size?: number }): Promise<void> {

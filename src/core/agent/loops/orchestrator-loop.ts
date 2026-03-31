@@ -21,6 +21,7 @@ export type OrchestratorLoopSetup = {
     memoryContext?: string;
     taskManager: TaskManager | null;
     maxSteps: number;
+    paperMode?: boolean;
   };
   onStatus: (msg: string) => void;
   onUpdate: (task: Task) => void;
@@ -33,11 +34,11 @@ export function setupOrchestratorLoop(setup: OrchestratorLoopSetup): {
   history: VisionMessage[];
   callbacks: LoopCallbacks;
 } {
-  const { task, memoryContext, taskManager } = setup.deps;
+  const { task, memoryContext, taskManager, paperMode } = setup.deps;
   const memCtx = memoryContext ?? '';
 
-  const systemPrompt = buildOrchestratorSystemPrompt(task.capabilities, memCtx, false);
-  const systemPromptCompact = buildOrchestratorSystemPrompt(task.capabilities, memCtx, true);
+  const systemPrompt = buildOrchestratorSystemPrompt(task.capabilities, memCtx, false, !!paperMode);
+  const systemPromptCompact = buildOrchestratorSystemPrompt(task.capabilities, memCtx, true, !!paperMode);
 
   const initialText = `Task: ${task.prompt}${memCtx ? `\n\n${memCtx}` : ''}
 

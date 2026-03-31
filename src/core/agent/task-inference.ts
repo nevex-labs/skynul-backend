@@ -58,6 +58,7 @@ function isSimpleMathPrompt(prompt: string): boolean {
     'binance',
     'coinbase',
     'polymarket',
+    'poly market',
     'swap',
     'dex',
     'onchain',
@@ -135,6 +136,13 @@ function isInformationQuestion(prompt: string): boolean {
     'photoshop',
     'illustrator',
     'polymarket',
+    'poly market',
+    'trading',
+    'trade',
+    'scalping',
+    'long',
+    'short',
+    'swing',
     'binance',
     'coinbase',
     'swap',
@@ -189,7 +197,7 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
   if (hasUrl || hasAny(p, webActionVerbs) || hasAny(p, webTargets)) caps.add('browser.cdp');
 
   // Trading
-  if (hasAny(p, ['polymarket'])) caps.add('polymarket.trading');
+  if (hasAny(p, ['polymarket', 'poly market', 'prediction market'])) caps.add('polymarket.trading');
   if (hasAny(p, ['swap', 'dex', 'onchain', 'defi', 'uniswap', 'base chain', 'weth', 'send eth', 'send usdc'])) {
     caps.add('onchain.trading');
   }
