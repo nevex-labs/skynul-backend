@@ -62,7 +62,16 @@ export function buildActionLog(
     const truncNote = s.thought?.includes('truncated')
       ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]'
       : '';
-    return `Step ${s.index + 1}: ${s.action.type}${res}${err}${truncNote}`;
+    const actionData = s.action as Record<string, unknown>;
+    let extra = '';
+    if (s.action.type === 'user_message' && actionData.text) {
+      extra = `: "${String(actionData.text).slice(0, opts?.truncateResult ?? 200)}"`;
+    } else if (s.action.type === 'done' && actionData.summary) {
+      extra = `: "${String(actionData.summary).slice(0, opts?.truncateResult ?? 200)}"`;
+    } else if (s.action.type === 'fail' && actionData.reason) {
+      extra = `: "${String(actionData.reason).slice(0, opts?.truncateResult ?? 200)}"`;
+    }
+    return `Step ${s.index + 1}: ${s.action.type}${extra}${res}${err}${truncNote}`;
   });
 
   let log = '\n\nRecent actions:\n' + lines.join('\n') + '\n\nDo NOT repeat actions that already succeeded.';

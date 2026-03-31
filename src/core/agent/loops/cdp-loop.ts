@@ -15,8 +15,8 @@ import {
   executePolymarketAction,
   executeSetIdentity,
 } from '../action-executors';
-import { startPositionMonitor } from '../position-monitor';
 import { buildActionLog, drainInbox } from '../history-manager';
+import { startPositionMonitor } from '../position-monitor';
 import { buildCdpSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
@@ -41,9 +41,19 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history: VisionMessage[];
   callbacks: LoopCallbacks;
 } {
-  const { task, memoryContext, taskManager, parentTaskId, paperMode } = setup.deps;
-  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, !!paperMode);
-  const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, !!paperMode);
+  const { task, memoryContext, taskManager, parentTaskId } = setup.deps;
+  const paperMode = setup.deps.paperMode ?? false;
+  console.log(`[cdp-loop] paperMode=${paperMode}, capabilities=${task.capabilities.join(',')}`);
+  const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, paperMode);
+  const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, paperMode);
+  console.log(`[cdp-loop] systemPrompt includes PAPER: ${systemPrompt.includes('TRADING MODE: PAPER')}`);
+  console.log(
+    `[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`
+  );
+  console.log(
+    `[cdp-loop] systemPrompt first 500 chars of polymarket block:`,
+    systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500)
+  );
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -61,7 +71,10 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history.push({
     role: 'user',
     content: [
-      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}` },
+      {
+        type: 'input_text',
+        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".`,
+      },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
         detail: 'auto' as const,
@@ -80,7 +93,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         if (task.capabilities.includes('cex.trading')) activeModes.push('cex_* actions');
         const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
         return {
-          text: `Task: ${task.prompt}\n\nYou are in API-only mode with ${modeStr} available. Do NOT use shell, navigate, or evaluate.\n\nIMPORTANT: Before taking ANY action, you MUST first reason about the task. Analyze the user's goal, evaluate if the target is realistic, and outline your strategy (entry logic, risk management, exit plan). Only AFTER reasoning should you start executing actions.`,
+          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.\n\nCRITICAL: You are an AUTONOMOUS agent. Do NOT ask the user questions. Do NOT call "done" to ask for clarification. If the user gave you enough context to act, START IMMEDIATELY with the first action (e.g. check balance). Infer reasonable defaults for anything not specified. Your first action should ALWAYS be an API call, never "done" or "fail".`,
         };
       }
       // Level 1: reduce action log when context pressure is high
@@ -90,7 +103,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         truncateError: 100,
       });
       const inbox = drainInbox(taskManager, task.id);
-      return { text: `Step ${stepIndex + 1}.${actionLog}${inbox}` };
+      return { text: `Step $stepIndex + 1.$actionLog$inbox` };
     },
     recordStep() {
       task.updatedAt = Date.now();
@@ -114,7 +127,7 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'task_read':
     case 'task_message': {
       const res = await executeInterTaskAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
+      return res.ok ? res.value : `[Error: $res.error]`;
     }
     case 'remember_fact':
     case 'forget_fact': {

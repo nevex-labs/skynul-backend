@@ -249,6 +249,7 @@ const VALID_ACTION_TYPES = new Set([
   // Orchestrator actions
   'plan',
   'task_spawn',
+  'task_spawn_batch',
   'task_wait',
   // Knowledge memory
   'memory_save',

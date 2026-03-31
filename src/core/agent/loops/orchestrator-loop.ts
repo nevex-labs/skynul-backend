@@ -42,7 +42,7 @@ export function setupOrchestratorLoop(setup: OrchestratorLoopSetup): {
 
   const initialText = `Task: ${task.prompt}${memCtx ? `\n\n${memCtx}` : ''}
 
-[ORCHESTRATOR MODE] You MUST start with a \`plan\` action. Then spawn sub-agents, wait for results, and call \`done\` with a final summary. You do NOT execute actions directly.`;
+[ORCHESTRATOR MODE] Assess the task complexity. For simple tasks, spawn agents directly. For complex tasks (3+ subtasks, dependencies), plan first. Use task_spawn_batch for independent parallel work. Call \`done\` with a final summary when complete.`;
 
   const history: VisionMessage[] = [
     {
@@ -82,8 +82,25 @@ export function setupOrchestratorLoop(setup: OrchestratorLoopSetup): {
         inboxBlock = `\n\n## Messages:\n${msgLines}`;
       }
 
+      // Build a contextual nudge based on child task states
+      const children = childIds.map((id) => taskManager?.get(id)).filter(Boolean);
+      const running = children.filter((c) => c!.status === 'running').length;
+      const completed = children.filter((c) => c!.status === 'completed').length;
+      const failed = children.filter((c) => c!.status === 'failed').length;
+
+      let nudge = '';
+      if (running > 0 && completed === 0 && failed === 0) {
+        nudge = `${running} task(s) still running. Use task_wait to join, or spawn more if needed.`;
+      } else if (failed > 0 && completed === 0) {
+        nudge = `${failed} task(s) failed. Assess errors — retry with adjusted params or fail.`;
+      } else if (running === 0 && childIds.length > 0) {
+        nudge = `All ${childIds.length} child task(s) finished (${completed} ok, ${failed} failed). Read results and proceed to done.`;
+      } else {
+        nudge = 'Decide your next action.';
+      }
+
       return {
-        text: `Step ${stepIndex + 1}.${childStatus}${inboxBlock}\n\nContinue with the next orchestration step.`,
+        text: `Step ${stepIndex + 1}.${childStatus}${inboxBlock}\n\n${nudge}`,
         // no images
       };
     },
@@ -134,6 +151,31 @@ export async function executeOrchestratorAction(ctx: ExecutorContext, action: Ta
       pushUpdate();
       const child = taskManager.get(taskId);
       return `Spawned ${taskId} (${child?.agentName ?? a.agentName ?? 'agent'}, role: ${a.agentRole ?? 'agent'}). Status: running.`;
+    }
+
+    case 'task_spawn_batch': {
+      if (!taskManager) return '[Error: task manager not available]';
+      const a = action as Extract<TaskAction, { type: 'task_spawn_batch' }>;
+      const spawnedIds: string[] = [];
+      for (const t of a.tasks) {
+        const { taskId } = await taskManager.spawnTask(t.prompt, task.id, {
+          mode: t.mode,
+          capabilities: t.capabilities,
+          agentRole: t.agentRole,
+          agentName: t.agentName,
+          maxSteps: t.maxSteps,
+          model: t.model,
+        });
+        spawnedIds.push(taskId);
+        if (!task.childTaskIds) task.childTaskIds = [];
+        task.childTaskIds.push(taskId);
+      }
+      pushUpdate();
+      const summaries = spawnedIds.map((id) => {
+        const child = taskManager.get(id);
+        return `${id} (${child?.agentName ?? 'agent'}, role: ${child?.agentRole ?? 'agent'})`;
+      });
+      return `Spawned ${spawnedIds.length} tasks in parallel:\n${summaries.map((s) => `- ${s}`).join('\n')}\nAll running. Use task_wait to join.`;
     }
 
     case 'task_wait': {

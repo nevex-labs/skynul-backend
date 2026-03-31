@@ -459,4 +459,41 @@ export class PolymarketClient {
       OrderType.FOK
     );
   }
+
+  /**
+   * Get the current real price of a token from Polymarket's gamma-api.
+   * Returns a number between 0 and 1, or null if not found.
+   */
+  async getTokenPrice(tokenId: string): Promise<number | null> {
+    const fetchFn: typeof fetch | undefined = (globalThis as any).fetch;
+    if (!fetchFn) return null;
+    try {
+      const url = `https://gamma-api.polymarket.com/markets?closed=false&limit=200&order=volume24hr&ascending=false`;
+      const res = await fetchFn(url);
+      if (!res.ok) return null;
+      const events = await res.json();
+      if (!Array.isArray(events)) return null;
+      for (const evt of events) {
+        for (const m of evt.markets ?? []) {
+          let tids: string[] = [];
+          if (typeof m.clobTokenIds === 'string') {
+            try { tids = JSON.parse(m.clobTokenIds); } catch { /* */ }
+          } else if (Array.isArray(m.clobTokenIds)) {
+            tids = m.clobTokenIds;
+          }
+          const idx = tids.findIndex((t: string) => t.startsWith(tokenId) || tokenId.startsWith(t.slice(0, 16)));
+          if (idx !== -1) {
+            let prices: number[] = [];
+            if (typeof m.outcomePrices === 'string') {
+              try { prices = JSON.parse(m.outcomePrices).map(Number); } catch { /* */ }
+            }
+            return prices[idx] ?? null;
+          }
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 }

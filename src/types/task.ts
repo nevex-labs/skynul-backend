@@ -165,6 +165,18 @@ export type TaskAction =
       model?: string;
     }
   | { type: 'task_wait'; taskIds: string[]; timeoutMs?: number }
+  | {
+      type: 'task_spawn_batch';
+      tasks: Array<{
+        prompt: string;
+        mode?: TaskMode;
+        capabilities?: TaskCapabilityId[];
+        agentName?: string;
+        agentRole?: string;
+        maxSteps?: number;
+        model?: string;
+      }>;
+    }
   // App scripting actions (require app.scripting capability)
   | { type: 'app_script'; app: string; script: string }
   // Long-term memory (facts)

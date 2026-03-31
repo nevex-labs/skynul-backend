@@ -70,8 +70,8 @@ export function formatTaskComplete(task: Task): string {
 }
 
 export function formatTaskFailed(task: Task): string {
-  if (task.status === 'cancelled') return 'Cancelado.';
   if (task.error) return `No pude completarlo: ${truncate(task.error, 200)}`;
+  if (task.status === 'cancelled') return 'Cancelado.';
   return 'No pude completar la tarea.';
 }
 
