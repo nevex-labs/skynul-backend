@@ -15,8 +15,8 @@
  */
 
 import type { VisionMessage } from '../../types';
-import { getSupabaseToken } from '../ipc-stub';
 import { getSecret } from '../stores/secret-store';
+import { getSupabaseToken } from '../supabase-token';
 
 export type VisionProviderConfig = {
   name: string;

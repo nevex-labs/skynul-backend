@@ -9,11 +9,17 @@ import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
 import { PolymarketClient } from '../polymarket-client';
 import { generateImage } from '../providers/image-gen';
+import { getSecret } from '../stores/secret-store';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
-import { getSecret } from '../stores/secret-store';
 import { sandboxPath, validateShellCommand } from './input-guard';
-import { adjustPaperBalance, getPaperBalance, getPaperBalances, getPaperTrades, recordPaperTrade } from './paper-portfolio';
+import {
+  adjustPaperBalance,
+  getPaperBalance,
+  getPaperBalances,
+  getPaperTrades,
+  recordPaperTrade,
+} from './paper-portfolio';
 import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
 import {
@@ -389,7 +395,9 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const posCount = positions.length;
           ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, ${posCount} positions.`;
           const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
-          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} positions.\nPaper portfolio:\n${lines.join('\n')}`);
+          return result(
+            `[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} positions.\nPaper portfolio:\n${lines.join('\n')}`
+          );
         }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
@@ -438,7 +446,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         if (ctx.paperMode) {
           const cost = raw.price * raw.size;
           const usdcBal = getPaperBalance('USDC');
-          if (cost > usdcBal) return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
+          if (cost > usdcBal)
+            return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
           adjustPaperBalance('USDC', -cost);
           // Instant fill: add token position (shares = size)
           const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
@@ -483,7 +492,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
           const held = getPaperBalance(tokenKey);
           const sellSize = raw.size ?? held;
-          if (sellSize <= 0 || held <= 0) return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
+          if (sellSize <= 0 || held <= 0)
+            return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
           const actualSell = Math.min(sellSize, held);
           // Get REAL current price from Polymarket API
           const realPrice = await client.getTokenPrice(raw.tokenId);
@@ -492,7 +502,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           const buyPrice = lastBuy?.price ?? 0;
           const sellPrice = realPrice ?? buyPrice;
           const proceeds = actualSell * sellPrice * 0.999; // 0.1% fee
-          const pnl = proceeds - (actualSell * buyPrice);
+          const pnl = proceeds - actualSell * buyPrice;
           adjustPaperBalance(tokenKey, -actualSell);
           adjustPaperBalance('USDC', proceeds);
           const orderId = recordPaperTrade({

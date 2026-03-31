@@ -46,8 +46,13 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, paperMode);
   const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, paperMode);
   console.log(`[cdp-loop] systemPrompt includes PAPER: ${systemPrompt.includes('TRADING MODE: PAPER')}`);
-  console.log(`[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`);
-  console.log(`[cdp-loop] systemPrompt first 500 chars of polymarket block:`, systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500));
+  console.log(
+    `[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`
+  );
+  console.log(
+    `[cdp-loop] systemPrompt first 500 chars of polymarket block:`,
+    systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500)
+  );
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -65,7 +70,10 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history.push({
     role: 'user',
     content: [
-      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".` },
+      {
+        type: 'input_text',
+        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".`,
+      },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
         detail: 'auto' as const,

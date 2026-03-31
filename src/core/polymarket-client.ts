@@ -454,7 +454,11 @@ export class PolymarketClient {
         for (const m of evt.markets ?? []) {
           let tids: string[] = [];
           if (typeof m.clobTokenIds === 'string') {
-            try { tids = JSON.parse(m.clobTokenIds); } catch { /* */ }
+            try {
+              tids = JSON.parse(m.clobTokenIds);
+            } catch {
+              /* */
+            }
           } else if (Array.isArray(m.clobTokenIds)) {
             tids = m.clobTokenIds;
           }
@@ -462,7 +466,11 @@ export class PolymarketClient {
           if (idx !== -1) {
             let prices: number[] = [];
             if (typeof m.outcomePrices === 'string') {
-              try { prices = JSON.parse(m.outcomePrices).map(Number); } catch { /* */ }
+              try {
+                prices = JSON.parse(m.outcomePrices).map(Number);
+              } catch {
+                /* */
+              }
             }
             return prices[idx] ?? null;
           }

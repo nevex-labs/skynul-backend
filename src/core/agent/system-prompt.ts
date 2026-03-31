@@ -562,7 +562,12 @@ Respond with valid JSON only.`;
  * System prompt for the CDP browser agent.
  * Text-only (no screenshots) — works with page info snapshots.
  */
-export function buildCdpSystemPrompt(capabilities: TaskCapabilityId[], isSubagent = false, compact = false, paperMode = false): string {
+export function buildCdpSystemPrompt(
+  capabilities: TaskCapabilityId[],
+  isSubagent = false,
+  compact = false,
+  paperMode = false
+): string {
   const subagentBlock = isSubagent ? buildSubagentBlock() : '';
   const capList = capabilities.map((c) => `- ${c}`).join('\n');
   const hasPolymarket = capabilities.includes('polymarket.trading');

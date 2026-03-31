@@ -104,7 +104,9 @@ const tasks = new Hono()
         skipMemory: body.skipMemory,
       };
 
-      console.log(`[task-create] capabilities=${JSON.stringify(capabilities)}, mode=${mode}, runner will be=${capabilities.some(c => c.endsWith('.trading')) ? 'cdp' : 'browser'}`);
+      console.log(
+        `[task-create] capabilities=${JSON.stringify(capabilities)}, mode=${mode}, runner will be=${capabilities.some((c) => c.endsWith('.trading')) ? 'cdp' : 'browser'}`
+      );
       const task = tm.create(req);
 
       // Auto-approve: permissions are managed in settings, no need for manual approval.

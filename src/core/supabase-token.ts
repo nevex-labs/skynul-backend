@@ -1,6 +1,5 @@
 /**
- * Stub for Electron IPC functions used by vision providers.
- * In server mode, Supabase token is managed here instead of via IPC.
+ * In-memory Supabase auth token store for vision providers.
  */
 
 let _supabaseToken: string | null = null;

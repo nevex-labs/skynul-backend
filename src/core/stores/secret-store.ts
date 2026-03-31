@@ -32,10 +32,8 @@ async function saveRaw(data: SecretStoreShape): Promise<void> {
 /**
  * Server-side secret store.
  *
- * Uses base64 encoding (prefix "p:") for compatibility with the existing
- * Electron secret format. Values written by Electron's safeStorage (prefix
- * "e:") can only be decrypted in the Electron context — when running as a
- * standalone server, those values will return null until re-set.
+ * Uses base64 encoding (prefix "p:") for values.
+ * Unknown prefixes (e.g. legacy "e:") return null.
  *
  * TODO: For production web deployments, integrate a proper vault or KMS.
  */
@@ -64,7 +62,7 @@ export async function getSecret(key: string): Promise<string | null> {
       if (!b64) return null;
       return Buffer.from(b64, 'base64').toString('utf8');
     }
-    // 'e:' prefix = encrypted with Electron's safeStorage, can't decrypt here
+    // Unknown prefix — not decryptable
     return null;
   } catch {
     return null;

@@ -1,6 +1,5 @@
 /**
  * TaskManager — CRUD for tasks + orchestrates TaskRunners.
- * Server-side version: uses broadcast() instead of Electron BrowserWindow.
  */
 
 import { randomBytes } from 'crypto';
@@ -485,7 +484,12 @@ export class TaskManager extends EventEmitter {
       {
         provider,
         openaiModel,
-        memoryContext: memoryContext + factsContext + skillContext + feedbackContext + (((task as Record<string, unknown>).resumeContext as string) ?? ''),
+        memoryContext:
+          memoryContext +
+          factsContext +
+          skillContext +
+          feedbackContext +
+          (((task as Record<string, unknown>).resumeContext as string) ?? ''),
         taskManager: this,
         taskId: task.id,
         paperMode,
@@ -500,7 +504,7 @@ export class TaskManager extends EventEmitter {
     );
 
     // Clean up the temporary resumeContext so it doesn't persist
-    delete (task as Record<string, unknown>).resumeContext;
+    (task as Record<string, unknown>).resumeContext = undefined;
 
     this.runners.set(taskId, runner);
     const startTime = Date.now();
@@ -680,7 +684,6 @@ export class TaskManager extends EventEmitter {
   }
 
   private pushUpdate(task: Task): void {
-    // Broadcast via WebSocket instead of Electron IPC
     broadcast({ type: 'task:update', payload: { task } });
     this.emit('taskUpdate', task);
   }
