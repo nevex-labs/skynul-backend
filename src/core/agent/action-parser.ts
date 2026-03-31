@@ -139,9 +139,12 @@ export function parseModelResponse(raw: string, state?: ParserState): ModelRespo
     );
     // Extract partial thought to feed back to the model as context
     const partialThought = trimmed.match(/"thought"\s*:\s*"([\s\S]{0,200})/)?.[1] ?? '';
+    // If the truncated response was trying to do a wait, recover the ms value
+    const waitMsMatch = trimmed.match(/"ms"\s*:\s*(\d+)/);
+    const recoveredMs = waitMsMatch ? Math.min(Number(waitMsMatch[1]), 3_600_000) : 500;
     return {
-      thought: `(response truncated — thought was: "${partialThought}...") YOUR RESPONSE WAS CUT OFF. Keep thought under 50 words and respond with a COMPLETE JSON object.`,
-      action: { type: 'wait', ms: 500 } as unknown as TaskAction,
+      thought: `(response truncated — thought was: "${partialThought}...") YOUR RESPONSE WAS CUT OFF. Keep thought under 30 words and respond with a COMPLETE JSON object.`,
+      action: { type: 'wait', ms: recoveredMs } as unknown as TaskAction,
     };
   }
 
@@ -224,6 +227,7 @@ const VALID_ACTION_TYPES = new Set([
   'polymarket_search_markets',
   'polymarket_place_order',
   'polymarket_close_position',
+  'monitor_position',
   // On-chain trading actions
   'chain_get_balance',
   'chain_get_token_balance',
@@ -235,6 +239,7 @@ const VALID_ACTION_TYPES = new Set([
   'cex_place_order',
   'cex_cancel_order',
   'cex_get_positions',
+  'cex_get_ticker',
   'cex_withdraw',
   // Inter-task communication
   'task_list_peers',

@@ -70,8 +70,16 @@ export const ALL_TASK_CAPABILITIES: Array<{
 
 // ── Task Status Flow ──────────────────────────────────────────────────────────
 // pending_approval → approved → running → completed | failed | cancelled
+//                                      └→ monitoring → completed | failed
 
-export type TaskStatus = 'pending_approval' | 'approved' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'monitoring';
 
 // ── Task Actions (model output) ───────────────────────────────────────────────
 
@@ -109,6 +117,27 @@ export type TaskAction =
       type: 'polymarket_close_position';
       tokenId: string;
       size?: number;
+    }
+  | {
+      type: 'monitor_position';
+      /** Which venue: polymarket, cex, onchain */
+      venue: 'polymarket' | 'cex' | 'onchain';
+      /** Token/position identifier to monitor */
+      tokenId: string;
+      /** Entry price (for PnL calculation) */
+      entryPrice: number;
+      /** Size of the position */
+      size: number;
+      /** Take profit: close when price reaches this (0-1 for polymarket) */
+      takeProfitPrice: number;
+      /** Stop loss: close when price drops to this */
+      stopLossPrice: number;
+      /** Check interval in ms (default 300000 = 5 min) */
+      intervalMs?: number;
+      /** Max monitoring duration in ms (default 7 days) */
+      maxDurationMs?: number;
+      /** Side of the position */
+      side: 'buy' | 'sell';
     }
   // Code mode file operations
   | { type: 'file_read'; path: string; offset?: number; limit?: number; cwd?: string }
@@ -162,21 +191,22 @@ export type TaskAction =
   | { type: 'chain_swap'; chainId?: number; tokenIn: string; tokenOut: string; amountIn: string; slippageBps?: number }
   | { type: 'chain_get_tx_status'; chainId?: number; txHash: string }
   // CEX trading actions (require cex.trading capability)
-  | { type: 'cex_get_balance'; exchange: 'binance' | 'coinbase' }
+  | { type: 'cex_get_balance'; exchange: import('./trading').CexExchangeId }
   | {
       type: 'cex_place_order';
-      exchange: 'binance' | 'coinbase';
+      exchange: import('./trading').CexExchangeId;
       symbol: string;
       side: 'buy' | 'sell';
       orderType: 'market' | 'limit';
       amount: number;
       price?: number;
     }
-  | { type: 'cex_cancel_order'; exchange: 'binance' | 'coinbase'; orderId: string; symbol?: string }
-  | { type: 'cex_get_positions'; exchange: 'binance' | 'coinbase' }
+  | { type: 'cex_cancel_order'; exchange: import('./trading').CexExchangeId; orderId: string; symbol?: string }
+  | { type: 'cex_get_positions'; exchange: import('./trading').CexExchangeId }
+  | { type: 'cex_get_ticker'; exchange: 'binance' | 'coinbase'; symbol: string }
   | {
       type: 'cex_withdraw';
-      exchange: 'binance' | 'coinbase';
+      exchange: import('./trading').CexExchangeId;
       asset: string;
       amount: number;
       address: string;
@@ -258,6 +288,19 @@ export type Task = {
   model?: string;
   /** If true, skip memory/facts injection (set for orchestrator children that already have context). */
   skipMemory?: boolean;
+  /** Active position monitor config. Set when agent delegates to system-level monitoring. */
+  monitor?: {
+    venue: 'polymarket' | 'cex' | 'onchain';
+    tokenId: string;
+    entryPrice: number;
+    size: number;
+    takeProfitPrice: number;
+    stopLossPrice: number;
+    intervalMs: number;
+    maxDurationMs: number;
+    side: 'buy' | 'sell';
+    startedAt: number;
+  };
 };
 
 // ── API payloads ─────────────────────────────────────────────────────────────

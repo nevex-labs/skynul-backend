@@ -28,6 +28,13 @@ import { TaskRunner } from './task-runner';
 const DEFAULT_MAX_STEPS = 200;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+const TRADING_MAX_STEPS = 500;
+const TRADING_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+function isTradingTask(capabilities: string[]): boolean {
+  return capabilities.some((c) => c.endsWith('.trading'));
+}
+
 function hash32(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -130,8 +137,8 @@ export class TaskManager extends EventEmitter {
       steps: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      maxSteps: req.maxSteps ?? DEFAULT_MAX_STEPS,
-      timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxSteps: req.maxSteps ?? (isTradingTask(capabilities) ? TRADING_MAX_STEPS : DEFAULT_MAX_STEPS),
+      timeoutMs: req.timeoutMs ?? (isTradingTask(capabilities) ? TRADING_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
       source: req.source ?? 'desktop',
       model: req.model,
       skipMemory: req.skipMemory,

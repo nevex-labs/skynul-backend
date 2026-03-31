@@ -37,6 +37,34 @@ const STARTING_USDC = 10_000;
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+/** Persistent price sim: random walk that advances with time, not per-call. */
+const _priceState = new Map<string, { price: number; ts: number }>();
+
+function _simulatePrice(key: string, entryPrice: number): number {
+  const now = Date.now();
+  const state = _priceState.get(key);
+  if (state) {
+    // Advance price every 5 seconds with small random step (±0.3%)
+    const elapsed = now - state.ts;
+    const steps = Math.floor(elapsed / 5000);
+    if (steps > 0) {
+      let price = state.price;
+      for (let i = 0; i < Math.min(steps, 20); i++) {
+        const step = (Math.random() - 0.5) * 0.006; // ±0.3% neutral drift
+        price *= 1 + step;
+      }
+      price = Math.max(entryPrice * 0.7, Math.min(entryPrice * 1.3, price)); // ±30% bounds
+      _priceState.set(key, { price, ts: now });
+      return price;
+    }
+    return state.price; // same price within 5s window
+  }
+  // First call: start near entry with tiny random offset
+  const initial = entryPrice * (1 + (Math.random() - 0.5) * 0.002);
+  _priceState.set(key, { price: initial, ts: now });
+  return initial;
+}
+
 let _testDb: Database.Database | null = null;
 
 function getDb(): Database.Database {
@@ -129,6 +157,86 @@ export function adjustPaperBalance(asset: string, delta: number): void {
   } else {
     db.prepare('INSERT INTO paper_balances (asset, amount, updated_at) VALUES (?, ?, ?)').run(asset, delta, now);
   }
+}
+
+export type PaperPosition = {
+  symbol: string;
+  venue: string;
+  side: string;
+  totalShares: number;
+  avgPrice: number;
+  totalCost: number;
+  currentPrice: number;
+  pnlUsd: number;
+};
+
+/**
+ * Compute open paper positions from trade history.
+ * Buys add shares, sells (close_position) subtract them.
+ */
+export async function getPaperPositions(venue?: string): Promise<PaperPosition[]> {
+  let sql = 'SELECT * FROM paper_trades ORDER BY created_at ASC';
+  const args: unknown[] = [];
+  if (venue) {
+    sql = 'SELECT * FROM paper_trades WHERE venue = ? ORDER BY created_at ASC';
+    args.push(venue);
+  }
+  const trades = getDb().prepare(sql).all(...args) as PaperTrade[];
+
+  const map = new Map<string, { shares: number; cost: number; side: string; venue: string }>();
+  for (const t of trades) {
+    if (!t.symbol) continue;
+    const key = `${t.venue}:${t.symbol}`;
+    const entry = map.get(key) ?? { shares: 0, cost: 0, side: t.side ?? 'buy', venue: t.venue };
+
+    const units = t.size ?? t.amount_usd ?? 0;
+    if (t.action_type.includes('close') || t.side === 'sell') {
+      entry.shares -= units;
+      entry.cost -= t.amount_usd ?? 0;
+    } else {
+      entry.shares += units;
+      entry.cost += t.amount_usd ?? 0;
+    }
+    map.set(key, entry);
+  }
+
+  const positions: PaperPosition[] = [];
+  for (const [key, v] of map) {
+    if (v.shares > 0.001) {
+      const symbol = key.split(':')[1] ?? key;
+      const avgPrice = v.cost / v.shares;
+      // Try real price for CEX venues, fall back to simulation
+      let currentPrice: number;
+      if (v.venue !== 'polymarket') {
+        try {
+          let res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
+          if (!res.ok) res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`);
+          if (res.ok) {
+            const data = await res.json();
+            currentPrice = Number.parseFloat(data.price);
+          } else {
+            currentPrice = _simulatePrice(key, avgPrice);
+          }
+        } catch {
+          currentPrice = _simulatePrice(key, avgPrice);
+        }
+      } else {
+        currentPrice = _simulatePrice(key, avgPrice);
+      }
+      const pnlUsd = (currentPrice - avgPrice) * v.shares;
+      positions.push({
+        symbol,
+        venue: v.venue,
+        side: v.side,
+        totalShares: v.shares,
+        avgPrice,
+        totalCost: v.cost,
+        currentPrice,
+        pnlUsd,
+      });
+    }
+  }
+  return positions;
 }
 
 /** Record a paper trade. Returns the generated orderId. */

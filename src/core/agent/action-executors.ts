@@ -12,7 +12,13 @@ import { generateImage } from '../providers/image-gen';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
 import { sandboxPath, validateShellCommand } from './input-guard';
-import { adjustPaperBalance, getPaperBalance, getPaperBalances, recordPaperTrade } from './paper-portfolio';
+import {
+  adjustPaperBalance,
+  getPaperBalance,
+  getPaperBalances,
+  getPaperPositions,
+  recordPaperTrade,
+} from './paper-portfolio';
 import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
 import type { TaskManager } from './task-manager';
 import {
@@ -373,9 +379,19 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         if (ctx.paperMode) {
           const paperBals = getPaperBalances();
           const usdcBal = getPaperBalance('USDC');
-          ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, 0 positions.`;
-          const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
-          return result(`[PAPER] Balance: $${usdcBal.toFixed(2)}, 0 positions.\nPaper portfolio:\n${lines.join('\n')}`);
+          const positions = await getPaperPositions('polymarket');
+          const posCount = positions.length;
+          const posLines = positions.map(
+            (p) =>
+              `  ${p.symbol} [${p.side}] ${p.totalShares} shares @ avg $${p.avgPrice.toFixed(2)} → now $${p.currentPrice.toFixed(3)}, PnL $${p.pnlUsd >= 0 ? '+' : ''}${p.pnlUsd.toFixed(2)}`
+          );
+          ctx.task.summary = `[PAPER] Polymarket: Balance $${usdcBal.toFixed(2)}, ${posCount} positions.`;
+          const balLines = paperBals.map((b) => `  ${b.asset}: ${b.amount}`);
+          return result(
+            `[PAPER] Balance: $${usdcBal.toFixed(2)}, ${posCount} position(s).` +
+              (posLines.length > 0 ? '\nOpen positions:\n' + posLines.join('\n') : '') +
+              `\nPaper portfolio:\n${balLines.join('\n')}`
+          );
         }
         const summary = await client.getAccountSummary();
         const posLines = summary.positions.map(
@@ -423,7 +439,8 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         const raw = action as Extract<TaskAction, { type: 'polymarket_place_order' }>;
         if (ctx.paperMode) {
           const cost = raw.price * raw.size;
-          adjustPaperBalance('USDC', -cost);
+          const delta = raw.side === 'sell' ? cost : -cost;
+          adjustPaperBalance('USDC', delta);
           const orderId = recordPaperTrade({
             task_id: ctx.task.id,
             venue: 'polymarket',
@@ -631,15 +648,34 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
 /** Execute CEX trading actions. */
 export async function executeCexAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
   const raw = action as Record<string, unknown>;
-  const exchange = raw.exchange as 'binance' | 'coinbase' | undefined;
+  const exchange = raw.exchange as string | undefined;
 
-  const cexTypes = ['cex_get_balance', 'cex_place_order', 'cex_cancel_order', 'cex_get_positions', 'cex_withdraw'];
+  const cexTypes = ['cex_get_balance', 'cex_place_order', 'cex_cancel_order', 'cex_get_positions', 'cex_get_ticker', 'cex_withdraw'];
   if (!cexTypes.includes(action.type)) {
     return errResult(`Unknown CEX action: ${(action as any).type}`);
   }
 
-  if (!exchange || !['binance', 'coinbase'].includes(exchange)) {
-    return errResult(`Invalid or missing "exchange" field. Must be "binance" or "coinbase".`);
+  if (!exchange || typeof exchange !== 'string' || exchange.trim().length === 0) {
+    return errResult(`Invalid or missing "exchange" field.`);
+  }
+
+  // Paper mode: allow any exchange label (simulated).
+  if (!ctx.paperMode) {
+    const { loadTradingSettings } = await import('../stores/trading-store');
+    const settings = await loadTradingSettings();
+    const ex = (settings.cex.exchanges as Record<string, { enabled: boolean; scopes: { withdraw: boolean } }>)[
+      exchange
+    ];
+    if (!ex?.enabled) {
+      return errResult(
+        `Exchange "${exchange}" is not enabled. Enable it in Settings → Capabilities → Trading options.`
+      );
+    }
+    if (action.type === 'cex_withdraw' && !ex.scopes.withdraw) {
+      return errResult(
+        `Withdrawals are disabled for "${exchange}". Enable withdraw scope in Settings → Capabilities → Trading options.`
+      );
+    }
   }
 
   const { BinanceClient } = await import('../cex/binance-client');
@@ -647,9 +683,49 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
   const { FeeService, FEE_USDC } = await import('../chain/fee-service');
 
   const mode = ctx.paperMode ? 'paper' : 'live';
-  const client = exchange === 'binance' ? new BinanceClient({ mode }) : new CoinbaseClient({ mode });
+  let client: any;
+  if (exchange === 'binance') client = new BinanceClient({ mode });
+  else if (exchange === 'coinbase') client = new CoinbaseClient({ mode });
+  else {
+    if (ctx.paperMode) {
+      // For paper mode, we don't need a real client.
+      client = null;
+    } else {
+      return errResult(
+        `Exchange "${exchange}" is not implemented yet. Add a provider integration (recommended: CCXT adapter) before enabling live trading.`
+      );
+    }
+  }
 
   switch (action.type) {
+    case 'cex_get_ticker': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'cex_get_ticker' }>;
+        if (exchange === 'coinbase') {
+          const res = await fetch(`https://api.coinbase.com/v2/prices/${a.symbol}/spot`);
+          if (!res.ok) return errResult(`Ticker fetch failed: ${res.status} ${res.statusText}`);
+          const data = await res.json();
+          return result(`${a.symbol} price: $${data?.data?.amount}`);
+        }
+        // Binance: try spot first, then futures
+        let res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${a.symbol}`);
+        if (!res.ok) {
+          res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${a.symbol}`);
+        }
+        if (!res.ok) return errResult(`Ticker not found for ${a.symbol} on spot or futures.`);
+        const data = await res.json();
+        return result(
+          `${a.symbol} on ${exchange}:\n` +
+            `  Price: ${data.lastPrice}\n` +
+            `  24h Change: ${data.priceChangePercent}%\n` +
+            `  24h High: ${data.highPrice}\n` +
+            `  24h Low: ${data.lowPrice}\n` +
+            `  24h Volume: ${data.quoteVolume} USDT`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
     case 'cex_get_balance': {
       try {
         if (ctx.paperMode) {
@@ -668,6 +744,14 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
     }
     case 'cex_get_positions': {
       try {
+        if (ctx.paperMode) {
+          const positions = await getPaperPositions(exchange);
+          if (positions.length === 0) return result('No open positions.');
+          const lines = positions.map(
+            (p) => `  ${p.symbol} ${p.side} ${p.totalShares} @ ${p.avgPrice.toFixed(6)}, PnL: ${p.pnlUsd.toFixed(2)}`
+          );
+          return result(`[PAPER] ${exchange} positions:\n${lines.join('\n')}`);
+        }
         const positions = await client.getPositions();
         if (positions.length === 0) return result('No open positions.');
         const lines = positions.map(
@@ -682,14 +766,29 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
       try {
         const a = action as Extract<TaskAction, { type: 'cex_place_order' }>;
         if (ctx.paperMode) {
-          adjustPaperBalance('USDC', -a.amount);
+          // Fetch real price for market orders if not provided
+          let price = a.price;
+          if (!price) {
+            try {
+              let res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${a.symbol}`);
+              if (!res.ok) res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${a.symbol}`);
+              if (res.ok) {
+                const data = await res.json();
+                price = Number.parseFloat(data.price);
+              }
+            } catch { /* use amount as fallback */ }
+          }
+          const delta = a.side === 'sell' ? a.amount : -a.amount;
+          adjustPaperBalance('USDC', delta);
+          const size = price ? a.amount / price : a.amount;
           const orderId = recordPaperTrade({
             task_id: ctx.task.id,
             venue: exchange,
             action_type: 'cex_place_order',
             symbol: a.symbol,
             side: a.side,
-            price: a.price,
+            price: price ?? a.price,
+            size,
             amount_usd: a.amount,
           });
           return result(
