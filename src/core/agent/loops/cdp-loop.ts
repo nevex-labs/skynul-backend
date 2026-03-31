@@ -15,7 +15,8 @@ import {
   executePolymarketAction,
   executeSetIdentity,
 } from '../action-executors';
-import { buildActionLog } from '../history-manager';
+import { buildActionLog, drainInbox } from '../history-manager';
+import { startPositionMonitor } from '../position-monitor';
 import { buildCdpSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
@@ -46,8 +47,13 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   const systemPrompt = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, false, paperMode);
   const systemPromptCompact = buildCdpSystemPrompt(task.capabilities, !!parentTaskId, true, paperMode);
   console.log(`[cdp-loop] systemPrompt includes PAPER: ${systemPrompt.includes('TRADING MODE: PAPER')}`);
-  console.log(`[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`);
-  console.log(`[cdp-loop] systemPrompt first 500 chars of polymarket block:`, systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500));
+  console.log(
+    `[cdp-loop] systemPrompt includes POLYMARKET TRADING ACTIONS: ${systemPrompt.includes('POLYMARKET TRADING ACTIONS')}`
+  );
+  console.log(
+    `[cdp-loop] systemPrompt first 500 chars of polymarket block:`,
+    systemPrompt.slice(systemPrompt.indexOf('POLYMARKET'), systemPrompt.indexOf('POLYMARKET') + 500)
+  );
   const history: VisionMessage[] = [];
   const memCtxCdp = memoryContext ?? '';
 
@@ -65,7 +71,10 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   history.push({
     role: 'user',
     content: [
-      { type: 'input_text', text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".` },
+      {
+        type: 'input_text',
+        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".`,
+      },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
         detail: 'auto' as const,
@@ -93,7 +102,8 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         truncateResult: compact ? 100 : 200,
         truncateError: 100,
       });
-      return { text: `Step ${stepIndex + 1}.${actionLog}` };
+      const inbox = drainInbox(taskManager, task.id);
+      return { text: `Step $stepIndex + 1.$actionLog$inbox` };
     },
     recordStep() {
       task.updatedAt = Date.now();
@@ -117,7 +127,7 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'task_read':
     case 'task_message': {
       const res = await executeInterTaskAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
+      return res.ok ? res.value : `[Error: $res.error]`;
     }
     case 'remember_fact':
     case 'forget_fact': {
@@ -155,6 +165,7 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'cex_get_balance':
+    case 'cex_get_ticker':
     case 'cex_place_order':
     case 'cex_cancel_order':
     case 'cex_get_positions':
@@ -165,6 +176,25 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'wait':
       await sleep((raw.ms as number) ?? 1000);
       return undefined;
+    case 'monitor_position': {
+      const a = action as Extract<TaskAction, { type: 'monitor_position' }>;
+      if (!ctx.taskManager) return '[Error: task manager not available for monitoring]';
+      ctx.task.monitor = {
+        venue: a.venue,
+        tokenId: a.tokenId,
+        entryPrice: a.entryPrice,
+        size: a.size,
+        takeProfitPrice: a.takeProfitPrice,
+        stopLossPrice: a.stopLossPrice,
+        intervalMs: a.intervalMs ?? 300_000,
+        maxDurationMs: a.maxDurationMs ?? 7 * 24 * 60 * 60 * 1000,
+        side: a.side,
+        startedAt: Date.now(),
+      };
+      ctx.task.status = 'monitoring';
+      ctx.task.updatedAt = Date.now();
+      return startPositionMonitor(ctx.task, ctx.taskManager, !!ctx.paperMode);
+    }
     default:
       return `[Error: "${action.type}" is not available in API-only mode.]`;
   }

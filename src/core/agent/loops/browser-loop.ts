@@ -28,6 +28,7 @@ export type BrowserLoopSetup = {
     taskManager: TaskManager | null;
     parentTaskId?: string;
     maxSteps: number;
+    paperMode?: boolean;
   };
   onStatus: (msg: string) => void;
   onUpdate: (task: Task) => void;
@@ -69,8 +70,9 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
     throw err;
   }
 
-  const systemPrompt = buildBrowserSystemPrompt(!!parentTaskId, false);
-  const systemPromptCompact = buildBrowserSystemPrompt(!!parentTaskId, true);
+  const { paperMode } = setup.deps;
+  const systemPrompt = buildBrowserSystemPrompt(!!parentTaskId, false, !!paperMode);
+  const systemPromptCompact = buildBrowserSystemPrompt(!!parentTaskId, true, !!paperMode);
   const history: VisionMessage[] = [];
   const memCtx = memoryContext ? `\n\nContext from memory:\n${memoryContext}` : '';
 

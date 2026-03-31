@@ -73,6 +73,7 @@ export class TaskRunner {
       memoryContext: this.opts.memoryContext,
       taskManager: this.opts.taskManager ?? null,
       maxSteps: this.task.maxSteps,
+      paperMode: this.opts.paperMode,
     };
 
     const { systemPrompt, systemPromptCompact, history, callbacks } = setupOrchestratorLoop({
@@ -107,6 +108,7 @@ export class TaskRunner {
       taskManager: this.opts.taskManager ?? null,
       parentTaskId: this.task.parentTaskId,
       maxSteps: this.task.maxSteps,
+      paperMode: this.opts.paperMode,
     };
 
     let loopResult: Task;
@@ -217,6 +219,8 @@ export class TaskRunner {
   }
 
   abort(reason?: string): void {
+    // Don't abort tasks that are being monitored by the system
+    if (this.task.status === 'monitoring') return;
     this.aborted = true;
     if (reason) this.task.error = reason;
     // eslint-disable-next-line no-console
