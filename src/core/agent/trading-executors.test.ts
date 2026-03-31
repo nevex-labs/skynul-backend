@@ -81,7 +81,7 @@ import type { ExecutorContext } from './action-executors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeCtx(): ExecutorContext {
+function makeCtx(opts?: { capabilities?: string[] }): ExecutorContext {
   return {
     task: {
       id: 't1',
@@ -89,7 +89,7 @@ function makeCtx(): ExecutorContext {
       status: 'running',
       mode: 'code',
       steps: [],
-      capabilities: [],
+      capabilities: opts?.capabilities ?? [],
       maxSteps: 10,
       timeoutMs: 60000,
       createdAt: 0,
@@ -162,7 +162,7 @@ describe('executeChainAction', () => {
   });
 
   it('rejects unknown chain action types', async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({ capabilities: ['onchain.trading'] });
     const result = await executeChainAction(ctx, { type: 'navigate', url: 'x' } as any);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('Unknown chain action');
@@ -170,7 +170,7 @@ describe('executeChainAction', () => {
 
   describe('chain_get_balance', () => {
     it('returns USDC and native balance', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, { type: 'chain_get_balance' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -182,14 +182,14 @@ describe('executeChainAction', () => {
     });
 
     it('passes chainId to ChainClient constructor', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       await executeChainAction(ctx, { type: 'chain_get_balance', chainId: 84532 } as any);
       expect(ChainClient).toHaveBeenCalledWith(84532);
     });
 
     it('returns error when getBalance throws', async () => {
       chainInstance.getBalance.mockRejectedValue(new Error('RPC error'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, { type: 'chain_get_balance' } as any);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('RPC error');
@@ -198,7 +198,7 @@ describe('executeChainAction', () => {
 
   describe('chain_get_token_balance', () => {
     it('returns token balance for given address', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, { type: 'chain_get_token_balance', tokenAddress: '0xdai' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -209,7 +209,7 @@ describe('executeChainAction', () => {
     });
 
     it('passes tokenAddress to getTokenBalance', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       await executeChainAction(ctx, { type: 'chain_get_token_balance', tokenAddress: '0xtoken' } as any);
       expect(chainInstance.getTokenBalance).toHaveBeenCalledWith('0xtoken');
     });
@@ -217,7 +217,7 @@ describe('executeChainAction', () => {
 
   describe('chain_send_token', () => {
     it('sends token and returns tx hash', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, {
         type: 'chain_send_token',
         tokenAddress: '0xusdc',
@@ -233,7 +233,7 @@ describe('executeChainAction', () => {
     });
 
     it('passes correct args to sendToken', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       await executeChainAction(ctx, {
         type: 'chain_send_token',
         tokenAddress: '0xusdc',
@@ -245,7 +245,7 @@ describe('executeChainAction', () => {
 
     it('returns error when sendToken throws', async () => {
       chainInstance.sendToken.mockRejectedValue(new Error('Insufficient balance'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, {
         type: 'chain_send_token',
         tokenAddress: '0xusdc',
@@ -259,7 +259,7 @@ describe('executeChainAction', () => {
 
   describe('chain_swap', () => {
     it('executes swap and returns tx hash', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, {
         type: 'chain_swap',
         tokenIn: '0xusdc',
@@ -275,7 +275,7 @@ describe('executeChainAction', () => {
     });
 
     it('passes swap params including slippageBps', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       await executeChainAction(ctx, {
         type: 'chain_swap',
         tokenIn: '0xusdc',
@@ -293,7 +293,7 @@ describe('executeChainAction', () => {
 
     it('returns error when swap throws', async () => {
       chainInstance.swap.mockRejectedValue(new Error('Slippage exceeded'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, {
         type: 'chain_swap',
         tokenIn: '0xusdc',
@@ -307,7 +307,7 @@ describe('executeChainAction', () => {
 
   describe('chain_get_tx_status', () => {
     it('returns tx status and block number', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       const result = await executeChainAction(ctx, { type: 'chain_get_tx_status', txHash: '0xabc' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -318,7 +318,7 @@ describe('executeChainAction', () => {
     });
 
     it('passes txHash to getTxStatus', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['onchain.trading'] });
       await executeChainAction(ctx, { type: 'chain_get_tx_status', txHash: '0xdeadbeef' } as any);
       expect(chainInstance.getTxStatus).toHaveBeenCalledWith('0xdeadbeef');
     });
@@ -343,21 +343,21 @@ describe('executeCexAction', () => {
   });
 
   it('rejects unknown CEX action types', async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({ capabilities: ['cex.trading'] });
     const result = await executeCexAction(ctx, { type: 'navigate', url: 'x' } as any);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('Unknown CEX action');
   });
 
   it('rejects missing exchange field', async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({ capabilities: ['cex.trading'] });
     const result = await executeCexAction(ctx, { type: 'cex_get_balance' } as any);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('exchange');
   });
 
   it('rejects invalid exchange value', async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({ capabilities: ['cex.trading'] });
     const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'kraken' } as any);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('not enabled');
@@ -365,7 +365,7 @@ describe('executeCexAction', () => {
 
   describe('cex_get_balance', () => {
     it('returns binance balances', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'binance' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -376,7 +376,7 @@ describe('executeCexAction', () => {
     });
 
     it('returns coinbase balances', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'coinbase' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -387,7 +387,7 @@ describe('executeCexAction', () => {
 
     it('returns empty message when no balances', async () => {
       binanceInstance.getBalances.mockResolvedValue([]);
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'binance' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value).toContain('No balances');
@@ -395,7 +395,7 @@ describe('executeCexAction', () => {
 
     it('returns error when getBalances throws', async () => {
       binanceInstance.getBalances.mockRejectedValue(new Error('API rate limit'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_balance', exchange: 'binance' } as any);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('API rate limit');
@@ -404,7 +404,7 @@ describe('executeCexAction', () => {
 
   describe('cex_get_positions', () => {
     it('returns positions from coinbase', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_positions', exchange: 'coinbase' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -415,7 +415,7 @@ describe('executeCexAction', () => {
 
     it('returns empty message when no positions', async () => {
       coinbaseInstance.getPositions.mockResolvedValue([]);
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, { type: 'cex_get_positions', exchange: 'coinbase' } as any);
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value).toContain('No open positions');
@@ -424,7 +424,7 @@ describe('executeCexAction', () => {
 
   describe('cex_place_order', () => {
     it('places market buy on binance', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_place_order',
         exchange: 'binance',
@@ -442,7 +442,7 @@ describe('executeCexAction', () => {
     });
 
     it('deducts 0.40 fee from order amount', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       await executeCexAction(ctx, {
         type: 'cex_place_order',
         exchange: 'binance',
@@ -457,7 +457,7 @@ describe('executeCexAction', () => {
 
     it('rejects order when amount too small after fee', async () => {
       vi.mocked(FeeService.deductFeeFromAmount).mockReturnValue(0);
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_place_order',
         exchange: 'binance',
@@ -471,7 +471,7 @@ describe('executeCexAction', () => {
     });
 
     it('passes price for limit orders on coinbase', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       await executeCexAction(ctx, {
         type: 'cex_place_order',
         exchange: 'coinbase',
@@ -488,7 +488,7 @@ describe('executeCexAction', () => {
 
     it('returns error when placeOrder throws', async () => {
       binanceInstance.placeOrder.mockRejectedValue(new Error('Insufficient funds'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_place_order',
         exchange: 'binance',
@@ -504,7 +504,7 @@ describe('executeCexAction', () => {
 
   describe('cex_cancel_order', () => {
     it('cancels order on binance with symbol', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_cancel_order',
         exchange: 'binance',
@@ -520,7 +520,7 @@ describe('executeCexAction', () => {
     });
 
     it('cancels order on coinbase without symbol', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_cancel_order',
         exchange: 'coinbase',
@@ -532,7 +532,7 @@ describe('executeCexAction', () => {
 
     it('returns error when cancelOrder throws', async () => {
       coinbaseInstance.cancelOrder.mockRejectedValue(new Error('Order not found'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_cancel_order',
         exchange: 'coinbase',
@@ -545,7 +545,7 @@ describe('executeCexAction', () => {
 
   describe('cex_withdraw', () => {
     it('initiates withdrawal on binance', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_withdraw',
         exchange: 'binance',
@@ -563,7 +563,7 @@ describe('executeCexAction', () => {
     });
 
     it('initiates withdrawal on coinbase', async () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_withdraw',
         exchange: 'coinbase',
@@ -578,7 +578,7 @@ describe('executeCexAction', () => {
 
     it('returns error when withdraw throws', async () => {
       binanceInstance.withdraw.mockRejectedValue(new Error('Withdrawal disabled'));
-      const ctx = makeCtx();
+      const ctx = makeCtx({ capabilities: ['cex.trading'] });
       const result = await executeCexAction(ctx, {
         type: 'cex_withdraw',
         exchange: 'binance',

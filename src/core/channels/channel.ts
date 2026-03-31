@@ -89,7 +89,7 @@ export abstract class Channel {
           const interval = Math.round(m.intervalMs / 60000);
           await this.sendMessage(
             `Posición abierta, la estoy monitoreando cada ${interval} min. ` +
-            `TP: $${m.takeProfitPrice}, SL: $${m.stopLossPrice}. Te aviso cuando cierre.`
+              `TP: $${m.takeProfitPrice}, SL: $${m.stopLossPrice}. Te aviso cuando cierre.`
           );
         }
         return;

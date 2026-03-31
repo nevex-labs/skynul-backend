@@ -492,7 +492,12 @@ export class TaskManager extends EventEmitter {
       {
         provider,
         openaiModel,
-        memoryContext: memoryContext + factsContext + skillContext + feedbackContext + (((task as Record<string, unknown>).resumeContext as string) ?? ''),
+        memoryContext:
+          memoryContext +
+          factsContext +
+          skillContext +
+          feedbackContext +
+          (((task as Record<string, unknown>).resumeContext as string) ?? ''),
         taskManager: this,
         taskId: task.id,
         paperMode,
@@ -507,7 +512,7 @@ export class TaskManager extends EventEmitter {
     );
 
     // Clean up the temporary resumeContext so it doesn't persist
-    delete (task as Record<string, unknown>).resumeContext;
+    (task as Record<string, unknown>).resumeContext = undefined;
 
     this.runners.set(taskId, runner);
     const startTime = Date.now();

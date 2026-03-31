@@ -8,8 +8,8 @@
 
 import type { Task } from '../../types';
 import { PolymarketClient } from '../polymarket-client';
-import type { TaskManager } from './task-manager';
 import { adjustPaperBalance, recordPaperTrade } from './paper-portfolio';
+import type { TaskManager } from './task-manager';
 
 type MonitorEntry = {
   taskId: string;
@@ -89,11 +89,9 @@ async function checkPosition(taskId: string, taskManager: TaskManager, paperMode
         `(entry=$${m.entryPrice}, TP=$${m.takeProfitPrice}, SL=$${m.stopLossPrice})`
     );
 
-    const shouldTakeProfit =
-      m.side === 'buy' ? currentPrice >= m.takeProfitPrice : currentPrice <= m.takeProfitPrice;
+    const shouldTakeProfit = m.side === 'buy' ? currentPrice >= m.takeProfitPrice : currentPrice <= m.takeProfitPrice;
 
-    const shouldStopLoss =
-      m.side === 'buy' ? currentPrice <= m.stopLossPrice : currentPrice >= m.stopLossPrice;
+    const shouldStopLoss = m.side === 'buy' ? currentPrice <= m.stopLossPrice : currentPrice >= m.stopLossPrice;
 
     if (shouldTakeProfit) {
       await closeAndFinish(task, taskManager, paperMode, 'take_profit', currentPrice);
@@ -106,11 +104,7 @@ async function checkPosition(taskId: string, taskManager: TaskManager, paperMode
   }
 }
 
-async function getCurrentPrice(
-  venue: string,
-  tokenId: string,
-  _paperMode: boolean
-): Promise<number | null> {
+async function getCurrentPrice(venue: string, tokenId: string, _paperMode: boolean): Promise<number | null> {
   if (venue === 'polymarket') {
     try {
       // Always use live client for price checks — paper mode doesn't track prices

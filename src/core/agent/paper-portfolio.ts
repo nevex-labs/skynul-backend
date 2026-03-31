@@ -181,7 +181,9 @@ export async function getPaperPositions(venue?: string): Promise<PaperPosition[]
     sql = 'SELECT * FROM paper_trades WHERE venue = ? ORDER BY created_at ASC';
     args.push(venue);
   }
-  const trades = getDb().prepare(sql).all(...args) as PaperTrade[];
+  const trades = getDb()
+    .prepare(sql)
+    .all(...args) as PaperTrade[];
 
   const map = new Map<string, { shares: number; cost: number; side: string; venue: string }>();
   for (const t of trades) {
