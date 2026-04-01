@@ -7,7 +7,8 @@ type Props = {
 
 export function Footer({ activeView }: Props): React.JSX.Element {
   const isActive = (v: string) => activeView === v;
-  const isModal = activeView === 'create' || activeView === 'providers' || activeView === 'message';
+  const isModal =
+    activeView === 'create' || activeView === 'providers' || activeView === 'message' || activeView === 'chat';
 
   return (
     <Box flexDirection="column" marginLeft={1} marginTop={1}>
@@ -37,6 +38,8 @@ export function Footer({ activeView }: Props): React.JSX.Element {
         <Text dimColor>PROVIDER</Text>
         <Text color="#FFAA00">[M]</Text>
         <Text dimColor>MSG</Text>
+        <Text color="#00D4FF">[L]</Text>
+        <Text dimColor>CHAT</Text>
         <Text color="#FF4444">[D]</Text>
         <Text dimColor>DELETE</Text>
         <Text color="#FFAA00">[C]</Text>

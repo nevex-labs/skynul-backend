@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type { TaskMode } from '../../types/task.js';
 import { SkynulClient } from '../api-client.js';
 import { useSkynulData } from '../use-skynul-data.js';
+import { ChatView } from './chat-view.js';
 import { ErrorBanner } from './error-banner.js';
 import { Footer } from './footer.js';
 import { Header } from './header.js';
@@ -16,7 +17,7 @@ import { TaskDetail } from './task-detail.js';
 import { TaskList } from './task-list.js';
 import { TextInput } from './text-input.js';
 
-type View = 'dashboard' | 'tasks' | 'stats' | 'detail' | 'logs' | 'create' | 'providers' | 'message';
+type View = 'dashboard' | 'tasks' | 'stats' | 'detail' | 'logs' | 'create' | 'providers' | 'message' | 'chat';
 
 type Props = {
   client: SkynulClient;
@@ -98,7 +99,7 @@ export function Dashboard({ client, pollMs }: Props): React.JSX.Element {
       try {
         await data.sendMessage(selectedTask.id, message);
         setStatusMsg(`◆ Message sent to ${selectedTask.id}`);
-        setView('detail');
+        // Stay in chat view to see the response
       } catch (err: unknown) {
         setStatusMsg(`✖ Failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
@@ -131,7 +132,7 @@ export function Dashboard({ client, pollMs }: Props): React.JSX.Element {
     }
 
     // Modal views: let their own useInput handle keys
-    if (view === 'create' || view === 'providers' || view === 'message') return;
+    if (view === 'create' || view === 'providers' || view === 'message' || view === 'chat') return;
 
     // Detail view: only escape/back
     if (view === 'detail') {
@@ -186,6 +187,10 @@ export function Dashboard({ client, pollMs }: Props): React.JSX.Element {
       }
       if (input === 'd' && selectedTask) {
         handleDeleteTask();
+        return;
+      }
+      if (input === 'l' && selectedTask) {
+        setView('chat');
         return;
       }
     }
@@ -254,6 +259,17 @@ export function Dashboard({ client, pollMs }: Props): React.JSX.Element {
         </Box>
       )}
 
+      {view === 'chat' && selectedTask && (
+        <Box flexDirection="column" marginTop={1}>
+          <ChatView
+            task={selectedTask}
+            width={termWidth}
+            onSendMessage={handleSendMessage}
+            onBack={() => setView('tasks')}
+          />
+        </Box>
+      )}
+
       {/* ── Detail view ──────────────────────────────────────────────── */}
 
       {view === 'detail' && selectedTask ? (
@@ -266,7 +282,7 @@ export function Dashboard({ client, pollMs }: Props): React.JSX.Element {
           <SectionHeader label="AGENT LOG" color="#00FF88" />
           <LogStream tasks={data.tasks} width={termWidth} />
         </Box>
-      ) : view !== 'create' && view !== 'providers' && view !== 'message' ? (
+      ) : view !== 'create' && view !== 'providers' && view !== 'message' && view !== 'chat' ? (
         <>
           {(view === 'dashboard' || view === 'tasks') && (
             <Box flexDirection="column" marginTop={1}>
