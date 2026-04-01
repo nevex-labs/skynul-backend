@@ -5,38 +5,13 @@ import matter from 'gray-matter';
 import type { AgentDefinition } from '../../types';
 import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode } from '../../types';
 import { getDataDir } from '../config';
+import { EXECUTOR_BUILTIN } from './builtins/executor';
+import { MONITOR_BUILTIN } from './builtins/monitor';
+import { RESEARCHER_BUILTIN } from './builtins/researcher';
 
 // ── Built-in agents (fallbacks) ─────────────────────────────────────────────
 
-const BUILTINS: AgentDefinition[] = [
-  {
-    name: 'researcher',
-    maxSteps: 30,
-    description: 'Read-only research agent.',
-    allowedTools: ['file_read', 'file_search', 'web_scrape', 'file_list', 'done', 'fail'],
-    mode: 'code',
-    systemPrompt: 'You are a research agent. Find and summarize information. Do NOT modify files.',
-    sourcePath: '__builtin__',
-  },
-  {
-    name: 'executor',
-    maxSteps: 50,
-    description: 'Full-capability code executor.',
-    allowedTools: [],
-    mode: 'code',
-    systemPrompt: 'You are an executor agent. Read, write, and run shell commands to complete tasks.',
-    sourcePath: '__builtin__',
-  },
-  {
-    name: 'monitor',
-    maxSteps: 20,
-    description: 'Condition monitor — checks status, sends alerts.',
-    allowedTools: ['web_scrape', 'file_read', 'done', 'fail'],
-    mode: 'code',
-    systemPrompt: 'You are a monitoring agent. Check conditions and report status.',
-    sourcePath: '__builtin__',
-  },
-];
+const BUILTINS: AgentDefinition[] = [RESEARCHER_BUILTIN, EXECUTOR_BUILTIN, MONITOR_BUILTIN];
 
 // ── Frontmatter schema validation ────────────────────────────────────────────
 
@@ -108,7 +83,7 @@ export class AgentRegistry {
    * Defaults to [project/agents/, ~/.skynul/agents/].
    */
   constructor(scanDirs?: string[]) {
-    this.scanDirs = scanDirs ?? [join(process.cwd(), 'agents')];
+    this.scanDirs = scanDirs ?? [join(process.cwd(), '.skynul', 'agents')];
   }
 
   /** Scan all configured directories and load .md files. */
