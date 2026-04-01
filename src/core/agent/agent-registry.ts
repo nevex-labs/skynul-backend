@@ -108,7 +108,7 @@ export class AgentRegistry {
    * Defaults to [project/agents/, ~/.skynul/agents/].
    */
   constructor(scanDirs?: string[]) {
-    this.scanDirs = scanDirs ?? [join(process.cwd(), 'agents'), join(getDataDir(), 'agents')];
+    this.scanDirs = scanDirs ?? [join(process.cwd(), 'agents')];
   }
 
   /** Scan all configured directories and load .md files. */
