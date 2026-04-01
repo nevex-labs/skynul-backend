@@ -5,9 +5,12 @@ import matter from 'gray-matter';
 import type { AgentDefinition } from '../../types';
 import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode } from '../../types';
 import { getDataDir } from '../config';
+import { childLogger } from '../logger';
 import { EXECUTOR_BUILTIN } from './builtins/executor';
 import { MONITOR_BUILTIN } from './builtins/monitor';
 import { RESEARCHER_BUILTIN } from './builtins/researcher';
+
+const log = childLogger({ module: 'agent-registry' });
 
 // ── Built-in agents (fallbacks) ─────────────────────────────────────────────
 
@@ -107,7 +110,7 @@ export class AgentRegistry {
               totalLoaded++;
             }
           } catch (e) {
-            console.warn(`[AgentRegistry] Failed to load ${file}:`, e instanceof Error ? e.message : e);
+            log.warn({ file, dir }, 'Failed to load agent file');
           }
         }
       } catch {
@@ -115,7 +118,7 @@ export class AgentRegistry {
       }
     }
 
-    console.log(`[AgentRegistry] Loaded ${totalLoaded} agents from ${this.scanDirs.join(', ')}`);
+    log.info({ count: totalLoaded }, 'Agents loaded');
   }
 
   /** Get an agent by name. Checks custom agents first, then builtins. */
@@ -160,9 +163,9 @@ export class AgentRegistry {
             const content = await readFile(filePath, 'utf8');
             const agent = parseAgentFile(content, filePath);
             this.agents.set(agent.name, agent);
-            console.log(`[AgentRegistry] Hot-reloaded: ${agent.name} (${basename(filePath)})`);
+            log.info({ agent: agent.name, file: basename(filePath) }, 'Hot-reloaded');
           } catch (e) {
-            console.warn(`[AgentRegistry] Hot-reload failed for ${filename}:`, e instanceof Error ? e.message : e);
+            log.warn({ file: filename, err: e instanceof Error ? e.message : e }, 'Hot-reload failed');
           }
         });
         this.watchers.push(w);
@@ -172,7 +175,7 @@ export class AgentRegistry {
     }
 
     if (this.watchers.length > 0) {
-      console.log(`[AgentRegistry] Watching ${this.scanDirs.join(', ')} for changes`);
+      log.info('Watching for changes');
     }
   }
 
