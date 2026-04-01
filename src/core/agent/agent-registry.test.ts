@@ -49,7 +49,7 @@ describe('AgentRegistry', () => {
     vi.clearAllMocks();
     mockReaddir.mockResolvedValue([]);
     mockMkdir.mockResolvedValue(undefined);
-    registry = new AgentRegistry(AGENTS_DIR);
+    registry = new AgentRegistry([AGENTS_DIR]);
   });
 
   afterEach(() => {

@@ -12,38 +12,28 @@ const BUILTINS: AgentDefinition[] = [
   {
     name: 'researcher',
     maxSteps: 30,
-    description: 'Read-only research agent — searches, reads, summarizes.',
+    description: 'Read-only research agent.',
     allowedTools: ['file_read', 'file_search', 'web_scrape', 'file_list', 'done', 'fail'],
     mode: 'code',
-    systemPrompt:
-      'You are a research agent. Your job is to find, read, and summarize information. ' +
-      'Do NOT modify files or execute destructive operations. ' +
-      'Use file_search to find relevant files, file_read to read them, and web_scrape for web content. ' +
-      'When done, provide a clear summary of your findings.',
+    systemPrompt: 'You are a research agent. Find and summarize information. Do NOT modify files.',
     sourcePath: '__builtin__',
   },
   {
     name: 'executor',
     maxSteps: 50,
-    description: 'Full-capability code executor — reads, writes, runs shell commands.',
-    allowedTools: [], // all allowed
+    description: 'Full-capability code executor.',
+    allowedTools: [],
     mode: 'code',
-    systemPrompt:
-      'You are an executor agent. You can read, write, and modify files, run shell commands, ' +
-      'and perform any necessary operations to complete the task. ' +
-      'Always explain what you are doing before executing potentially destructive actions.',
+    systemPrompt: 'You are an executor agent. Read, write, and run shell commands to complete tasks.',
     sourcePath: '__builtin__',
   },
   {
     name: 'monitor',
     maxSteps: 20,
-    description: 'Position/condition monitor — checks status, sends alerts.',
+    description: 'Condition monitor — checks status, sends alerts.',
     allowedTools: ['web_scrape', 'file_read', 'done', 'fail'],
     mode: 'code',
-    systemPrompt:
-      'You are a monitoring agent. Your job is to check the status of a condition or position ' +
-      'and report back. You read data sources, compare against thresholds, and decide if action is needed. ' +
-      'Keep your responses concise and focused on the monitored condition.',
+    systemPrompt: 'You are a monitoring agent. Check conditions and report status.',
     sourcePath: '__builtin__',
   },
 ];
@@ -110,35 +100,47 @@ function parseAgentFile(content: string, filePath: string): AgentDefinition {
 
 export class AgentRegistry {
   private agents = new Map<string, AgentDefinition>();
-  private watcher: FSWatcher | null = null;
-  private agentsDir: string;
+  private watchers: FSWatcher[] = [];
+  private scanDirs: string[];
 
-  constructor(agentsDir?: string) {
-    this.agentsDir = agentsDir ?? join(getDataDir(), 'agents');
+  /**
+   * @param scanDirs Directories to scan in order. First directory wins on name conflicts.
+   * Defaults to [project/agents/, ~/.skynul/agents/].
+   */
+  constructor(scanDirs?: string[]) {
+    this.scanDirs = scanDirs ?? [join(process.cwd(), 'agents'), join(getDataDir(), 'agents')];
   }
 
-  /** Scan the agents directory and load all .md files. */
+  /** Scan all configured directories and load .md files. */
   async scan(): Promise<void> {
-    try {
-      await mkdir(this.agentsDir, { recursive: true });
-      const files = await readdir(this.agentsDir);
-      const mdFiles = files.filter((f) => f.endsWith('.md'));
+    let totalLoaded = 0;
 
-      for (const file of mdFiles) {
-        try {
-          const filePath = join(this.agentsDir, file);
-          const content = await readFile(filePath, 'utf8');
-          const agent = parseAgentFile(content, filePath);
-          this.agents.set(agent.name, agent);
-        } catch (e) {
-          console.warn(`[AgentRegistry] Failed to load ${file}:`, e instanceof Error ? e.message : e);
+    for (const dir of this.scanDirs) {
+      try {
+        await mkdir(dir, { recursive: true });
+        const files = await readdir(dir);
+        const mdFiles = files.filter((f) => f.endsWith('.md'));
+
+        for (const file of mdFiles) {
+          try {
+            const filePath = join(dir, file);
+            const content = await readFile(filePath, 'utf8');
+            const agent = parseAgentFile(content, filePath);
+            // First directory wins — don't override already-loaded agents
+            if (!this.agents.has(agent.name)) {
+              this.agents.set(agent.name, agent);
+              totalLoaded++;
+            }
+          } catch (e) {
+            console.warn(`[AgentRegistry] Failed to load ${file}:`, e instanceof Error ? e.message : e);
+          }
         }
+      } catch {
+        // Directory doesn't exist or can't be read — skip silently
       }
-
-      console.log(`[AgentRegistry] Loaded ${this.agents.size} agents from ${this.agentsDir}`);
-    } catch (e) {
-      console.warn('[AgentRegistry] Could not scan agents directory:', e);
     }
+
+    console.log(`[AgentRegistry] Loaded ${totalLoaded} agents from ${this.scanDirs.join(', ')}`);
   }
 
   /** Get an agent by name. Checks custom agents first, then builtins. */
@@ -146,7 +148,7 @@ export class AgentRegistry {
     return this.agents.get(name) ?? BUILTINS.find((a) => a.name === name);
   }
 
-  /** List all registered agents (custom + built-in). */
+  /** List all registered agents (custom + built-in). No duplicates by name. */
   list(): AgentDefinition[] {
     const custom = Array.from(this.agents.values());
     const builtinNames = new Set(custom.map((a) => a.name));
@@ -169,37 +171,42 @@ export class AgentRegistry {
     return this.agents.delete(name);
   }
 
-  /** Start watching the agents directory for changes. */
+  /** Start watching all scan directories for changes. */
   startWatching(): void {
-    if (this.watcher) return;
+    if (this.watchers.length > 0) return;
 
-    try {
-      this.watcher = watch(this.agentsDir, { recursive: true }, async (eventType, filename) => {
-        if (!filename || !filename.toString().endsWith('.md')) return;
+    for (const dir of this.scanDirs) {
+      try {
+        const w = watch(dir, { recursive: true }, async (_eventType, filename) => {
+          if (!filename || !filename.toString().endsWith('.md')) return;
 
-        const filePath = join(this.agentsDir, filename.toString());
+          const filePath = join(dir, filename.toString());
+          try {
+            const content = await readFile(filePath, 'utf8');
+            const agent = parseAgentFile(content, filePath);
+            this.agents.set(agent.name, agent);
+            console.log(`[AgentRegistry] Hot-reloaded: ${agent.name} (${basename(filePath)})`);
+          } catch (e) {
+            console.warn(`[AgentRegistry] Hot-reload failed for ${filename}:`, e instanceof Error ? e.message : e);
+          }
+        });
+        this.watchers.push(w);
+      } catch {
+        // Directory may not exist yet — skip
+      }
+    }
 
-        try {
-          const content = await readFile(filePath, 'utf8');
-          const agent = parseAgentFile(content, filePath);
-          this.agents.set(agent.name, agent);
-          console.log(`[AgentRegistry] Hot-reloaded: ${agent.name} (${basename(filePath)})`);
-        } catch (e) {
-          console.warn(`[AgentRegistry] Hot-reload failed for ${filename}:`, e instanceof Error ? e.message : e);
-        }
-      });
-      console.log(`[AgentRegistry] Watching ${this.agentsDir} for changes`);
-    } catch (e) {
-      console.warn('[AgentRegistry] Could not start watching:', e);
+    if (this.watchers.length > 0) {
+      console.log(`[AgentRegistry] Watching ${this.scanDirs.join(', ')} for changes`);
     }
   }
 
   /** Stop watching for changes. */
   stopWatching(): void {
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
+    for (const w of this.watchers) {
+      w.close();
     }
+    this.watchers = [];
   }
 
   /** Cleanup resources. */
