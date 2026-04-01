@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { callVision } from '../vision-dispatch';
@@ -6,6 +6,14 @@ import { runAgentLoop } from './agent-loop';
 
 vi.mock('../vision-dispatch', () => ({
   callVision: vi.fn(),
+}));
+
+const { mockRunStreamingTurn } = vi.hoisted(() => ({
+  mockRunStreamingTurn: vi.fn(),
+}));
+
+vi.mock('../streaming/streaming-loop', () => ({
+  runStreamingTurn: mockRunStreamingTurn,
 }));
 
 function makeTask(overrides?: Partial<Task>): Task {
@@ -209,5 +217,112 @@ describe('runAgentLoop', () => {
     const turnMsg = history.find((m) => m.role === 'user');
     const imgContent = turnMsg?.content.find((c) => c.type === 'input_image');
     expect(imgContent).toMatchObject({ type: 'input_image', image_url: 'data:image/png;base64,abc123' });
+  });
+});
+
+// ── Streaming path tests ────────────────────────────────────────────────
+
+describe('runAgentLoop (streaming)', () => {
+  const originalEnv = process.env.SKYNUL_STREAMING;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.SKYNUL_STREAMING = 'true';
+  });
+
+  afterAll(() => {
+    process.env.SKYNUL_STREAMING = originalEnv;
+  });
+
+  /** Helper to create an async generator from chunks */
+  async function* mockChunks(...items: Array<{ type: string; text?: string; fullText?: string; error?: string }>) {
+    for (const item of items) {
+      yield item as any;
+    }
+  }
+
+  it('uses streaming path when SKYNUL_STREAMING=true', async () => {
+    mockRunStreamingTurn.mockResolvedValue({
+      rawResponse: '{"thought":"done","action":{"type":"done","summary":"streamed"}}',
+      thought: 'done',
+      action: { type: 'done', summary: 'streamed' },
+      result: undefined,
+      error: undefined,
+      usage: undefined,
+    });
+
+    const task = makeTask({ maxSteps: 1 });
+    const result = await runAgentLoop('system prompt', [], 1, task, 'chatgpt', 'gpt-4o', {
+      taskManager: null,
+      buildTurnMessage: () => ({ text: 'turn' }),
+      executeAction: vi.fn().mockResolvedValue('ok'),
+      recordStep: vi.fn(),
+      pushStatus: vi.fn(),
+      isAborted: () => false,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.summary).toBe('streamed');
+    expect(mockRunStreamingTurn).toHaveBeenCalled();
+    expect(callVision).not.toHaveBeenCalled();
+  });
+
+  it('calls pushThinking callback during streaming', async () => {
+    let capturedThinking: string | undefined;
+    mockRunStreamingTurn.mockImplementation(
+      async (
+        _provider: unknown,
+        _systemPrompt: unknown,
+        _history: unknown,
+        _taskId: unknown,
+        _openaiModel: unknown,
+        _executeAction: unknown,
+        callbacks?: { onThinking?: (t: string) => void }
+      ) => {
+        callbacks?.onThinking?.('thinking hard');
+        capturedThinking = 'thinking hard';
+        return {
+          rawResponse: '{"thought":"thinking hard","action":{"type":"done","summary":"ok"}}',
+          thought: 'thinking hard',
+          action: { type: 'done', summary: 'ok' },
+          result: undefined,
+          error: undefined,
+          usage: undefined,
+        };
+      }
+    );
+
+    const pushThinking = vi.fn();
+    const task = makeTask({ maxSteps: 1 });
+    await runAgentLoop('system prompt', [], 1, task, 'chatgpt', 'gpt-4o', {
+      taskManager: null,
+      buildTurnMessage: () => ({ text: 'turn' }),
+      executeAction: vi.fn().mockResolvedValue('ok'),
+      recordStep: vi.fn(),
+      pushStatus: vi.fn(),
+      pushThinking,
+      isAborted: () => false,
+    });
+
+    expect(pushThinking).toHaveBeenCalledWith('task-1', 0, 'thinking hard');
+  });
+
+  it('falls back to blocking path when SKYNUL_STREAMING is not set', async () => {
+    process.env.SKYNUL_STREAMING = '';
+
+    vi.mocked(callVision).mockResolvedValueOnce({ text: DONE_RESPONSE });
+    const task = makeTask({ maxSteps: 1 });
+    const result = await runAgentLoop('system prompt', [], 1, task, 'chatgpt', 'gpt-4o', {
+      taskManager: null,
+      buildTurnMessage: () => ({ text: 'turn' }),
+      executeAction: vi.fn().mockResolvedValue('ok'),
+      recordStep: vi.fn(),
+      pushStatus: vi.fn(),
+      isAborted: () => false,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(callVision).toHaveBeenCalled();
+    expect(mockRunStreamingTurn).not.toHaveBeenCalled();
   });
 });
