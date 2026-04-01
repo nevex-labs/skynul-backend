@@ -3,6 +3,10 @@
  *
  * Usage: create LoopCallbacks (with TaskRunner's action executors),
  * then call runAgentLoop.
+ *
+ * Supports two execution modes:
+ * - Streaming (default): vision → detect JSON → execute (real-time thinking)
+ * - Blocking (fallback): vision → parse → execute (original behavior)
  */
 
 import type { Task, TaskAction, TaskStep } from '../../../types';
@@ -12,8 +16,13 @@ import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
 import { formatError } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
+import { runStreamingTurn } from '../streaming/streaming-loop';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
+
+function isStreamingEnabled() {
+  return process.env.SKYNUL_STREAMING === 'true';
+}
 
 export type LoopCallbacks = {
   taskManager: TaskManager | null;
@@ -24,6 +33,8 @@ export type LoopCallbacks = {
   executeAction?(action: TaskAction): Promise<string | undefined>;
   recordStep(step: TaskStep): void;
   pushStatus(msg: string): void;
+  /** Called during streaming with partial thinking text. Optional — no-op if omitted. */
+  pushThinking?(taskId: string, stepIndex: number, partial: string): void;
   isAborted(): boolean;
 };
 
@@ -109,24 +120,80 @@ export async function runAgentLoop(
     // Level 2: switch to compact system prompt when context pressure is high
     const activeSystemPrompt = systemPromptCompact && budget.applyLevel2 ? systemPromptCompact : systemPrompt;
 
+    // ── Execute turn: streaming or blocking ────────────────────────────
+
     let rawResponse: string;
+    let thought: string | undefined;
+    let action: TaskAction;
+    let stepResult: string | undefined;
+    let stepError: string | undefined;
     let usage: { inputTokens: number; outputTokens: number } | undefined;
-    try {
-      const result = await callVision(provider, activeSystemPrompt, history, task.id, openaiModel);
-      rawResponse = result.text;
-      usage = result.usage;
-    } catch (e) {
+
+    if (isStreamingEnabled() && callbacks.executeAction) {
+      // Streaming path: vision → detect JSON → execute (real-time)
+      const turn = await runStreamingTurn(
+        provider,
+        activeSystemPrompt,
+        history,
+        task.id,
+        openaiModel,
+        callbacks.executeAction,
+        {
+          onThinking: (partial) => callbacks.pushThinking?.(task.id, stepIndex, partial),
+          onDelta: () => {
+            // Delta received — status already shows "Thinking..."
+          },
+        }
+      );
+
+      rawResponse = turn.rawResponse;
+      thought = turn.thought;
+      action = turn.action;
+      stepResult = turn.result;
+      stepError = turn.error;
+      usage = turn.usage;
+    } else {
+      // Blocking path: original behavior (vision → parse → execute)
+      try {
+        const result = await callVision(provider, activeSystemPrompt, history, task.id, openaiModel);
+        rawResponse = result.text;
+        usage = result.usage;
+      } catch (e) {
+        if (callbacks.isAborted()) {
+          return finish(task, 'cancelled', callbacks, task.error);
+        }
+        const rawError = e instanceof Error ? e.message : String(e);
+        const formatted = formatError(rawError);
+        return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
+      }
+
       if (callbacks.isAborted()) {
         return finish(task, 'cancelled', callbacks, task.error);
       }
-      const rawError = e instanceof Error ? e.message : String(e);
-      const formatted = formatError(rawError);
-      return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
+
+      const parsed = parseModelResponse(rawResponse, parserState);
+      thought = parsed.thought;
+      action = parsed.action;
+
+      if (action.type !== 'done' && action.type !== 'fail') {
+        try {
+          if (callbacks.isAborted()) {
+            return finish(task, 'cancelled', callbacks, task.error);
+          }
+          stepResult = await callbacks.executeAction!(action);
+        } catch (e) {
+          const rawError = e instanceof Error ? e.message : String(e);
+          const formatted = formatError(rawError);
+          stepError = formatted.userMessage;
+        }
+
+        if (callbacks.isAborted()) {
+          return finish(task, 'cancelled', callbacks, task.error);
+        }
+      }
     }
 
-    if (callbacks.isAborted()) {
-      return finish(task, 'cancelled', callbacks, task.error);
-    }
+    // ── Record usage ───────────────────────────────────────────────────
 
     if (usage) {
       if (!task.usage) task.usage = { inputTokens: 0, outputTokens: 0 };
@@ -137,7 +204,7 @@ export async function runAgentLoop(
 
     history.push({ role: 'assistant', content: [{ type: 'output_text', text: rawResponse }] });
 
-    const { thought, action } = parseModelResponse(rawResponse, parserState);
+    // ── Build step ─────────────────────────────────────────────────────
 
     const step: TaskStep = {
       index: task.steps.length,
@@ -165,19 +232,6 @@ export async function runAgentLoop(
       return finish(task, 'failed', callbacks, action.reason);
     }
 
-    let stepResult: string | undefined;
-    let stepError: string | undefined;
-    try {
-      if (callbacks.isAborted()) {
-        return finish(task, 'cancelled', callbacks, task.error);
-      }
-      stepResult = await callbacks.executeAction!(action);
-    } catch (e) {
-      const rawError = e instanceof Error ? e.message : String(e);
-      const formatted = formatError(rawError);
-      stepError = formatted.userMessage;
-    }
-
     if (callbacks.isAborted()) {
       return finish(task, 'cancelled', callbacks, task.error);
     }
@@ -186,6 +240,11 @@ export async function runAgentLoop(
     step.error = stepError;
     task.steps.push(step);
     callbacks.recordStep(step);
+
+    // monitor_position hands off to system-level monitoring — exit the agent loop
+    if (action.type === 'monitor_position' && task.status === 'monitoring') {
+      return task;
+    }
   }
 
   if (callbacks.isAborted()) return finish(task, 'cancelled', callbacks);

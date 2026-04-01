@@ -23,6 +23,38 @@ const CHAINS: ChainConfig[] = [
     testnet: false,
   },
   {
+    chainId: 1,
+    name: 'Ethereum',
+    // NOTE: Public RPCs are fragile. Prefer configuring your own infra in production.
+    rpcUrl: 'https://rpc.ankr.com/eth',
+    explorerUrl: 'https://etherscan.io',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    usdcAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    usdcDecimals: 6,
+    // dexRouterAddress intentionally omitted until we support multi-chain router configuration.
+    testnet: false,
+  },
+  {
+    chainId: 56,
+    name: 'BNB Chain',
+    rpcUrl: 'https://bsc-dataseed.binance.org',
+    explorerUrl: 'https://bscscan.com',
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+    usdcAddress: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    usdcDecimals: 6,
+    testnet: false,
+  },
+  {
+    chainId: 137,
+    name: 'Polygon',
+    rpcUrl: 'https://polygon-rpc.com',
+    explorerUrl: 'https://polygonscan.com',
+    nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+    usdcAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+    usdcDecimals: 6,
+    testnet: false,
+  },
+  {
     chainId: 42161,
     name: 'Arbitrum One',
     rpcUrl: 'https://arb1.arbitrum.io/rpc',

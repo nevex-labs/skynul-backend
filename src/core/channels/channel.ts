@@ -1,5 +1,6 @@
 import { stat } from 'fs/promises';
 import type { ChannelId, ChannelSettings, Task, TaskSource } from '../../types';
+import { inferTaskSetupRules } from '../agent/task-inference';
 import type { TaskManager } from '../agent/task-manager';
 import type { ChannelManager } from './channel-manager';
 import { formatTaskComplete, formatTaskFailed, formatTaskSummary } from './message-formatter';
@@ -13,9 +14,6 @@ function extractFilePaths(text: string): string[] {
   while ((m = re.exec(text)) !== null) paths.push(m[0]);
   return paths;
 }
-
-/** Default capabilities for tasks created via messaging channels. */
-export const DEFAULT_CHANNEL_CAPABILITIES = ['browser.cdp', 'app.launch'] as const;
 
 export abstract class Channel {
   abstract readonly id: ChannelId;
@@ -85,6 +83,18 @@ export abstract class Channel {
         return;
       }
 
+      if (task.status === 'monitoring') {
+        const m = task.monitor;
+        if (m) {
+          const interval = Math.round(m.intervalMs / 60000);
+          await this.sendMessage(
+            `Posición abierta, la estoy monitoreando cada ${interval} min. ` +
+              `TP: $${m.takeProfitPrice}, SL: $${m.stopLossPrice}. Te aviso cuando cierre.`
+          );
+        }
+        return;
+      }
+
       if (task.status === 'failed' || task.status === 'cancelled') {
         console.log(`[${this.id}] Sending failure message for task ${task.id}`);
         await this.sendMessage(formatTaskFailed(task));
@@ -99,14 +109,21 @@ export abstract class Channel {
 
   /** Helper: create a task from an incoming message. Auto-approves if global setting is ON. */
   protected async createTaskFromMessage(prompt: string): Promise<Task> {
+    const inferred = inferTaskSetupRules({ prompt });
+
     const task = this.taskManager.create({
       prompt,
-      capabilities: [...DEFAULT_CHANNEL_CAPABILITIES],
+      capabilities: inferred.capabilities,
+      mode: inferred.mode,
       source: this.id as TaskSource,
     });
 
     const autoApprove = this.channelManager?.isAutoApprove() ?? true;
     if (autoApprove) {
+      // Only send ack for tasks that will take time (have capabilities = real work)
+      if (inferred.capabilities.length > 0) {
+        await this.sendMessage('Dale, ya lo estoy haciendo.');
+      }
       await this.taskManager.approve(task.id);
     } else {
       await this.sendMessage('Tarea creada, aprobala desde la app.');
