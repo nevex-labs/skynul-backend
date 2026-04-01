@@ -7,11 +7,12 @@ import { EventEmitter } from 'events';
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
-import type { PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../types';
+import type { AgentDefinition, PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../types';
 import { broadcast } from '../../ws/events';
 import { isPerTaskBrowserSessionMode, parseBrowserSessionMode } from '../browser/session-mode';
 import { getDataDir } from '../config';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
+import type { AgentRegistry } from './agent-registry';
 import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
 import {
   closeMemoryDb,
@@ -99,12 +100,15 @@ export class TaskManager extends EventEmitter {
   private tasks = new Map<string, Task>();
   private runners = new Map<string, TaskRunner>();
   private inboxes = new Map<string, Array<{ from: string; message: string }>>();
+  private agentDefs = new Map<string, AgentDefinition>();
   private persistPath: string;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private getPolicy: (() => PolicyState) | null = null;
+  private agentRegistry: AgentRegistry | null;
 
-  constructor() {
+  constructor(agentRegistry?: AgentRegistry) {
     super();
+    this.agentRegistry = agentRegistry ?? null;
     this.persistPath = join(getDataDir(), 'tasks.json');
     void this.loadFromDisk();
   }
@@ -119,14 +123,29 @@ export class TaskManager extends EventEmitter {
     const agentRole = req.agentRole ?? (req.parentTaskId ? inferAgentRole(req.prompt) : undefined);
     const agentName = req.agentName ?? (req.parentTaskId ? pickAgentName(agentRole ?? 'Agent', id) : undefined);
 
-    const mode = req.mode ?? 'code';
-    const capabilities = req.capabilities ?? [];
+    // Look up agent definition from registry
+    let agentDef: AgentDefinition | undefined;
+    if (req.agent && this.agentRegistry) {
+      agentDef = this.agentRegistry.get(req.agent);
+      if (!agentDef) {
+        throw new Error(
+          `Unknown agent: "${req.agent}". Available: ${this.agentRegistry
+            .list()
+            .map((a) => a.name)
+            .join(', ')}`
+        );
+      }
+    }
+
+    const mode = agentDef?.mode ?? req.mode ?? 'code';
+    const capabilities = agentDef?.capabilities ?? req.capabilities ?? [];
 
     const task: Task = {
       id,
       parentTaskId: req.parentTaskId,
-      agentName,
+      agentName: agentName ?? agentDef?.description,
       agentRole,
+      agent: req.agent,
       prompt: req.prompt,
       attachments: req.attachments,
       status: 'pending_approval',
@@ -136,12 +155,18 @@ export class TaskManager extends EventEmitter {
       steps: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      maxSteps: req.maxSteps ?? (isTradingTask(capabilities) ? TRADING_MAX_STEPS : DEFAULT_MAX_STEPS),
+      maxSteps:
+        req.maxSteps ?? agentDef?.maxSteps ?? (isTradingTask(capabilities) ? TRADING_MAX_STEPS : DEFAULT_MAX_STEPS),
       timeoutMs: req.timeoutMs ?? (isTradingTask(capabilities) ? TRADING_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
       source: req.source ?? 'desktop',
-      model: req.model,
+      model: req.model ?? agentDef?.model,
       skipMemory: req.skipMemory,
     };
+
+    if (agentDef) {
+      this.agentDefs.set(id, agentDef);
+    }
+
     this.tasks.set(id, task);
     void this.persistToDisk();
     return task;
@@ -195,6 +220,8 @@ export class TaskManager extends EventEmitter {
     const feedbackContext = memoryEnabled ? buildFeedbackContext(task.capabilities) : '';
     const paperMode = policy?.paperTradingEnabled ?? false;
 
+    const agentDef = this.agentDefs.get(taskId);
+
     const runner = new TaskRunner(
       task,
       {
@@ -204,6 +231,8 @@ export class TaskManager extends EventEmitter {
         taskManager: this,
         taskId: task.id,
         paperMode,
+        agentSystemPrompt: agentDef?.systemPrompt,
+        agentAllowedTools: agentDef?.allowedTools,
       },
       {
         onUpdate: (updated) => {
@@ -578,6 +607,7 @@ export class TaskManager extends EventEmitter {
     }
 
     this.tasks.delete(taskId);
+    this.agentDefs.delete(taskId);
     void this.persistToDisk();
   }
 
@@ -587,6 +617,11 @@ export class TaskManager extends EventEmitter {
 
   list(): Task[] {
     return [...this.tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** Get the agent definition for a task (if it was created with one). */
+  getAgentDef(taskId: string): AgentDefinition | undefined {
+    return this.agentDefs.get(taskId);
   }
 
   destroyAll(): void {

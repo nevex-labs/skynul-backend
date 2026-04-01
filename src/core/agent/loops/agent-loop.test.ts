@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { callVision } from '../vision-dispatch';
@@ -324,5 +324,113 @@ describe('runAgentLoop (streaming)', () => {
     expect(result.status).toBe('completed');
     expect(callVision).toHaveBeenCalled();
     expect(mockRunStreamingTurn).not.toHaveBeenCalled();
+  });
+
+  describe('allowedTools', () => {
+    beforeEach(() => {
+      process.env.SKYNUL_STREAMING = '';
+    });
+
+    afterEach(() => {
+      process.env.SKYNUL_STREAMING = '';
+    });
+
+    it('blocks actions not in allowedTools list', async () => {
+      const BLOCKED_RESPONSE = '{"thought":"try shell","action":{"type":"shell","command":"rm -rf /"}}';
+      const DONE_AFTER = '{"thought":"ok done","action":{"type":"done","summary":"finished"}}';
+
+      vi.mocked(callVision)
+        .mockResolvedValueOnce({ text: BLOCKED_RESPONSE })
+        .mockResolvedValueOnce({ text: DONE_AFTER });
+
+      const executeAction = vi.fn().mockResolvedValue('ok');
+      const task = makeTask({ maxSteps: 5 });
+
+      const result = await runAgentLoop('system prompt', [], 5, task, 'chatgpt', 'gpt-4o', {
+        taskManager: null,
+        buildTurnMessage: () => ({ text: 'turn' }),
+        executeAction,
+        recordStep: vi.fn(),
+        pushStatus: vi.fn(),
+        isAborted: () => false,
+        allowedTools: ['file_read', 'file_search', 'done'],
+      });
+
+      // executeAction should NOT have been called for the shell action
+      expect(executeAction).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'shell' }));
+      expect(result.status).toBe('completed');
+      expect(result.steps).toHaveLength(2);
+      // The first step should have the "not allowed" error
+      expect(result.steps[0]!.error).toContain('not allowed');
+      expect(result.steps[0]!.error).toContain('shell');
+    });
+
+    it('allows actions that are in the allowedTools list', async () => {
+      const READ_RESPONSE = '{"thought":"read file","action":{"type":"file_read","path":"/tmp/test.txt"}}';
+      const DONE = '{"thought":"done","action":{"type":"done","summary":"read complete"}}';
+
+      vi.mocked(callVision).mockResolvedValueOnce({ text: READ_RESPONSE }).mockResolvedValueOnce({ text: DONE });
+
+      const executeAction = vi.fn().mockResolvedValue('file contents');
+      const task = makeTask({ maxSteps: 5 });
+
+      const result = await runAgentLoop('system prompt', [], 5, task, 'chatgpt', 'gpt-4o', {
+        taskManager: null,
+        buildTurnMessage: () => ({ text: 'turn' }),
+        executeAction,
+        recordStep: vi.fn(),
+        pushStatus: vi.fn(),
+        isAborted: () => false,
+        allowedTools: ['file_read', 'file_search', 'done'],
+      });
+
+      expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'file_read' }));
+      expect(result.status).toBe('completed');
+      expect(result.steps[0]!.error).toBeUndefined();
+    });
+
+    it('allows all actions when allowedTools is empty', async () => {
+      const SHELL = '{"thought":"run shell","action":{"type":"shell","command":"echo hi"}}';
+      const DONE = '{"thought":"done","action":{"type":"done","summary":"done"}}';
+
+      vi.mocked(callVision).mockResolvedValueOnce({ text: SHELL }).mockResolvedValueOnce({ text: DONE });
+
+      const executeAction = vi.fn().mockResolvedValue('hi\n');
+      const task = makeTask({ maxSteps: 5 });
+
+      const result = await runAgentLoop('system prompt', [], 5, task, 'chatgpt', 'gpt-4o', {
+        taskManager: null,
+        buildTurnMessage: () => ({ text: 'turn' }),
+        executeAction,
+        recordStep: vi.fn(),
+        pushStatus: vi.fn(),
+        isAborted: () => false,
+        allowedTools: [],
+      });
+
+      expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'shell' }));
+      expect(result.status).toBe('completed');
+    });
+
+    it('always allows done and fail regardless of allowedTools', async () => {
+      const DONE = '{"thought":"done","action":{"type":"done","summary":"finished"}}';
+
+      vi.mocked(callVision).mockResolvedValueOnce({ text: DONE });
+
+      const task = makeTask({ maxSteps: 1 });
+
+      const result = await runAgentLoop('system prompt', [], 1, task, 'chatgpt', 'gpt-4o', {
+        taskManager: null,
+        buildTurnMessage: () => ({ text: 'turn' }),
+        executeAction: vi.fn().mockResolvedValue('ok'),
+        recordStep: vi.fn(),
+        pushStatus: vi.fn(),
+        isAborted: () => false,
+        allowedTools: ['file_read'], // done not in list
+      });
+
+      // done/fail bypass the allowedTools check (they're handled before executeAction)
+      expect(result.status).toBe('completed');
+    });
   });
 });

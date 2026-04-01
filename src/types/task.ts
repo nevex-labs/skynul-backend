@@ -269,6 +269,8 @@ export type Task = {
   agentName?: string;
   /** Optional role label for multi-agent UI (e.g. "Copy", "Imagen", "Browser"). */
   agentRole?: string;
+  /** Reference to an agent definition from AgentRegistry (e.g. "researcher", "executor"). */
+  agent?: string;
   prompt: string;
   /** Optional local file paths attached by the user (absolute paths). */
   attachments?: string[];
@@ -336,6 +338,8 @@ export type TaskCreateRequest = {
   parentTaskId?: string;
   agentName?: string;
   agentRole?: string;
+  /** Reference to an agent definition from AgentRegistry (e.g. "researcher", "executor"). */
+  agent?: string;
   /** If true, uses the orchestrator runner to plan and delegate to sub-agents. */
   orchestrate?: boolean;
   /** Override the model for this task within the active provider. */
