@@ -12,6 +12,7 @@
 import type { Task, TaskAction, TaskStep } from '../../../types';
 import type { ProviderId } from '../../../types';
 import type { VisionMessage } from '../../../types';
+import { childLogger } from '../../logger';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
 import { formatError } from '../errors';
@@ -51,6 +52,7 @@ export async function runAgentLoop(
   contextWindowOverride?: number,
   systemPromptCompact?: string
 ): Promise<Task> {
+  const log = childLogger({ taskId: task.id, provider });
   const parserState: ParserState = { consecutiveTruncations: 0 };
 
   // Track last reported input tokens for accurate budget when provider supports it
@@ -166,10 +168,12 @@ export async function runAgentLoop(
       usage = turn.usage;
     } else {
       // Blocking path: original behavior (vision → parse → execute)
+      log.debug({ step: stepIndex }, 'Vision call start');
       try {
         const result = await callVision(provider, activeSystemPrompt, history, task.id, openaiModel);
         rawResponse = result.text;
         usage = result.usage;
+        log.debug({ step: stepIndex, duration: undefined }, 'Vision call complete');
       } catch (e) {
         if (callbacks.isAborted()) {
           return finish(task, 'cancelled', callbacks, task.error);
@@ -201,11 +205,13 @@ export async function runAgentLoop(
             stepError = `Action "${action.type}" is not allowed for this agent. Allowed: ${callbacks.allowedTools.join(', ')}`;
           } else {
             stepResult = await callbacks.executeAction!(action);
+            log.debug({ step: stepIndex, action: action.type }, 'Action executed');
           }
         } catch (e) {
           const rawError = e instanceof Error ? e.message : String(e);
           const formatted = formatError(rawError);
           stepError = formatted.userMessage;
+          log.warn({ step: stepIndex, action: action.type, err: rawError }, 'Action failed');
         }
 
         if (callbacks.isAborted()) {
@@ -242,12 +248,14 @@ export async function runAgentLoop(
     };
 
     if (action.type === 'done') {
+      log.info({ step: stepIndex, tokens: usage }, 'Task completed');
       task.summary = action.summary;
       task.steps.push(step);
       callbacks.recordStep(step);
       return finish(task, 'completed', callbacks);
     }
     if (action.type === 'fail') {
+      log.warn({ step: stepIndex, reason: action.reason }, 'Task failed');
       task.steps.push(step);
       callbacks.recordStep(step);
       return finish(task, 'failed', callbacks, action.reason);

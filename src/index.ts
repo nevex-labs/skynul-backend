@@ -1,7 +1,6 @@
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
-import { logger } from 'hono/logger';
 
 console.log(`
 \x1b[1;37m  ███████╗██╗  ██╗██╗   ██╗███╗   ██╗██╗   ██╗██╗
@@ -13,8 +12,10 @@ console.log(`
 \x1b[90m backend · v0.0.1 · node ${process.versions.node}\x1b[0m
 `);
 
+import { logger } from './core/logger';
 import { authMiddleware } from './middleware/auth';
 import { corsMiddleware } from './middleware/cors';
+import { requestLogger } from './middleware/request-logger';
 import { agentGroup } from './routes/agent';
 import { aiGroup } from './routes/ai';
 import { coinbaseAuthGroup } from './routes/auth/coinbase';
@@ -28,7 +29,7 @@ import { addClient, clientCount, removeClient } from './ws/events';
 const app = new Hono();
 
 app.onError((err, c) => {
-  console.error('[server] Unhandled error:', err);
+  logger.error({ err }, 'Unhandled error');
   return c.json({ error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message }, 500);
 });
 
@@ -37,7 +38,7 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 // Capture the chained result so `typeof routes` carries full route type info
 // (typeof app alone is the base Hono<{},{},"/">  — no route signatures).
 const routes = app
-  .use(logger())
+  .use(requestLogger)
   .use(corsMiddleware)
   .use(authMiddleware)
 
@@ -100,7 +101,7 @@ start();
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 const shutdown = async () => {
-  console.log('\nShutting down...');
+  logger.info('Shutting down...');
   await channelManager.stopAll();
   const { taskManager } = await import('./routes/tasks');
   taskManager.destroyAll();
