@@ -4,7 +4,7 @@
  */
 
 import { exec } from 'node:child_process';
-import os from 'os';
+import { tmpdir } from 'os';
 import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
 import { PolymarketClient } from '../polymarket-client';
@@ -474,7 +474,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         }
         const cost = raw.price * raw.size;
         const riskCheck = checkTradeAllowed('polymarket', cost);
-        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         await client.placeOrder({
           tokenId: raw.tokenId,
           side: raw.side,
@@ -634,7 +634,7 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
         const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
         const sendAmt = Number(a.amount);
         const riskCheck = checkTradeAllowed('chain', sendAmt);
-        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         const receipt = await client.sendToken(a.tokenAddress, a.to, a.amount);
         recordTradeVolume('chain', sendAmt);
         openRiskPosition('chain', a.tokenAddress, 'send', sendAmt, ctx.task.id);
@@ -650,7 +650,7 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
         const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
         const swapAmt = Number(a.amountIn);
         const riskCheck = checkTradeAllowed('chain', swapAmt);
-        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         const receipt = await client.swap({
           tokenIn: a.tokenIn,
           tokenOut: a.tokenOut,
@@ -846,7 +846,7 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
           );
         }
         const riskCheck = checkTradeAllowed(exchange as 'binance' | 'coinbase', a.amount);
-        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+        if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         const netAmount = FeeService.deductFeeFromAmount(a.amount);
         if (netAmount <= 0) {
           return errResult(`Order amount too small after fee deduction (fee: ${FEE_USDC} USDC).`);
@@ -906,7 +906,7 @@ export async function resolveAttachments(attachments?: string[]): Promise<{
     if (a.startsWith('data:image/')) {
       dataUrls.push(a);
       const ext = a.startsWith('data:image/png') ? 'png' : 'jpg';
-      const p = `${os.tmpdir()}/skynul-ref-${Date.now()}-${dataUrls.length}.${ext}`;
+      const p = `${tmpdir()}/skynul-ref-${Date.now()}-${dataUrls.length}.${ext}`;
       const base64 = a.split(',')[1];
       await writeFile(p, Buffer.from(base64, 'base64'));
       filePaths.push(p);

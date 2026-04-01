@@ -1,7 +1,7 @@
 import type { WSContext } from 'hono/ws';
 
 /**
- * Server-sent event types that mirror the Electron IPC events.
+ * Server-sent event types.
  * Clients receive these via WebSocket as JSON messages.
  */
 export type ServerEvent =

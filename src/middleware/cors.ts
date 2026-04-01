@@ -7,7 +7,7 @@ const ALLOWED_ORIGINS = (process.env.SKYNUL_ALLOWED_ORIGINS ?? '')
 
 export const corsMiddleware = cors({
   origin: (origin) => {
-    // Electron (file:// sends no origin)
+    // No origin (CLI tools, curl, file:// protocol)
     if (!origin) return '*';
     // Localhost dev
     if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) return origin;

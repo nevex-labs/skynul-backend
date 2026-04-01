@@ -1,6 +1,5 @@
 /**
  * TaskManager — CRUD for tasks + orchestrates TaskRunners.
- * Server-side version: uses broadcast() instead of Electron BrowserWindow.
  */
 
 import { randomBytes } from 'crypto';
@@ -692,7 +691,6 @@ export class TaskManager extends EventEmitter {
   }
 
   private pushUpdate(task: Task): void {
-    // Broadcast via WebSocket instead of Electron IPC
     broadcast({ type: 'task:update', payload: { task } });
     this.emit('taskUpdate', task);
   }
