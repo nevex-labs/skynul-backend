@@ -36,6 +36,8 @@ export type LoopCallbacks = {
   /** Called during streaming with partial thinking text. Optional — no-op if omitted. */
   pushThinking?(taskId: string, stepIndex: number, partial: string): void;
   isAborted(): boolean;
+  /** If set, only these action types are allowed. Empty/undefined = all allowed. */
+  allowedTools?: string[];
 };
 
 export async function runAgentLoop(
@@ -131,13 +133,23 @@ export async function runAgentLoop(
 
     if (isStreamingEnabled() && callbacks.executeAction) {
       // Streaming path: vision → detect JSON → execute (real-time)
+      // Wrap executeAction with allowedTools check
+      const safeExecuteAction = async (a: TaskAction): Promise<string | undefined> => {
+        if (callbacks.allowedTools && callbacks.allowedTools.length > 0 && !callbacks.allowedTools.includes(a.type)) {
+          throw new Error(
+            `Action "${a.type}" is not allowed for this agent. Allowed: ${callbacks.allowedTools.join(', ')}`
+          );
+        }
+        return callbacks.executeAction!(a);
+      };
+
       const turn = await runStreamingTurn(
         provider,
         activeSystemPrompt,
         history,
         task.id,
         openaiModel,
-        callbacks.executeAction,
+        safeExecuteAction,
         {
           onThinking: (partial) => callbacks.pushThinking?.(task.id, stepIndex, partial),
           onDelta: () => {
@@ -180,7 +192,16 @@ export async function runAgentLoop(
           if (callbacks.isAborted()) {
             return finish(task, 'cancelled', callbacks, task.error);
           }
-          stepResult = await callbacks.executeAction!(action);
+          // Check allowedTools restriction from agent definition
+          if (
+            callbacks.allowedTools &&
+            callbacks.allowedTools.length > 0 &&
+            !callbacks.allowedTools.includes(action.type)
+          ) {
+            stepError = `Action "${action.type}" is not allowed for this agent. Allowed: ${callbacks.allowedTools.join(', ')}`;
+          } else {
+            stepResult = await callbacks.executeAction!(action);
+          }
         } catch (e) {
           const rawError = e instanceof Error ? e.message : String(e);
           const formatted = formatError(rawError);

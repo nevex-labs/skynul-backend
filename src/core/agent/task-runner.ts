@@ -27,6 +27,10 @@ export type TaskRunnerOpts = {
   taskManager?: import('./task-manager').TaskManager | null;
   taskId?: string;
   paperMode?: boolean;
+  /** Agent definition system prompt to prepend. */
+  agentSystemPrompt?: string;
+  /** Allowed tools from agent definition (for filtering). */
+  agentAllowedTools?: string[];
 };
 
 export class TaskRunner {
@@ -67,6 +71,21 @@ export class TaskRunner {
     return this.runBrowser();
   }
 
+  /** Prepend agent definition system prompt if available. */
+  private applyAgentPrompt(prompt: string): string {
+    if (this.opts.agentSystemPrompt) {
+      return `${this.opts.agentSystemPrompt}\n\n---\n\n${prompt}`;
+    }
+    return prompt;
+  }
+
+  /** Inject agent allowedTools restriction into loop callbacks. */
+  private applyAllowedTools(callbacks: import('./loops/agent-loop').LoopCallbacks): void {
+    if (this.opts.agentAllowedTools && this.opts.agentAllowedTools.length > 0) {
+      callbacks.allowedTools = this.opts.agentAllowedTools;
+    }
+  }
+
   private async runOrchestrator(): Promise<Task> {
     const deps = {
       task: this.task,
@@ -84,9 +103,10 @@ export class TaskRunner {
     });
 
     callbacks.executeAction = (action) => executeOrchestratorAction(this.executorCtx, action);
+    this.applyAllowedTools(callbacks);
 
     return runAgentLoop(
-      systemPrompt,
+      this.applyAgentPrompt(systemPrompt),
       history,
       this.task.maxSteps,
       this.task,
@@ -94,7 +114,7 @@ export class TaskRunner {
       this.opts.openaiModel,
       callbacks,
       undefined,
-      systemPromptCompact
+      this.applyAgentPrompt(systemPromptCompact)
     );
   }
 
@@ -131,8 +151,9 @@ export class TaskRunner {
       this.activeRelease = release;
 
       callbacks.executeAction = (action) => executeBrowserAction(engine!, action, this.executorCtx);
+      this.applyAllowedTools(callbacks);
       loopResult = await runAgentLoop(
-        systemPrompt,
+        this.applyAgentPrompt(systemPrompt),
         history,
         this.task.maxSteps,
         this.task,
@@ -140,7 +161,7 @@ export class TaskRunner {
         this.opts.openaiModel,
         callbacks,
         undefined,
-        systemPromptCompact
+        this.applyAgentPrompt(systemPromptCompact)
       );
     } catch (e) {
       if (release) await release().catch(() => {});
@@ -172,9 +193,10 @@ export class TaskRunner {
     });
 
     callbacks.executeAction = (action) => executeApiOnlyAction(action, this.executorCtx);
+    this.applyAllowedTools(callbacks);
 
     return runAgentLoop(
-      systemPrompt,
+      this.applyAgentPrompt(systemPrompt),
       history,
       this.task.maxSteps,
       this.task,
@@ -182,7 +204,7 @@ export class TaskRunner {
       this.opts.openaiModel,
       callbacks,
       undefined,
-      systemPromptCompact
+      this.applyAgentPrompt(systemPromptCompact)
     );
   }
 
@@ -204,9 +226,10 @@ export class TaskRunner {
 
     const scrapeState = { lastScrapeData: this.lastScrapeData };
     callbacks.executeAction = (action) => executeCodeAction(action, this.executorCtx, scrapeState);
+    this.applyAllowedTools(callbacks);
 
     return runAgentLoop(
-      systemPrompt,
+      this.applyAgentPrompt(systemPrompt),
       history,
       this.task.maxSteps,
       this.task,
@@ -214,7 +237,7 @@ export class TaskRunner {
       this.opts.openaiModel,
       callbacks,
       undefined,
-      systemPromptCompact
+      this.applyAgentPrompt(systemPromptCompact)
     );
   }
 
