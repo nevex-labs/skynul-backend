@@ -17,6 +17,7 @@ import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
 import { formatError } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
+import { TaskMetricsCollector, TurnTimer, storeTaskMetrics } from '../metrics';
 import { runStreamingTurn } from '../streaming/streaming-loop';
 import type { TaskManager } from '../task-manager';
 import { callVision } from '../vision-dispatch';
@@ -53,6 +54,8 @@ export async function runAgentLoop(
   systemPromptCompact?: string
 ): Promise<Task> {
   const log = childLogger({ taskId: task.id, provider });
+  const timer = new TurnTimer();
+  const collector = new TaskMetricsCollector(task.id);
   const parserState: ParserState = { consecutiveTruncations: 0 };
 
   // Track last reported input tokens for accurate budget when provider supports it
@@ -135,6 +138,8 @@ export async function runAgentLoop(
 
     if (isStreamingEnabled() && callbacks.executeAction) {
       // Streaming path: vision → detect JSON → execute (real-time)
+      timer.beginTurn();
+      timer.startVision();
       // Wrap executeAction with allowedTools check
       const safeExecuteAction = async (a: TaskAction): Promise<string | undefined> => {
         if (callbacks.allowedTools && callbacks.allowedTools.length > 0 && !callbacks.allowedTools.includes(a.type)) {
@@ -159,6 +164,11 @@ export async function runAgentLoop(
           },
         }
       );
+      timer.endVision();
+
+      // In streaming, we don't have separate parse phase - it's done as part of the stream
+      timer.startParse();
+      timer.endParse();
 
       rawResponse = turn.rawResponse;
       thought = turn.thought;
@@ -169,11 +179,13 @@ export async function runAgentLoop(
     } else {
       // Blocking path: original behavior (vision → parse → execute)
       log.debug({ step: stepIndex }, 'Vision call start');
+      timer.beginTurn();
+      timer.startVision();
       try {
         const result = await callVision(provider, activeSystemPrompt, history, task.id, openaiModel);
+        timer.endVision();
         rawResponse = result.text;
         usage = result.usage;
-        log.debug({ step: stepIndex, duration: undefined }, 'Vision call complete');
       } catch (e) {
         if (callbacks.isAborted()) {
           return finish(task, 'cancelled', callbacks, task.error);
@@ -187,7 +199,9 @@ export async function runAgentLoop(
         return finish(task, 'cancelled', callbacks, task.error);
       }
 
+      timer.startParse();
       const parsed = parseModelResponse(rawResponse, parserState);
+      timer.endParse();
       thought = parsed.thought;
       action = parsed.action;
 
@@ -204,10 +218,13 @@ export async function runAgentLoop(
           ) {
             stepError = `Action "${action.type}" is not allowed for this agent. Allowed: ${callbacks.allowedTools.join(', ')}`;
           } else {
+            timer.startExecute();
             stepResult = await callbacks.executeAction!(action);
+            timer.endExecute();
             log.debug({ step: stepIndex, action: action.type }, 'Action executed');
           }
         } catch (e) {
+          timer.endExecute();
           const rawError = e instanceof Error ? e.message : String(e);
           const formatted = formatError(rawError);
           stepError = formatted.userMessage;
@@ -248,14 +265,26 @@ export async function runAgentLoop(
     };
 
     if (action.type === 'done') {
-      log.info({ step: stepIndex, tokens: usage }, 'Task completed');
+      collector.recordTurn(timer.finish(stepIndex, action.type, usage));
+      const metrics = collector.finish(openaiModel);
+      storeTaskMetrics(metrics);
+      log.info(
+        { step: stepIndex, tokens: usage, totalMs: metrics.totalMs, costUsd: metrics.estimatedCostUsd },
+        'Task completed'
+      );
       task.summary = action.summary;
       task.steps.push(step);
       callbacks.recordStep(step);
       return finish(task, 'completed', callbacks);
     }
     if (action.type === 'fail') {
-      log.warn({ step: stepIndex, reason: action.reason }, 'Task failed');
+      collector.recordTurn(timer.finish(stepIndex, action.type, usage, action.reason));
+      const metrics = collector.finish(openaiModel);
+      storeTaskMetrics(metrics);
+      log.warn(
+        { step: stepIndex, reason: action.reason, totalMs: metrics.totalMs, costUsd: metrics.estimatedCostUsd },
+        'Task failed'
+      );
       task.steps.push(step);
       callbacks.recordStep(step);
       return finish(task, 'failed', callbacks, action.reason);
@@ -269,6 +298,7 @@ export async function runAgentLoop(
     step.error = stepError;
     task.steps.push(step);
     callbacks.recordStep(step);
+    collector.recordTurn(timer.finish(stepIndex, action.type, usage, stepError));
 
     // monitor_position hands off to system-level monitoring — exit the agent loop
     if (action.type === 'monitor_position' && task.status === 'monitoring') {
