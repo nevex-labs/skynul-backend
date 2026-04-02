@@ -5,14 +5,8 @@ import { getMetricsOverview, getTaskMetrics } from '../../core/agent/metrics';
 import { inferTaskSetup } from '../../core/agent/task-inference';
 import { TaskManager } from '../../core/agent/task-manager';
 import { dispatchChat } from '../../core/providers/dispatch';
-import { createRateLimitMiddleware, rateLimitPresets } from '../../middleware/rate-limit';
 import { TASK_CAPABILITY_IDS, type TaskCreateRequest, type TaskListResponse } from '../../types';
 import { policyState } from '../agent/policy';
-
-// Rate limiters for specific endpoints
-const taskCreateLimiter = createRateLimitMiddleware(rateLimitPresets.taskCreate);
-const messageLimiter = createRateLimitMiddleware(rateLimitPresets.taskMessage);
-const resumeLimiter = createRateLimitMiddleware(rateLimitPresets.taskResume);
 
 const tm = new TaskManager();
 tm.setPolicyGetter(() => policyState);
@@ -72,7 +66,7 @@ const tasks = new Hono()
     if (!task) return c.json({ error: 'Task not found' }, 404);
     return c.json(task);
   })
-  .post('/', taskCreateLimiter, zValidator('json', taskCreateSchema), async (c) => {
+  .post('/', zValidator('json', taskCreateSchema), async (c) => {
     const body = c.req.valid('json');
     try {
       const infer = body.infer ?? true;
@@ -146,7 +140,7 @@ const tasks = new Hono()
     tm.delete(id);
     return c.json({ ok: true });
   })
-  .post('/:id/message', messageLimiter, zValidator('json', z.object({ message: z.string() })), (c) => {
+  .post('/:id/message', zValidator('json', z.object({ message: z.string() })), (c) => {
     const id = c.req.param('id');
     const { message } = c.req.valid('json');
     try {
@@ -156,7 +150,7 @@ const tasks = new Hono()
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
   })
-  .post('/:id/resume', resumeLimiter, zValidator('json', z.object({ message: z.string() })), async (c) => {
+  .post('/:id/resume', zValidator('json', z.object({ message: z.string() })), async (c) => {
     const id = c.req.param('id');
     const { message } = c.req.valid('json');
     try {
