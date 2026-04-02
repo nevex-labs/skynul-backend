@@ -48,7 +48,7 @@ export interface GetPositionAction {
 export interface ClosePositionAction {
   type: 'close_position';
   token: string;
-  reason?: 'take_profit' | 'stop_loss' | 'time_limit' | 'manual';
+  reason?: 'take_profit' | 'stop_loss' | 'time_limit' | 'rug_pull' | 'manual';
 }
 
 export interface TradeResult {
