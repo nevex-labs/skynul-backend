@@ -32,10 +32,33 @@ export const RISK_SCHEMA = `
     size_usd   REAL    NOT NULL,
     task_id    TEXT,
     opened_at  INTEGER NOT NULL,
-    closed_at  INTEGER
+    closed_at  INTEGER,
+    mode       TEXT    DEFAULT 'task', -- 'task' or 'yolo'
+    entry_price REAL,
+    exit_price  REAL,
+    pnl_usd     REAL
   );
   CREATE INDEX IF NOT EXISTS rp_open ON risk_positions(venue, closed_at);
   CREATE INDEX IF NOT EXISTS rp_task ON risk_positions(task_id);
+  CREATE INDEX IF NOT EXISTS rp_mode ON risk_positions(mode);
+  
+  -- YOLO mode tracking
+  CREATE TABLE IF NOT EXISTS yolo_trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    token       TEXT    NOT NULL,
+    chain       TEXT    NOT NULL,
+    side        TEXT    NOT NULL,
+    size_usd    REAL    NOT NULL,
+    entry_price REAL    NOT NULL,
+    exit_price  REAL,
+    pnl_usd     REAL,
+    opened_at   INTEGER NOT NULL,
+    closed_at   INTEGER,
+    exit_reason TEXT, -- 'take_profit', 'stop_loss', 'time_limit', 'rug_pull', 'manual'
+    task_id     TEXT
+  );
+  CREATE INDEX IF NOT EXISTS yolo_token ON yolo_trades(token);
+  CREATE INDEX IF NOT EXISTS yolo_date ON yolo_trades(opened_at);
 `;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -51,6 +74,20 @@ export type RiskLimits = {
   maxConcurrentPositions: number;
   /** Global kill switch — false bypasses all checks. Default: true */
   enabled: boolean;
+
+  // YOLO Mode specific limits
+  /** Max daily loss before stopping (USD). Default: 100 */
+  maxDailyLossUsd?: number;
+  /** Minimum liquidity required for token (USD). Default: 50000 */
+  minLiquidityUsd?: number;
+  /** Max time to hold a position (seconds). Default: 300 (5 min) */
+  maxHoldTimeSeconds?: number;
+  /** Take profit percentage (0.3 = 30%). Default: 0.3 */
+  takeProfitPercent?: number;
+  /** Stop loss percentage (0.2 = 20%). Default: 0.2 */
+  stopLossPercent?: number;
+  /** Cooldown between trades (seconds). Default: 60 */
+  tradeCooldownSeconds?: number;
 };
 
 export type RiskConfig = {
@@ -70,6 +107,10 @@ export type RiskPosition = {
   taskId: string | null;
   openedAt: number;
   closedAt: number | null;
+  mode?: TradingMode;
+  entryPrice?: number;
+  exitPrice?: number;
+  pnlUsd?: number;
 };
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
@@ -81,9 +122,36 @@ export const DEFAULT_RISK_LIMITS: RiskLimits = {
   enabled: true,
 };
 
+// YOLO Mode defaults (meme coin scalping)
+export const DEFAULT_YOLO_RISK_LIMITS: RiskLimits = {
+  maxSingleTradeUsd: 50, // Small positions
+  maxDailyVolumeUsd: 500, // $500 daily max
+  maxConcurrentPositions: 3, // Max 3 positions
+  enabled: true,
+  maxDailyLossUsd: 100, // Stop if lose $100
+  minLiquidityUsd: 50_000, // Min $50k liquidity
+  maxHoldTimeSeconds: 300, // 5 min max hold
+  takeProfitPercent: 0.3, // 30% take profit
+  stopLossPercent: 0.2, // 20% stop loss
+  tradeCooldownSeconds: 60, // 1 min between trades
+};
+
 export const DEFAULT_RISK_CONFIG: RiskConfig = {
   global: { ...DEFAULT_RISK_LIMITS },
   venues: {},
+};
+
+// Mode-specific configs
+export type TradingMode = 'task' | 'yolo';
+
+export type ModeRiskConfig = {
+  task: RiskLimits;
+  yolo: RiskLimits;
+};
+
+export const DEFAULT_MODE_CONFIG: ModeRiskConfig = {
+  task: { ...DEFAULT_RISK_LIMITS },
+  yolo: { ...DEFAULT_YOLO_RISK_LIMITS },
 };
 
 // ── Test DB injection ─────────────────────────────────────────────────────────
@@ -232,23 +300,62 @@ export function openRiskPosition(
   symbol: string,
   side: string,
   sizeUsd: number,
-  taskId?: string
+  taskId?: string,
+  mode: TradingMode = 'task',
+  entryPrice?: number
 ): number {
   try {
     const result = getDb()
       .prepare(
-        'INSERT INTO risk_positions (venue, symbol, side, size_usd, task_id, opened_at) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO risk_positions (venue, symbol, side, size_usd, task_id, opened_at, mode, entry_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
-      .run(venue, symbol, side, sizeUsd, taskId ?? null, Date.now());
+      .run(venue, symbol, side, sizeUsd, taskId ?? null, Date.now(), mode, entryPrice ?? null);
+
+    // If YOLO mode, also track in yolo_trades
+    if (mode === 'yolo' && entryPrice) {
+      getDb()
+        .prepare(
+          'INSERT INTO yolo_trades (token, chain, side, size_usd, entry_price, opened_at, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        )
+        .run(symbol, venue, side, sizeUsd, entryPrice, Date.now(), taskId ?? null);
+    }
+
     return result.lastInsertRowid as number;
   } catch {
     return -1;
   }
 }
 
-export function closeRiskPosition(positionId: number): void {
+export function closeRiskPosition(positionId: number, exitPrice?: number, exitReason?: string): void {
   try {
-    getDb().prepare('UPDATE risk_positions SET closed_at = ? WHERE id = ?').run(Date.now(), positionId);
+    // Get position details to calculate P&L
+    const position = getDb().prepare('SELECT * FROM risk_positions WHERE id = ?').get(positionId) as
+      | Record<string, unknown>
+      | undefined;
+
+    let pnlUsd: number | null = null;
+    if (position && exitPrice && position.entry_price) {
+      const entryPrice = position.entry_price as number;
+      const sizeUsd = position.size_usd as number;
+      const side = position.side as string;
+
+      // Calculate P&L
+      const priceDiff = exitPrice - entryPrice;
+      pnlUsd = side === 'buy' ? sizeUsd * (priceDiff / entryPrice) : sizeUsd * (-priceDiff / entryPrice);
+    }
+
+    getDb()
+      .prepare('UPDATE risk_positions SET closed_at = ?, exit_price = ?, pnl_usd = ? WHERE id = ?')
+      .run(Date.now(), exitPrice ?? null, pnlUsd, positionId);
+
+    // Update yolo_trades if applicable
+    if (position?.mode === 'yolo' && exitPrice) {
+      getDb()
+        .prepare(
+          'UPDATE yolo_trades SET exit_price = ?, pnl_usd = ?, closed_at = ?, exit_reason = ? WHERE task_id = ? AND token = ? AND closed_at IS NULL'
+        )
+        .run(exitPrice, pnlUsd, Date.now(), exitReason ?? 'manual', position.task_id, position.symbol);
+    }
   } catch {
     /* non-critical */
   }
@@ -274,6 +381,10 @@ function rowToPosition(row: Record<string, unknown>): RiskPosition {
     taskId: row.task_id as string | null,
     openedAt: row.opened_at as number,
     closedAt: row.closed_at as number | null,
+    mode: (row.mode as TradingMode) ?? 'task',
+    entryPrice: row.entry_price as number | undefined,
+    exitPrice: row.exit_price as number | undefined,
+    pnlUsd: row.pnl_usd as number | undefined,
   };
 }
 
@@ -315,4 +426,209 @@ export function checkTradeAllowed(venue: VenueId, amountUsd: number): RiskCheckR
   }
 
   return { allowed: true };
+}
+
+// ── YOLO Mode specific checks ─────────────────────────────────────────────────
+
+export type YoloCheckResult = { allowed: true } | { allowed: false; reason: string; suggestedFix?: string };
+
+/**
+ * Check if token meets YOLO mode criteria before entering.
+ * Validates liquidity, holder count, and other safety metrics.
+ */
+export function checkYoloEntryCriteria(
+  tokenInfo: {
+    liquidityUsd: number;
+    uniqueHolders: number;
+    topHolderPercent: number;
+    devHoldingPercent: number;
+    mintAuthority?: boolean;
+    freezeAuthority?: boolean;
+    ageMinutes: number;
+  },
+  mode: TradingMode = 'yolo'
+): YoloCheckResult {
+  if (mode !== 'yolo') return { allowed: true };
+
+  const config = DEFAULT_MODE_CONFIG.yolo;
+
+  // Liquidity check
+  if (config.minLiquidityUsd && tokenInfo.liquidityUsd < config.minLiquidityUsd) {
+    return {
+      allowed: false,
+      reason: `Liquidity $${tokenInfo.liquidityUsd.toFixed(0)} below minimum $${config.minLiquidityUsd}`,
+      suggestedFix: 'Skip this token - too illiquid',
+    };
+  }
+
+  // Holder distribution
+  if (tokenInfo.uniqueHolders < 100) {
+    return {
+      allowed: false,
+      reason: `Only ${tokenInfo.uniqueHolders} holders - too few`,
+      suggestedFix: 'Wait for more distribution',
+    };
+  }
+
+  if (tokenInfo.topHolderPercent > 20) {
+    return {
+      allowed: false,
+      reason: `Top holder owns ${tokenInfo.topHolderPercent.toFixed(1)}% - whale risk`,
+      suggestedFix: 'High risk of dump',
+    };
+  }
+
+  // Dev holding
+  if (tokenInfo.devHoldingPercent > 10) {
+    return {
+      allowed: false,
+      reason: `Dev holds ${tokenInfo.devHoldingPercent.toFixed(1)}% - rug risk`,
+      suggestedFix: 'Dev can dump anytime',
+    };
+  }
+
+  // Contract safety
+  if (tokenInfo.mintAuthority === true) {
+    return {
+      allowed: false,
+      reason: 'Mint authority enabled - infinite inflation risk',
+      suggestedFix: 'Token can be inflated',
+    };
+  }
+
+  if (tokenInfo.freezeAuthority === true) {
+    return {
+      allowed: false,
+      reason: 'Freeze authority enabled - wallet lock risk',
+      suggestedFix: 'Wallets can be frozen',
+    };
+  }
+
+  // Age check
+  if (tokenInfo.ageMinutes > 30) {
+    return {
+      allowed: false,
+      reason: `Token is ${tokenInfo.ageMinutes} minutes old - too late`,
+      suggestedFix: 'Only enter within first 30 min',
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Check daily loss limit for YOLO mode.
+ * Call before each trade to ensure we haven't hit daily stop loss.
+ */
+export function checkDailyLossLimit(mode: TradingMode = 'yolo'): YoloCheckResult {
+  if (mode !== 'yolo') return { allowed: true };
+
+  const config = DEFAULT_MODE_CONFIG.yolo;
+  if (!config.maxDailyLossUsd) return { allowed: true };
+
+  const dailyPnl = getDailyPnl();
+  if (dailyPnl < -config.maxDailyLossUsd) {
+    return {
+      allowed: false,
+      reason: `Daily loss limit reached: $${Math.abs(dailyPnl).toFixed(2)} / $${config.maxDailyLossUsd}. Stopping for today.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Check if enough time has passed since last trade (cooldown).
+ */
+export function checkTradeCooldown(mode: TradingMode = 'yolo'): YoloCheckResult {
+  if (mode !== 'yolo') return { allowed: true };
+
+  const config = DEFAULT_MODE_CONFIG.yolo;
+  if (!config.tradeCooldownSeconds) return { allowed: true };
+
+  const lastTrade = getLastTradeTime();
+  const elapsed = (Date.now() - lastTrade) / 1000;
+
+  if (elapsed < config.tradeCooldownSeconds) {
+    const remaining = Math.ceil(config.tradeCooldownSeconds - elapsed);
+    return {
+      allowed: false,
+      reason: `Trade cooldown: ${remaining}s remaining`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+// ── Auto-exec triggers ────────────────────────────────────────────────────────
+
+export type ExitTrigger =
+  | { type: 'take_profit'; profitPercent: number; profitUsd: number }
+  | { type: 'stop_loss'; lossPercent: number; lossUsd: number }
+  | { type: 'time_limit'; holdTimeSeconds: number }
+  | { type: 'rug_pull'; reason: string }
+  | { type: 'manual' };
+
+/**
+ * Check if position should be auto-closed based on YOLO exit criteria.
+ * Call periodically to monitor open positions.
+ */
+export function checkExitTriggers(
+  position: {
+    entryPrice: number;
+    currentPrice: number;
+    sizeUsd: number;
+    openedAt: number;
+  },
+  mode: TradingMode = 'yolo'
+): ExitTrigger | null {
+  if (mode !== 'yolo') return null;
+
+  const config = DEFAULT_MODE_CONFIG.yolo;
+  const holdTime = (Date.now() - position.openedAt) / 1000;
+
+  // Time limit
+  if (config.maxHoldTimeSeconds && holdTime > config.maxHoldTimeSeconds) {
+    return {
+      type: 'time_limit',
+      holdTimeSeconds: holdTime,
+    };
+  }
+
+  // P&L calculation
+  const pnlPercent = (position.currentPrice - position.entryPrice) / position.entryPrice;
+  const pnlUsd = position.sizeUsd * pnlPercent;
+
+  // Take profit
+  if (config.takeProfitPercent && pnlPercent >= config.takeProfitPercent) {
+    return {
+      type: 'take_profit',
+      profitPercent: pnlPercent,
+      profitUsd: pnlUsd,
+    };
+  }
+
+  // Stop loss
+  if (config.stopLossPercent && pnlPercent <= -config.stopLossPercent) {
+    return {
+      type: 'stop_loss',
+      lossPercent: Math.abs(pnlPercent),
+      lossUsd: Math.abs(pnlUsd),
+    };
+  }
+
+  return null;
+}
+
+// ── Helper functions (placeholders - implement with real data) ───────────────
+
+function getDailyPnl(): number {
+  // TODO: Calculate from risk_positions table
+  // Sum of (exit_price - entry_price) * size for closed positions today
+  return 0;
+}
+
+function getLastTradeTime(): number {
+  // TODO: Get timestamp of most recent trade
+  return 0;
 }
