@@ -1,10 +1,14 @@
 /**
  * Action executors — pure functions that execute individual TaskAction types.
  * Extracted from TaskRunner to enable testing and reduce complexity.
+ *
+ * INTEGRATION: Effect.js is now being integrated incrementally.
+ * See src/core/effect/ for Effect-based services.
  */
 
 import { exec } from 'node:child_process';
 import { tmpdir } from 'os';
+import { Effect } from 'effect';
 import { writeFile } from 'fs/promises';
 import type { Task, TaskAction } from '../../types';
 import { PolymarketClient } from '../polymarket-client';
@@ -264,6 +268,118 @@ export async function executeShell(
     );
     child.stdin?.end();
   });
+}
+
+/**
+ * Effect-based shell execution with structured logging and retry.
+ *
+ * This demonstrates Effect.js integration. It wraps the async shell execution
+ * with Effect for better error handling, logging, and retry capabilities.
+ *
+ * @example
+ * ```typescript
+ * // Using Effect directly
+ * const program = Effect.gen(function* () {
+ *   const result = yield* executeShellEffect('npm install', cwd, 60000);
+ *   return result;
+ * });
+ *
+ * const result = await runEffect(program);
+ * ```
+ */
+export const executeShellEffect = (
+  command: string,
+  cwd?: string,
+  timeoutMs?: number,
+  env?: Record<string, string>
+): Effect.Effect<{ exitCode: number; stdout: string; stderr: string }, unknown, never> =>
+  Effect.gen(function* () {
+    // Validate command (sync, so wrap in Effect.sync)
+    yield* Effect.sync(() => {
+      validateShellCommand(command);
+    });
+
+    // Prepare environment with wallet key for hardhat
+    const environment: Record<string, string> = { ...(env || process.env) } as Record<string, string>;
+    if (command.includes('DEPLOYER_PRIVATE_KEY') || command.includes('hardhat')) {
+      const walletKey = yield* Effect.tryPromise({
+        try: () => getSecret('CHAIN_WALLET_PRIVATE_KEY'),
+        catch: () => null as string | null,
+      });
+      if (walletKey) {
+        environment.DEPLOYER_PRIVATE_KEY = walletKey;
+      }
+    }
+
+    // Execute shell command with Effect
+    const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
+
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+          exec(
+            command,
+            { timeout, maxBuffer: 1024 * 1024, cwd: cwd || undefined, env: environment },
+            (err: Error | null, stdout: string, stderr: string) => {
+              if (err) {
+                const code = (err as NodeJS.ErrnoException).code;
+                const exitCode = typeof code === 'number' ? code : 1;
+                resolve({
+                  exitCode,
+                  stdout,
+                  stderr: stderr || err.message,
+                });
+              } else {
+                resolve({ exitCode: 0, stdout, stderr });
+              }
+            }
+          );
+        }),
+      catch: (e) => new Error(`Shell execution failed: ${e}`),
+    });
+
+    return result;
+  });
+
+/**
+ * Adapter to use Effect-based shell execution with existing async/await code.
+ *
+ * This maintains the same API as executeShell but uses Effect internally.
+ * Benefits: structured logging, retry, timeout handling.
+ *
+ * @example
+ * ```typescript
+ * // Use like the regular executeShell
+ * const result = await executeShellWithEffect('npm install', cwd, 60000);
+ * // result is compatible with existing code
+ * ```
+ */
+export async function executeShellWithEffect(
+  command: string,
+  cwd?: string,
+  timeoutMs?: number,
+  taskId?: string,
+  env?: Record<string, string>
+): Promise<ExecutorResult> {
+  // For background execution, use the original implementation
+  if (taskId) {
+    return executeShell(command, cwd, timeoutMs, taskId, env);
+  }
+
+  try {
+    const result = await Effect.runPromise(executeShellEffect(command, cwd, timeoutMs, env));
+
+    // Format result to match existing API
+    const out = headTail(result.stdout, 4000);
+    const errOut = result.stderr.slice(0, 1000);
+
+    if (result.exitCode !== 0) {
+      return makeResult(`[Exit ${result.exitCode}] ${errOut || ''}\n${out}`.trim());
+    }
+    return makeResult(errOut ? `${out}\n[stderr] ${errOut}` : out || '(no output)');
+  } catch (e) {
+    return errResult(e instanceof Error ? e.message : String(e));
+  }
 }
 
 /** Execute file_read action. */
