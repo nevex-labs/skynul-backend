@@ -3,10 +3,14 @@
  */
 
 import { Effect } from 'effect';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { executeShellEffect, executeShellWithEffect } from './action-executors';
+import { resetProcessRegistry } from './process-registry';
 
 describe('Effect Integration - Action Executors', () => {
+  beforeEach(() => {
+    resetProcessRegistry();
+  });
   describe('executeShellEffect', () => {
     it('should execute shell command with Effect', async () => {
       const program = executeShellEffect('echo "Hello from Effect"');
@@ -70,6 +74,9 @@ describe('Effect Integration - Action Executors', () => {
 
       // Should return immediately with background handle or timeout error
       expect(result).toBeDefined();
+
+      // Cleanup any background processes
+      resetProcessRegistry();
     });
   });
 

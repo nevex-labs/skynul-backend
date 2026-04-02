@@ -37,3 +37,15 @@ export function broadcast(event: ServerEvent): void {
 export function clientCount(): number {
   return clients.size;
 }
+
+/** Close all WebSocket connections gracefully. */
+export function closeAllClients(): void {
+  for (const ws of clients) {
+    try {
+      ws.close();
+    } catch {
+      // Client already closed or error closing
+    }
+  }
+  clients.clear();
+}

@@ -390,6 +390,31 @@ class ProcessRegistry {
     }
     return removed;
   }
+
+  /**
+   * Destroy all running processes (for graceful shutdown).
+   * Kills all running processes with SIGTERM.
+   * @returns Object with count of killed processes and any errors
+   */
+  destroyAll(): { killed: number; errors: string[] } {
+    const running = Array.from(this.processes.values()).filter((p) => p.status === 'running');
+    let killed = 0;
+    const errors: string[] = [];
+
+    logger.info({ count: running.length }, 'Destroying all background processes');
+
+    for (const proc of running) {
+      const result = this.kill(proc.id, 'SIGTERM');
+      if (result.success) {
+        killed++;
+      } else {
+        errors.push(result.message);
+      }
+    }
+
+    logger.info({ killed, errors: errors.length }, 'Background processes destroyed');
+    return { killed, errors };
+  }
 }
 
 // Singleton instance

@@ -76,6 +76,7 @@ export type TaskStatus =
   | 'pending_approval'
   | 'approved'
   | 'running'
+  | 'shutting_down'
   | 'completed'
   | 'failed'
   | 'cancelled'

@@ -623,13 +623,65 @@ export class TaskManager extends EventEmitter {
     return this.agentDefs.get(taskId);
   }
 
+  /**
+   * Mark all running tasks as shutting_down.
+   * Returns the number of tasks affected.
+   */
+  markShuttingDown(): number {
+    let count = 0;
+    for (const [id, task] of this.tasks) {
+      if (task.status === 'running') {
+        task.status = 'shutting_down';
+        task.updatedAt = Date.now();
+        this.tasks.set(id, task);
+        this.pushUpdate(task);
+        count++;
+      }
+    }
+    this.persistToDiskSync();
+    return count;
+  }
+
+  /**
+   * Get the number of active (running or shutting_down) tasks.
+   */
+  getActiveTaskCount(): number {
+    let count = 0;
+    for (const task of this.tasks.values()) {
+      if (task.status === 'running' || task.status === 'shutting_down') {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Wait for all active tasks to complete or reach a terminal state.
+   * @param timeoutMs Maximum time to wait in milliseconds
+   * @returns true if all tasks completed, false if timeout
+   */
+  async waitForAllTasks(timeoutMs: number): Promise<boolean> {
+    const startTime = Date.now();
+    const checkInterval = 500; // Check every 500ms
+
+    while (Date.now() - startTime < timeoutMs) {
+      const activeCount = this.getActiveTaskCount();
+      if (activeCount === 0) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, checkInterval));
+    }
+
+    return false; // Timeout
+  }
+
   destroyAll(): void {
     for (const [id, runner] of this.runners) {
       runner.abort('App shutting down');
       this.runners.delete(id);
 
       const task = this.tasks.get(id);
-      if (task && task.status === 'running') {
+      if (task && (task.status === 'running' || task.status === 'shutting_down')) {
         task.status = 'cancelled';
         task.error = 'App shutting down';
         task.updatedAt = Date.now();
