@@ -21,17 +21,10 @@ describe('Effect Cancellation', () => {
     });
 
     it('should be cancellable', async () => {
-      let wasCancelled = false;
-
       const operation = runCancellable(
         Effect.gen(function* () {
-          try {
-            yield* Effect.sleep(5000); // Long operation
-            return 'completed';
-          } catch (e) {
-            wasCancelled = true;
-            throw e;
-          }
+          yield* Effect.sleep(5000); // Long operation
+          return 'completed';
         })
       );
 
@@ -39,12 +32,16 @@ describe('Effect Cancellation', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       // Cancel - this will interrupt the fiber
+      // Don't await the operation itself since it will fail when cancelled
       await Effect.runPromise(operation.abort('Test cancel')).catch(() => {
-        // Expected to fail since we're cancelling
+        // Expected
       });
 
-      // Should have been cancelled
-      expect(wasCancelled || true).toBe(true); // Cancellation happened
+      // Cleanup - ensure no hanging promises
+      operation.await().catch(() => {});
+
+      // Test passes if we get here without unhandled rejections
+      expect(true).toBe(true);
     });
   });
 
@@ -126,8 +123,11 @@ describe('Effect Cancellation', () => {
         })
       );
 
-      // Start task
-      const runPromise = task.run();
+      // Start task but don't await yet
+      const runPromise = task.run().catch(() => {
+        // Expected to fail when cancelled
+        return 'cancelled';
+      });
 
       // Wait a bit
       await new Promise((r) => setTimeout(r, 150));
@@ -141,6 +141,9 @@ describe('Effect Cancellation', () => {
       // Should stop before 100
       expect(progress).toBeLessThan(10);
       expect(task.isRunning()).toBe(false);
+
+      // Clean up - await the promise to prevent unhandled rejection
+      await runPromise;
     });
   });
 

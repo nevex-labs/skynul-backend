@@ -94,6 +94,16 @@ export const executeShellWithCancellation = (
 
     let stdout = '';
     let stderr = '';
+    let hasResumed = false;
+
+    const safeResume = (
+      effect: Effect.Effect<{ exitCode: number | null; stdout: string; stderr: string }, Error, never>
+    ) => {
+      if (!hasResumed) {
+        hasResumed = true;
+        resume(effect);
+      }
+    };
 
     child.stdout?.on('data', (data: Buffer) => {
       stdout += data.toString();
@@ -104,23 +114,25 @@ export const executeShellWithCancellation = (
     });
 
     child.on('exit', (exitCode) => {
-      resume(Effect.succeed({ exitCode, stdout, stderr }));
+      safeResume(Effect.succeed({ exitCode, stdout, stderr }));
     });
 
     child.on('error', (error) => {
-      resume(Effect.fail(error));
+      safeResume(Effect.fail(error));
     });
 
     // Setup timeout if specified
     if (options.timeout) {
       setTimeout(() => {
-        child.kill('SIGTERM');
+        if (!hasResumed) {
+          child.kill('SIGTERM');
+        }
       }, options.timeout);
     }
 
     // Return cleanup function (called on cancellation)
     return Effect.sync(() => {
-      if (!child.killed) {
+      if (!child.killed && !hasResumed) {
         child.kill('SIGTERM');
         // Force kill after grace period
         setTimeout(() => {
