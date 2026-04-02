@@ -1,4 +1,5 @@
 import { normalize, resolve } from 'path';
+import { STRICT_CONFIG, validateCommand } from './shell/shell-sandbox';
 
 /**
  * Validate and sandbox a file path within allowed roots.
@@ -66,28 +67,12 @@ export function validateUrl(url: string): void {
 }
 
 /**
- * Validate a shell command — block dangerous patterns.
- * Defense-in-depth: not a full sandbox.
+ * Validate a shell command using the sandbox system.
+ * Defense-in-depth with configurable policies.
  */
 export function validateShellCommand(command: string): void {
-  const BLOCKED_COMMANDS = [
-    /\brm\s+(-[rfR]+\s+)?[\/~]/,
-    /\bmkfs\b/,
-    /\bdd\s+.*of=\/dev\//,
-    />\s*\/dev\/sd[a-z]/,
-    /\bshutdown\b/,
-    /\breboot\b/,
-    /\bpasswd\b/,
-    /\buseradd\b/,
-    /\buserdel\b/,
-    /\bchmod\s+[0-7]*777/,
-    /\bcurl\b.*\|\s*(ba)?sh/,
-    /\bwget\b.*\|\s*(ba)?sh/,
-  ];
-
-  for (const pattern of BLOCKED_COMMANDS) {
-    if (pattern.test(command)) {
-      throw new Error(`Blocked: command matches dangerous pattern "${pattern.source}"`);
-    }
+  const result = validateCommand(command, STRICT_CONFIG);
+  if (!result.allowed) {
+    throw new Error(result.reason || `Blocked: ${result.risk} command not allowed`);
   }
 }

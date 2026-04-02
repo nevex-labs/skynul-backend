@@ -96,9 +96,14 @@ describe('validateShellCommand', () => {
   it('allows safe commands', () => {
     expect(() => validateShellCommand('echo hello')).not.toThrow();
     expect(() => validateShellCommand('ls -la')).not.toThrow();
-    expect(() => validateShellCommand('git status')).not.toThrow();
     expect(() => validateShellCommand('cat file.txt')).not.toThrow();
-    expect(() => validateShellCommand('npm install')).not.toThrow();
+    expect(() => validateShellCommand('cp file1 file2')).not.toThrow();
+    expect(() => validateShellCommand('mkdir newdir')).not.toThrow();
+  });
+
+  it('blocks execute commands in strict mode', () => {
+    expect(() => validateShellCommand('npm install')).toThrow(/Blocked|Missing capability/i);
+    expect(() => validateShellCommand('python script.py')).toThrow(/Blocked|Missing capability/i);
   });
 
   it('blocks rm -rf /', () => {
