@@ -1,6 +1,7 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { getMetricsOverview, getTaskMetrics } from '../../core/agent/metrics';
 import { inferTaskSetup } from '../../core/agent/task-inference';
 import { TaskManager } from '../../core/agent/task-manager';
 import { dispatchChat } from '../../core/providers/dispatch';
@@ -158,6 +159,15 @@ const tasks = new Hono()
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
     }
+  })
+  .get('/:id/metrics', (c) => {
+    const id = c.req.param('id');
+    const metrics = getTaskMetrics(id);
+    if (!metrics) return c.json({ error: 'No metrics found for task' }, 404);
+    return c.json({ metrics });
+  })
+  .get('/metrics/overview', (c) => {
+    return c.json({ overview: getMetricsOverview() });
   });
 
 export { tasks };
