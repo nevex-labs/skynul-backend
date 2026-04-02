@@ -792,4 +792,17 @@ export class TaskManager extends EventEmitter {
       // No file or invalid JSON — start fresh
     }
   }
+
+  private async cleanupTaskProcesses(taskId: string): Promise<void> {
+    try {
+      const { getProcessRegistry } = await import('./process-registry');
+      const registry = getProcessRegistry();
+      const result = registry.cleanupTask(taskId);
+      if (result.killed > 0) {
+        console.log(`[TaskManager] Cleaned up ${result.killed} background processes for task ${taskId}`);
+      }
+    } catch (error) {
+      console.error(`[TaskManager] Error cleaning up processes for task ${taskId}:`, error);
+    }
+  }
 }

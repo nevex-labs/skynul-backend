@@ -196,8 +196,14 @@ export async function executeGenerateImage(
   }
 }
 
-/** Execute shell command with timeout. */
-export async function executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<ExecutorResult> {
+/** Execute shell command with timeout and background support. */
+export async function executeShell(
+  command: string,
+  cwd?: string,
+  timeoutMs?: number,
+  taskId?: string,
+  env?: Record<string, string>
+): Promise<ExecutorResult> {
   try {
     validateShellCommand(command);
   } catch (e) {
@@ -205,17 +211,45 @@ export async function executeShell(command: string, cwd?: string, timeoutMs?: nu
   }
 
   // Inject wallet private key as env var for deploy scripts
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  const environment: Record<string, string> = { ...(env || process.env) } as Record<string, string>;
   if (command.includes('DEPLOYER_PRIVATE_KEY') || command.includes('hardhat')) {
     const walletKey = await getSecret('CHAIN_WALLET_PRIVATE_KEY');
-    if (walletKey) env.DEPLOYER_PRIVATE_KEY = walletKey;
+    if (walletKey) environment.DEPLOYER_PRIVATE_KEY = walletKey;
   }
 
+  // Use ProcessRegistry for background execution if taskId is provided
+  if (taskId) {
+    const { getProcessRegistry } = await import('./process-registry');
+    const registry = getProcessRegistry();
+
+    const result = await registry.executeWithTimeout(command, taskId, {
+      cwd,
+      env: environment,
+      timeoutMs,
+      actionType: 'shell',
+    });
+
+    if (result.type === 'background') {
+      return makeResult(
+        `[BACKGROUND] ${result.message}\n\nUse 'check ${result.processId}' to poll status or 'kill ${result.processId}' to terminate.`
+      );
+    }
+
+    // Completed synchronously
+    const out = headTail(result.stdout, 4000);
+    const errOut = result.stderr.slice(0, 1000);
+    if (result.exitCode !== 0) {
+      return makeResult(`[Exit ${result.exitCode}] ${errOut || ''}\n${out}`.trim());
+    }
+    return makeResult(errOut ? `${out}\n[stderr] ${errOut}` : out || '(no output)');
+  }
+
+  // Fallback to simple execution without background support
   return new Promise((resolve) => {
     const timeout = Math.min(timeoutMs ?? 120_000, 300_000);
     const child = exec(
       command,
-      { timeout, maxBuffer: 1024 * 1024, cwd: cwd || undefined, env },
+      { timeout, maxBuffer: 1024 * 1024, cwd: cwd || undefined, env: environment },
       (err: Error | null, stdout: string, stderr: string) => {
         const out = headTail(stdout.toString(), 4000);
         const errOut = stderr.toString().slice(0, 1000);
@@ -915,4 +949,80 @@ export async function resolveAttachments(attachments?: string[]): Promise<{
     }
   }
   return { filePaths, dataUrls };
+}
+
+/** Poll a background process for status and output. */
+export async function pollBackgroundProcess(processId: string): Promise<ExecutorResult> {
+  const { getProcessRegistry } = await import('./process-registry');
+  const registry = getProcessRegistry();
+
+  const result = registry.poll(processId);
+
+  if (!result.found) {
+    return errResult(result.message);
+  }
+
+  const lines: string[] = [`Process: ${processId}`, `Status: ${result.status}`];
+
+  if (result.elapsedMs !== undefined) {
+    lines.push(`Elapsed: ${(result.elapsedMs / 1000).toFixed(1)}s`);
+  }
+
+  if (result.exitCode !== undefined) {
+    lines.push(`Exit code: ${result.exitCode}`);
+  }
+
+  lines.push('', '--- stdout ---');
+  lines.push(result.stdout?.slice(-4000) || '(no output)');
+
+  if (result.stderr) {
+    lines.push('', '--- stderr ---');
+    lines.push(result.stderr.slice(-2000));
+  }
+
+  return makeResult(lines.join('\n'));
+}
+
+/** Kill a background process. */
+export async function killBackgroundProcess(
+  processId: string,
+  signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'
+): Promise<ExecutorResult> {
+  const { getProcessRegistry } = await import('./process-registry');
+  const registry = getProcessRegistry();
+
+  const result = registry.kill(processId, signal);
+
+  if (result.success) {
+    return makeResult(result.message);
+  }
+  return errResult(result.message);
+}
+
+/** List background processes for a task. */
+export async function listBackgroundProcesses(taskId: string): Promise<ExecutorResult> {
+  const { getProcessRegistry } = await import('./process-registry');
+  const registry = getProcessRegistry();
+
+  const processes = registry.getTaskProcesses(taskId);
+
+  if (processes.length === 0) {
+    return makeResult('No background processes for this task.');
+  }
+
+  const lines: string[] = [
+    `Background processes for task:`,
+    '',
+    'ID | Command | Status | Elapsed',
+    '---|---------|--------|--------',
+  ];
+
+  for (const proc of processes) {
+    const elapsed = ((Date.now() - proc.startTime) / 1000).toFixed(1);
+    lines.push(`${proc.id} | ${proc.command.slice(0, 40)} | ${proc.status} | ${elapsed}s`);
+  }
+
+  lines.push('', 'Use "check <id>" to poll a process or "kill <id>" to terminate.');
+
+  return makeResult(lines.join('\n'));
 }
