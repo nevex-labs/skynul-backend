@@ -14,6 +14,7 @@ import { getDataDir } from '../config';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
 import type { AgentRegistry } from './agent-registry';
 import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
+import { recallMemoriesFast } from './memory-recall';
 import {
   closeMemoryDb,
   formatFactsForPrompt,
@@ -208,8 +209,7 @@ export class TaskManager extends EventEmitter {
     const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
 
     const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
-    const memories = memoryEnabled ? searchMemories(task.prompt) : [];
-    const memoryContext = formatMemoriesForPrompt(memories);
+    const memoryContext = memoryEnabled ? recallMemoriesFast(task.prompt, { limit: 5 }) : '';
 
     const facts = memoryEnabled ? searchFacts(task.prompt) : [];
     const factsContext = formatFactsForPrompt(facts);
@@ -503,8 +503,7 @@ export class TaskManager extends EventEmitter {
     const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
 
     const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
-    const memories = memoryEnabled ? searchMemories(task.prompt) : [];
-    const memoryContext = formatMemoriesForPrompt(memories);
+    const memoryContext = memoryEnabled ? recallMemoriesFast(task.prompt, { limit: 5 }) : '';
 
     const facts = memoryEnabled ? searchFacts(task.prompt) : [];
     const factsContext = formatFactsForPrompt(facts);
