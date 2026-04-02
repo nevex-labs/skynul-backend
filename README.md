@@ -29,11 +29,15 @@ Prompt → LLM thinks → Action (click, shell, scrape, ...) → Observe → Rep
 - **Two agent modes** — Browser (headless Chromium via Playwright) and Code (shell + filesystem)
 - **9 LLM providers** — ChatGPT, Claude, Gemini, DeepSeek, Ollama, OpenRouter, Kimi, GLM, MiniMax
 - **5 messaging channels** — Telegram, Discord, Slack, WhatsApp, Signal
-- **Multi-task** — concurrent tasks that can communicate via `task_send` / `task_message`
+- **Multi-task** — concurrent tasks with background process management
 - **Scheduled tasks** — cron-based recurring automation
 - **Custom skills** — injectable system prompts that shape agent behavior
 - **Input guards** — path sandboxing, SSRF protection, dangerous command filtering
+- **Rate limiting** — per-endpoint limits with configurable windows
+- **Graceful shutdown** — proper cleanup of tasks, processes, and connections
+- **Observability** — structured logging with Pino and performance metrics
 - **API-first** — typed REST API with real-time WebSocket events
+- **Production ready** — Docker support, health checks, comprehensive test suite (1029+ tests)
 
 ## Quick start
 
@@ -252,6 +256,27 @@ curl -X PUT http://localhost:3141/api/agent/policy/provider \
 
 Users send messages in their channel, the agent creates a task, runs it, and replies with the result.
 
+## Rate Limiting
+
+Built-in rate limiting protects the API from abuse:
+
+| Endpoint | Limit | Window |
+|----------|-------|--------|
+| `POST /api/tasks` | 10 requests | 1 minute |
+| `POST /api/tasks/:id/message` | 20 requests | 1 minute |
+| `POST /api/tasks/:id/resume` | 5 requests | 1 minute |
+| WebSocket connections | 10 connections | 1 minute per IP |
+| Global API | 100 requests | 1 minute |
+
+Response headers include rate limit status:
+```
+X-RateLimit-Limit: 10
+X-RateLimit-Remaining: 9
+X-RateLimit-Reset: 45
+```
+
+When exceeded, returns `429 Too Many Requests` with `Retry-After` header.
+
 ## Security
 
 | Layer | Details |
@@ -265,22 +290,53 @@ Users send messages in their channel, the agent creates a task, runs it, and rep
 
 ## Deploy
 
+### Docker Compose (Recommended)
+
+```bash
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Start with docker-compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f skynul
+```
+
+Includes Redis for caching and persistent volumes for data.
+
 ### Fly.io
 
 ```bash
 fly launch
 fly deploy
 fly secrets set OPENAI_API_KEY=sk-... SKYNUL_API_TOKEN=your-secret
+
+# For persistent storage (optional):
+# fly volume create skynul_data -r ams -n 1
 ```
 
 ### Docker
 
 ```bash
+# Build
 docker build -t skynul-backend .
-docker run -p 3141:3141 -e OPENAI_API_KEY=sk-... skynul-backend
+
+# Run
+docker run -d \
+  --name skynul \
+  -p 3141:3141 \
+  -e OPENAI_API_KEY=sk-... \
+  -e SKYNUL_API_TOKEN=your-secret \
+  -v skynul-data:/app/data \
+  skynul-backend
+
+# Health check
+curl http://localhost:3141/health
 ```
 
-The app compiles TypeScript with tsup at build time and runs as plain Node.js in production (~281KB bundle).
+The app compiles TypeScript with tsup at build time and runs as plain Node.js in production (~542KB bundle).
 
 ## Environment variables
 
@@ -290,7 +346,23 @@ The app compiles TypeScript with tsup at build time and runs as plain Node.js in
 | `SKYNUL_API_TOKEN` | _(none)_ | Bearer token for API auth |
 | `SKYNUL_ALLOWED_ORIGINS` | _(none)_ | Comma-separated CORS origins |
 | `SKYNUL_DATA_DIR` | `~/.skynul` | Persistent data directory |
+| `SKYNUL_RATE_LIMIT_ENABLED` | `true` | Enable/disable rate limiting |
+| `SKYNUL_RATE_LIMIT_RPM` | `100` | Global rate limit (requests per minute) |
+| `SHUTDOWN_TIMEOUT_MS` | `30000` | Graceful shutdown timeout |
+| `AGENT_LOOP_TIMEOUT_MS` | `60000` | Timeout for waiting agent loops |
 | `NODE_ENV` | `development` | Set `production` to hide error details |
+
+### AI Provider Keys
+
+| Variable | Provider |
+|----------|----------|
+| `OPENAI_API_KEY` | ChatGPT |
+| `ANTHROPIC_API_KEY` | Claude |
+| `GEMINI_API_KEY` | Gemini |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+| `KIMI_API_KEY` | Moonshot |
+| `OPENROUTER_API_KEY` | OpenRouter |
+| `OLLAMA_HOST` | Local Ollama |
 
 ## Development
 

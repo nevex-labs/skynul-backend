@@ -24,6 +24,16 @@ coverage/
 
 .dev.vars
 
+# Data and local storage
+data/
+.skynul/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Junk files
 free-code-main/
 free-code-main.zip
 claw-codes-main.zip
+queries.zip
