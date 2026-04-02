@@ -1,0 +1,139 @@
+# =============================================================================
+# Skynul Backend - Docker Compose
+# Production-ready setup with all services
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ===========================================================================
+  # Main Application
+  # ===========================================================================
+  skynul:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: skynul-backend
+    restart: unless-stopped
+    
+    ports:
+      - "${PORT:-3141}:3141"
+    
+    environment:
+      # Server Configuration
+      - PORT=${PORT:-3141}
+      - NODE_ENV=production
+      
+      # Data & Logging
+      - SKYNUL_DATA_DIR=/app/data
+      - SKYNUL_LOG_LEVEL=${SKYNUL_LOG_LEVEL:-info}
+      - SKYNUL_STREAMING=${SKYNUL_STREAMING:-true}
+      
+      # Security
+      - JWT_SECRET=${JWT_SECRET}
+      - API_KEY=${API_KEY}
+      
+      # AI Providers (set in .env)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      
+      # Optional: Redis for future task queue
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      
+      # Blockchain (optional)
+      - CHAIN_WALLET_PRIVATE_KEY=${CHAIN_WALLET_PRIVATE_KEY}
+      - COINBASE_API_KEY=${COINBASE_API_KEY}
+    
+    volumes:
+      # Persistent data storage
+      - skynul-data:/app/data
+      - skynul-logs:/app/logs
+    
+    networks:
+      - skynul-network
+    
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3141/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ===========================================================================
+  # Redis - For caching and future task queue
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: skynul-redis
+    restart: unless-stopped
+    
+    volumes:
+      - redis-data:/data
+    
+    networks:
+      - skynul-network
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ===========================================================================
+  # Optional: Nginx Reverse Proxy
+  # Uncomment for production with SSL
+  # ===========================================================================
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: skynul-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./nginx/ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - skynul
+  #   networks:
+  #     - skynul-network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  skynul-data:
+    driver: local
+  skynul-logs:
+    driver: local
+  redis-data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  skynul-network:
+    driver: bridge

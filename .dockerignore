@@ -1,25 +1,80 @@
+# Dependencies
 node_modules/
-dist/
+.pnpm-store/
 .pnp/
 .pnp.js
 
+# Build output
+dist/
+*.tsbuildinfo
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Documentation (not needed in production image)
+*.md
+rfcs/
+docs/
+
+# Environment files
 .env
 .env.local
 .env.*.local
+.dev.vars
 
+# Logs
 *.log
 *.tgz
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
+# OS files
 .DS_Store
 Thumbs.db
 
-coverage/
-.nyc_output/
-
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 
-.dev.vars
+# Test files
+coverage/
+.nyc_output/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Large files not needed in production
+free-code-main/
+*.zip
+*.tar.gz
+*.tar
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Database files (use volume instead)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+data/
+
+# Development tools
+.eslintrc*
+.prettierrc*
+.vitest/
+vitest.config.ts.timestamp-*
+
+# Flynn/Fly.io (separate deployment)
+fly.toml
