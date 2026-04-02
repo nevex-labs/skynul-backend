@@ -14,6 +14,7 @@ import type { ProviderId } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import { childLogger } from '../../logger';
 import { type ParserState, parseModelResponse } from '../action-parser';
+import { attemptRecovery, autoCompact, isContextLengthError, snipHistory } from '../compaction';
 import { computeBudget } from '../context-budget';
 import { formatError } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
@@ -101,19 +102,63 @@ export async function runAgentLoop(
       ],
     };
 
+    // Layer 2: Snip compaction — remove oldest messages when context exceeds threshold
+    if (budget.applyLevel2 || budget.applyLevel3) {
+      const snipResult = snipHistory(history, budget.usedTokens, budget.maxTokens);
+      if (snipResult.snipped) {
+        log.info(
+          {
+            step: stepIndex,
+            removed: snipResult.removedCount,
+            tokensBefore: snipResult.tokensBefore,
+            tokensAfter: snipResult.tokensAfter,
+          },
+          'Snip compaction applied'
+        );
+
+        // Re-inject file references if any were found
+        if (snipResult.fileReferences.length > 0) {
+          const reinjectMsg = {
+            role: 'user' as const,
+            content: [
+              {
+                type: 'input_text' as const,
+                text: `[PRESERVED CONTEXT]\nFiles referenced in removed conversation:\n${snipResult.fileReferences
+                  .slice(0, 10)
+                  .map((r) => `- ${r}`)
+                  .join('\n')}\n[/PRESERVED CONTEXT]`,
+              },
+            ],
+          };
+          history.splice(history.length - 1, 0, reinjectMsg);
+        }
+      }
+    }
+
+    // Layer 3: Auto-compact — LLM-driven summarization when context pressure is critical
+    if (budget.applyLevel3) {
+      try {
+        const compactResult = await autoCompact(history, budget.usedTokens, budget.maxTokens, provider, task.id);
+        if (compactResult.compacted) {
+          log.info(
+            {
+              step: stepIndex,
+              removed: compactResult.removedCount,
+              tokensSaved: compactResult.tokensBefore - compactResult.tokensAfter,
+            },
+            'Auto-compact applied'
+          );
+        }
+      } catch (compactError) {
+        log.warn({ step: stepIndex, error: compactError }, 'Auto-compact failed');
+      }
+    }
+
+    // Legacy compaction (kept as fallback)
     if (history.length > 20) {
       truncateHistory(history, 19);
     } else {
       compressHistory(history, 6);
-    }
-
-    // Level 3: LLM-driven summarization when context pressure is critical
-    if (budget.applyLevel3) {
-      try {
-        await summarizeHistory(history, provider, task.id);
-      } catch {
-        // Non-critical: L3 failure doesn't break the loop
-      }
     }
 
     history.push(turnMessage);
@@ -191,8 +236,58 @@ export async function runAgentLoop(
           return finish(task, 'cancelled', callbacks, task.error);
         }
         const rawError = e instanceof Error ? e.message : String(e);
-        const formatted = formatError(rawError);
-        return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
+
+        // Reactive 413 recovery: try compaction strategies
+        if (isContextLengthError(e)) {
+          log.warn({ step: stepIndex, error: rawError }, 'Context length error detected, attempting recovery');
+          callbacks.pushStatus('Compacting context...');
+
+          const recovery = await attemptRecovery(
+            e,
+            history,
+            budget.usedTokens,
+            budget.maxTokens,
+            provider,
+            openaiModel,
+            task.id
+          );
+
+          if (recovery.recovered) {
+            log.info({ step: stepIndex, attempts: recovery.attempts.length }, 'Context recovery successful, retrying');
+            // Retry the vision call with compacted history
+            try {
+              const result = await callVision(
+                provider,
+                activeSystemPrompt,
+                history,
+                task.id,
+                recovery.fallbackModel || openaiModel
+              );
+              rawResponse = result.text;
+              usage = result.usage;
+            } catch (retryError) {
+              const retryRawError = retryError instanceof Error ? retryError.message : String(retryError);
+              const formatted = formatError(retryRawError);
+              return finish(
+                task,
+                'failed',
+                callbacks,
+                `Context recovery failed: [${formatted.code}] ${formatted.userMessage}`
+              );
+            }
+          } else {
+            const formatted = formatError(rawError);
+            return finish(
+              task,
+              'failed',
+              callbacks,
+              `[${formatted.code}] ${formatted.userMessage}\n\nRecovery attempts failed after ${recovery.attempts.length} strategies.`
+            );
+          }
+        } else {
+          const formatted = formatError(rawError);
+          return finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
+        }
       }
 
       if (callbacks.isAborted()) {
