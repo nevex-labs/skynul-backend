@@ -14,6 +14,7 @@
 
 import type { ProviderId } from '../../types';
 import { childLogger } from '../logger';
+import { getSummarizationModel } from './compaction/auto-compact';
 import { type Observation, getRecentObservations, searchObservations } from './task-memory';
 
 const logger = childLogger({ component: 'memory-recall' });
@@ -115,7 +116,7 @@ export async function rankMemoriesWithLLM(
       prompt,
       [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
       'memory-recall',
-      'claude-haiku-4-5'
+      getSummarizationModel(provider)
     );
 
     const jsonMatch = result.text.match(/\{[\s\S]*\}/);
