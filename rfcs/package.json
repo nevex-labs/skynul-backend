@@ -1,0 +1,19 @@
+{
+  "name": "effect-spike",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Spike para evaluar Effect.js - RFC #14",
+  "dependencies": {
+    "effect": "^3.0.0",
+    "@effect/platform": "^0.50.0",
+    "@effect/platform-node": "^0.45.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "tsx": "^4.0.0"
+  },
+  "scripts": {
+    "test": "tsx spike-effect-json-detector.ts",
+    "benchmark": "tsx -- benchmark.ts"
+  }
+}
