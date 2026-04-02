@@ -326,3 +326,167 @@ export function _initPaperDbForTest(): void {
   _testDb.pragma('journal_mode = WAL');
   _testDb.exec(PAPER_PORTFOLIO_SCHEMA);
 }
+
+// ── Realistic Paper Trading Simulation ───────────────────────────────────────
+
+export interface SwapSimulationParams {
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: number;
+  chainId?: 'base' | 'ethereum' | 'solana';
+  liquidityUsd?: number; // If available from DexScreener
+}
+
+export interface SwapSimulationResult {
+  amountOut: number;
+  slippagePercent: number;
+  priceImpactPercent: number;
+  dexFeePercent: number;
+  gasCostUsd: number;
+  executionDelayMs: number;
+  effectivePrice: number;
+  details: string;
+}
+
+// Lazy-loaded simulator instance (Clean Architecture: depend on abstraction)
+interface TradingCostSimulatorLike {
+  simulateWithLiquidity(
+    params: unknown,
+    liquidityUsd: number
+  ): {
+    expectedOutput: number;
+    gasCostUsd: number;
+    details: Array<{ type: string; percent: number; description: string }>;
+  };
+}
+
+let _simulator: TradingCostSimulatorLike | null = null;
+
+async function getSimulator(): Promise<TradingCostSimulatorLike> {
+  if (!_simulator) {
+    const { createRealisticTradingSimulator } = await import('../trading-costs');
+    _simulator = createRealisticTradingSimulator(undefined, false) as TradingCostSimulatorLike;
+  }
+  return _simulator;
+}
+
+/**
+ * Simulate a realistic DEX swap with slippage, price impact, fees, and gas.
+ * Uses Clean Architecture with real market data from Etherscan, Uniswap, Chainlink.
+ */
+export async function simulateRealisticSwap(params: SwapSimulationParams): Promise<SwapSimulationResult> {
+  const { tokenIn, tokenOut, amountIn, chainId = 'base' } = params;
+
+  // Import types dynamically to avoid circular dependencies
+  const { CHAIN_CONFIGS, createTokenProfile } = await import('../trading-costs');
+
+  // Map chain ID to config
+  const chainMap: Record<string, string> = {
+    base: 'BASE',
+    ethereum: 'ETHEREUM',
+    solana: 'SOLANA',
+  };
+  const chain = CHAIN_CONFIGS[chainMap[chainId] ?? 'BASE'];
+
+  // Create token profiles
+  const tokenInProfile = createTokenProfile(tokenIn, tokenIn);
+  const tokenOutProfile = createTokenProfile(tokenOut, tokenOut);
+
+  // Build trade parameters
+  const tradeParams = {
+    amountIn,
+    tokenIn: tokenInProfile,
+    tokenOut: tokenOutProfile,
+    chain,
+    urgency: 'medium' as const,
+  };
+
+  // Use the realistic simulator
+  const simulator = await getSimulator();
+  const costs = simulator.simulateWithLiquidity(
+    tradeParams,
+    params.liquidityUsd ?? tokenOutProfile.typicalLiquidityUsd
+  );
+
+  // Map to legacy interface for backwards compatibility
+  const executionDelayMs = 10000 + Math.random() * 20000;
+
+  // Extract individual components from details
+  const dexFeeDetail = costs.details.find((d: { type: string }) => d.type === 'dex_fee');
+  const slippageDetail = costs.details.find((d: { type: string }) => d.type === 'slippage');
+  const impactDetail = costs.details.find((d: { type: string }) => d.type === 'price_impact');
+
+  return {
+    amountOut: costs.expectedOutput,
+    slippagePercent: slippageDetail?.percent ?? 0.5,
+    priceImpactPercent: impactDetail?.percent ?? 0.5,
+    dexFeePercent: dexFeeDetail?.percent ?? 0.3,
+    gasCostUsd: costs.gasCostUsd,
+    executionDelayMs,
+    effectivePrice: amountIn / costs.expectedOutput,
+    details: costs.details.map((d: { description: string }) => d.description).join(' | '),
+  };
+}
+
+/**
+ * Get simulated liquidity for a token pair.
+ * In production, this would come from DexScreener or similar.
+ */
+export function estimateLiquidity(tokenIn: string, tokenOut: string): number {
+  // Check if we have cached liquidity data
+  const cacheKey = `liquidity:${tokenIn}:${tokenOut}`;
+
+  // For now, use reasonable defaults based on token type
+  // In production, fetch from DexScreener.getLiquidity()
+  if (tokenIn === 'USDC' || tokenOut === 'USDC') {
+    // USDC pairs usually have good liquidity
+    return 500000 + Math.random() * 500000; // $500K - $1M
+  }
+
+  if (tokenIn === 'ETH' || tokenOut === 'ETH' || tokenIn === 'WETH' || tokenOut === 'WETH') {
+    // ETH pairs have good liquidity
+    return 1000000 + Math.random() * 2000000; // $1M - $3M
+  }
+
+  // Meme coins / new tokens have lower liquidity
+  return 50000 + Math.random() * 150000; // $50K - $200K
+}
+
+/**
+ * Record a realistic paper swap with full cost breakdown.
+ */
+export async function recordRealisticPaperSwap(
+  taskId: string,
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: number,
+  chainId?: 'base' | 'ethereum' | 'solana'
+): Promise<SwapSimulationResult & { orderId: string }> {
+  const liquidityUsd = estimateLiquidity(tokenIn, tokenOut);
+
+  const simulation = await simulateRealisticSwap({
+    tokenIn,
+    tokenOut,
+    amountIn,
+    chainId,
+    liquidityUsd,
+  });
+
+  // Adjust balances with realistic amounts
+  adjustPaperBalance(tokenIn, -amountIn);
+  adjustPaperBalance(tokenOut, simulation.amountOut);
+
+  // Record the trade with detailed info
+  const orderId = recordPaperTrade({
+    task_id: taskId,
+    venue: `chain:${chainId || 'base'}`,
+    action_type: 'chain_swap_realistic',
+    symbol: `${tokenIn}->${tokenOut}`,
+    side: 'buy',
+    price: simulation.effectivePrice,
+    size: simulation.amountOut,
+    amount_usd: amountIn - simulation.gasCostUsd,
+  });
+
+  return { ...simulation, orderId };
+}

@@ -737,17 +737,23 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
       case 'chain_swap': {
         const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
         const amtIn = Number(a.amountIn);
-        adjustPaperBalance(a.tokenIn, -amtIn);
-        adjustPaperBalance(a.tokenOut, amtIn); // 1:1 simulation
-        const orderId = recordPaperTrade({
-          task_id: ctx.task.id,
-          venue: 'chain',
-          action_type: 'chain_swap',
-          symbol: `${a.tokenIn}->${a.tokenOut}`,
-          size: amtIn,
-        });
-        const hash = `0xpaper${orderId.replace(/-/g, '').slice(0, 40)}`;
-        return result(`[PAPER] Swap executed. Tx: ${hash} | Status: success | Block: 99999`);
+
+        // Use realistic simulation instead of 1:1
+        const { recordRealisticPaperSwap } = await import('./paper-portfolio');
+        const simulation = await recordRealisticPaperSwap(
+          ctx.task.id,
+          a.tokenIn,
+          a.tokenOut,
+          amtIn,
+          'base' // Default to Base, could be dynamic based on ctx
+        );
+
+        const hash = `0xpaper${simulation.orderId.replace(/-/g, '').slice(0, 40)}`;
+        return result(
+          `[PAPER] Swap executed. Tx: ${hash} | Status: success | Block: 99999\n` +
+            `Input: ${amtIn.toFixed(2)} ${a.tokenIn} | Output: ${simulation.amountOut.toFixed(2)} ${a.tokenOut}\n` +
+            `${simulation.details}`
+        );
       }
       case 'chain_get_tx_status': {
         const a = action as Extract<TaskAction, { type: 'chain_get_tx_status' }>;
