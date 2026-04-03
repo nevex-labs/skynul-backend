@@ -539,7 +539,13 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
 
 /** Execute on-chain trading actions. */
 export async function executeChainAction(ctx: ExecutorContext, action: TaskAction): Promise<ExecutorResult> {
-  if (!ctx.task.capabilities.includes('onchain.trading')) {
+  const isDeployAction = action.type === 'chain_deploy_token';
+  const hasOnchain = ctx.task.capabilities.includes('onchain.trading');
+  const hasTokenDeploy = ctx.task.capabilities.includes('token.deploy');
+  if (isDeployAction && !hasTokenDeploy && !hasOnchain) {
+    return errResult('Token deploy capability is not enabled for this task. Enable it in Capabilities settings.');
+  }
+  if (!isDeployAction && !hasOnchain) {
     return errResult('On-chain trading capability is not enabled for this task. Enable it in Capabilities settings.');
   }
 
@@ -552,6 +558,7 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
     'chain_send_token',
     'chain_swap',
     'chain_get_tx_status',
+    'chain_deploy_token',
   ];
   if (!chainTypes.includes(action.type)) {
     return errResult(`Unknown chain action: ${(action as any).type}`);
@@ -602,6 +609,11 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
       case 'chain_get_tx_status': {
         const a = action as Extract<TaskAction, { type: 'chain_get_tx_status' }>;
         return result(`[PAPER] Tx ${a.txHash}: success (block 99999)`);
+      }
+      case 'chain_deploy_token': {
+        const a = action as Extract<TaskAction, { type: 'chain_deploy_token' }>;
+        const fakeAddr = `0xpaper${a.symbol.toLowerCase().padEnd(40, '0').slice(0, 40)}`;
+        return result(`[PAPER] Token "${a.name}" (${a.symbol}) deployed at ${fakeAddr} | Supply: ${a.supply}`);
       }
       default:
         return errResult(`Unknown chain action`);
@@ -677,6 +689,21 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
         return errResult(String(e instanceof Error ? e.message : e));
       }
     }
+    case 'chain_deploy_token': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_deploy_token' }>;
+        const deployResult = await client.deployToken({
+          name: a.name,
+          symbol: a.symbol,
+          supply: a.supply,
+        });
+        return result(
+          `Token "${a.name}" (${a.symbol}) deployed!\nContract: ${deployResult.contractAddress}\nTx: ${deployResult.hash}\nExplorer: ${deployResult.explorerUrl}`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
     default:
       return errResult(`Unknown chain action`);
   }
@@ -728,7 +755,7 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
 
   const { BinanceClient } = await import('../cex/binance-client');
   const { CoinbaseClient } = await import('../cex/coinbase-client');
-  const { FeeService, FEE_USDC } = await import('../chain/fee-service');
+  const { FeeService } = await import('../chain/fee-service');
 
   const mode = ctx.paperMode ? 'paper' : 'live';
   let client: any;
@@ -849,7 +876,7 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
         if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
         const netAmount = FeeService.deductFeeFromAmount(a.amount);
         if (netAmount <= 0) {
-          return errResult(`Order amount too small after fee deduction (fee: ${FEE_USDC} USDC).`);
+          return errResult('Order amount too small.');
         }
         const res = await client.placeOrder({
           symbol: a.symbol,

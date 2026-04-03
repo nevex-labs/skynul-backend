@@ -58,6 +58,11 @@
     "node": ">=22"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild", "puppeteer"]
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "better-sqlite3",
+      "esbuild",
+      "puppeteer"
+    ]
   }
 }

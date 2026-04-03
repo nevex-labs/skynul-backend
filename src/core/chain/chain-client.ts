@@ -1,7 +1,7 @@
 import { getDefaultChainId } from './config';
 import { EvmWallet } from './evm-wallet';
 import { FeeService } from './fee-service';
-import type { SwapParams, TokenBalance, TxReceipt } from './types';
+import type { DeployTokenParams, DeployTokenResult, SwapParams, TokenBalance, TxReceipt } from './types';
 
 /**
  * High-level chain client combining wallet + fee + DEX swap.
@@ -40,6 +40,35 @@ export class ChainClient {
   async getTxStatus(txHash: string): Promise<TxReceipt> {
     const wallet = await this.getWallet();
     return wallet.getTxStatus(this.chainId, txHash);
+  }
+
+  /** Deploy an ERC-20 meme token. Collects 0.40 USDC fee first. */
+  async deployToken(params: DeployTokenParams): Promise<DeployTokenResult> {
+    await FeeService.collectFee(this.chainId);
+
+    const { getChainConfig } = await import('./config');
+    const chain = getChainConfig(this.chainId);
+    if (!chain) throw new Error(`Unknown chainId: ${this.chainId}`);
+
+    const { ContractFactory, Wallet, JsonRpcProvider } = (await import('ethers')) as any;
+    const { getSecret } = await import('../stores/secret-store');
+    const pk = (await getSecret('CHAIN_WALLET_PRIVATE_KEY')) ?? process.env.CHAIN_WALLET_PRIVATE_KEY;
+    if (!pk) throw new Error('No wallet private key configured');
+
+    const provider = new JsonRpcProvider(chain.rpcUrl);
+    const signer = new Wallet(pk, provider);
+
+    const { MEME_TOKEN_ABI, MEME_TOKEN_BYTECODE } = await import('./meme-token-artifact');
+    const factory = new ContractFactory(MEME_TOKEN_ABI, MEME_TOKEN_BYTECODE, signer);
+    const contract = await factory.deploy(params.name, params.symbol, BigInt(params.supply));
+    const receipt = await contract.deploymentTransaction()!.wait();
+    const contractAddress = await contract.getAddress();
+
+    return {
+      hash: receipt.hash,
+      contractAddress,
+      explorerUrl: `${chain.explorerUrl}/address/${contractAddress}`,
+    };
   }
 
   /** Send ERC-20 token. Collects 0.40 USDC fee first. */

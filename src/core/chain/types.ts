@@ -24,6 +24,18 @@ export type TxReceipt = {
   blockNumber?: number;
 };
 
+export type DeployTokenParams = {
+  name: string;
+  symbol: string;
+  supply: string; // total supply as integer string, e.g. "1000000000000"
+};
+
+export type DeployTokenResult = {
+  hash: string;
+  contractAddress: string;
+  explorerUrl: string;
+};
+
 export type SwapParams = {
   tokenIn: string;
   tokenOut: string;

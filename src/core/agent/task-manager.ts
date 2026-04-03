@@ -92,7 +92,7 @@ function pickAgentName(role: string, seed: string): string {
 const MAX_CONCURRENT: Record<string, number> = {
   browser: isPerTaskBrowserSessionMode(parseBrowserSessionMode()) ? 1 : 5,
   code: 10,
-  cdp: isPerTaskBrowserSessionMode(parseBrowserSessionMode()) ? 1 : 5,
+  cdp: 5,
   orchestrator: 3,
 };
 
@@ -400,7 +400,7 @@ export class TaskManager extends EventEmitter {
   sendMessage(targetTaskId: string, fromTaskId: string, message: string): void {
     const target = this.tasks.get(targetTaskId);
     if (!target) throw new Error(`Task not found: ${targetTaskId}`);
-    if (target.status !== 'running') throw new Error(`Task ${targetTaskId} is not running (status: ${target.status})`);
+    if (target.status !== 'running' && target.status !== 'monitoring') throw new Error(`Task ${targetTaskId} is not active (status: ${target.status})`);
 
     let inbox = this.inboxes.get(targetTaskId);
     if (!inbox) {
@@ -418,6 +418,13 @@ export class TaskManager extends EventEmitter {
     });
     task.updatedAt = Date.now();
     this.pushUpdate(task);
+
+    // If task was monitoring, reactivate the loop so the agent processes the message
+    if (target.status === 'monitoring' && !this.runners.has(targetTaskId)) {
+      void this.resume(targetTaskId, message).catch((e) => {
+        console.error(`[task-manager] failed to resume monitoring task ${targetTaskId}:`, e);
+      });
+    }
   }
 
   drainMessages(taskId: string): Array<{ from: string; message: string }> {
@@ -434,8 +441,8 @@ export class TaskManager extends EventEmitter {
    */
   async resume(taskId: string, message: string): Promise<Task> {
     const task = this.getOrThrow(taskId);
-    const terminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
-    if (!terminal) throw new Error(`Task ${taskId} is still ${task.status}, use sendMessage instead`);
+    const canResume = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'monitoring';
+    if (!canResume) throw new Error(`Task ${taskId} is still ${task.status}, use sendMessage instead`);
     if (this.runners.has(taskId)) throw new Error(`Task ${taskId} already has an active runner`);
 
     // Build conversation context from previous steps (kept separate from task.prompt)

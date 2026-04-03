@@ -200,15 +200,63 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
   const webTargets = ['amazon', 'mercadolibre', 'airbnb', 'despegar'];
   if (hasUrl || hasAny(p, webActionVerbs) || hasAny(p, webTargets)) caps.add('browser.cdp');
 
-  // Trading
+  // Trading — generic keywords that signal trading intent for BOTH onchain & CEX
+  const genericTradingKeywords = [
+    'trade', 'trading', 'scalping', 'scalp', 'swing', 'long', 'longs', 'short', 'shorts',
+    'profit', 'take profit', 'stop loss', 'leverage', 'margin',
+    'comprar', 'vender', 'tradear', 'operar',
+  ];
+
+  // DEX / on-chain specific
+  const onchainKeywords = [
+    'swap', 'dex', 'onchain', 'on-chain', 'defi', 'base chain', 'weth', 'send eth', 'send usdc',
+    // DEXes
+    'uniswap', 'sushiswap', 'pancakeswap', 'curve', 'balancer', 'aerodrome', 'velodrome',
+    'raydium', 'jupiter', 'orca', 'trader joe', 'camelot', 'gmx', 'dydx',
+    'paraswap', '1inch', 'kyberswap', 'maverick', 'ambient', 'thruster',
+  ];
+
+  // CEX specific
+  const cexKeywords = [
+    'cex', 'spot order', 'limit order', 'market order', 'futures',
+    // Major CEXes
+    'binance', 'coinbase', 'kraken', 'bybit', 'okx', 'kucoin', 'gate.io', 'gateio',
+    'bitfinex', 'bitstamp', 'gemini', 'crypto.com', 'htx', 'huobi', 'mexc', 'bitget',
+    'phemex', 'bingx', 'lbank', 'backpack', 'hyperliquid', 'vertex', 'aevo',
+  ];
+
   if (hasAny(p, ['polymarket', 'poly market', 'prediction market', 'poly-market'])) caps.add('polymarket.trading');
-  if (hasAny(p, ['swap', 'dex', 'onchain', 'defi', 'uniswap', 'base chain', 'weth', 'send eth', 'send usdc'])) {
+
+  const isGenericTrading = hasAny(p, genericTradingKeywords);
+  const isOnchain = hasAny(p, onchainKeywords);
+  const isCex = hasAny(p, cexKeywords);
+
+  if (isOnchain) caps.add('onchain.trading');
+  if (isCex) caps.add('cex.trading');
+
+  // Generic trading words without a specific venue → enable both so the agent can decide
+  if (isGenericTrading && !isOnchain && !isCex && !caps.has('polymarket.trading')) {
     caps.add('onchain.trading');
+    caps.add('cex.trading');
   }
-  if (hasAny(p, ['binance', 'coinbase', 'cex', 'spot order', 'limit order', 'market order'])) caps.add('cex.trading');
+  const isTokenIntent = hasAny(p, [
+    'deploy token', 'launch token', 'create token', 'meme token', 'token meme',
+    'meme coin', 'memecoin', 'memetoken', 'shitcoin',
+    'lanzar token', 'lanzar un token', 'lanzar una crypto', 'lanzar una cripto',
+    'lanzar memecoin', 'lanzar una memecoin', 'lanzar un memecoin',
+    'crear token', 'crear un token', 'crear una crypto', 'crear una cripto',
+    'crear memecoin', 'crear una memecoin', 'crear un memecoin',
+    'nuevo token', 'largar token', 'largar un token',
+    'cripto meme', 'crypto meme',
+    'launch a token', 'deploy a token', 'create a token',
+    'launch memecoin', 'launch a memecoin', 'deploy memecoin',
+    'hacer un token', 'hacer una crypto', 'hacer una cripto',
+    'mi propio token', 'mi propia crypto', 'mi propia cripto',
+  ]);
+  if (isTokenIntent) caps.add('token.deploy');
 
   // Apps / Office / Creative tooling (brands are useful regardless of UI language)
-  if (hasAny(p, ['launch', 'open app', 'whatsapp', 'telegram', 'discord', 'slack', 'spotify'])) caps.add('app.launch');
+  if (!isTokenIntent && hasAny(p, ['launch', 'open app', 'whatsapp', 'telegram', 'discord', 'slack', 'spotify'])) caps.add('app.launch');
   if (hasAny(p, ['excel', 'word', 'powerpoint', 'spreadsheet', 'document', 'formatting']))
     caps.add('office.professional');
   if (
@@ -242,7 +290,7 @@ function inferModeRules(prompt: string, capabilities: TaskCapabilityId[], attach
   if (isInformationQuestion(prompt)) return 'code';
 
   // If it's explicitly a trading task, we treat it as browser-mode entrypoint (TaskRunner will route to CDP).
-  if (capabilities.some((c) => c.endsWith('.trading'))) return 'browser';
+  if (capabilities.some((c) => c.endsWith('.trading') || c === 'token.deploy')) return 'browser';
 
   // Strong code signals
   const codeSignals = [
@@ -301,7 +349,7 @@ export function inferTaskSetupRules(input: TaskInferenceInput): TaskInferenceRes
   const p = normalizePrompt(input.prompt);
   let confidence = 0.4;
   if (isSimpleMathPrompt(input.prompt) || isInformationQuestion(input.prompt)) confidence = 0.95;
-  else if (capabilities.some((c) => c.endsWith('.trading'))) confidence = 0.95;
+  else if (capabilities.some((c) => c.endsWith('.trading')) || capabilities.includes('token.deploy')) confidence = 0.95;
   else if (
     capabilities.includes('app.scripting') ||
     capabilities.includes('office.professional') ||

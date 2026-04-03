@@ -73,7 +73,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
     content: [
       {
         type: 'input_text',
-        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}\n\nACT NOW. Start with an API call (e.g. check balance). Do NOT respond with questions or "done".`,
+        text: `Task: ${task.prompt}${attachmentsBlock}${memCtxCdp}`,
       },
       ...imageDataUrls.slice(0, 4).map((url) => ({
         type: 'input_image' as const,
@@ -93,7 +93,7 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         if (task.capabilities.includes('cex.trading')) activeModes.push('cex_* actions');
         const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
         return {
-          text: `Task: ${task.prompt}\n\nYou are in API-only mode. Use ${modeStr} directly. Do NOT use shell, navigate, or evaluate.\n\nCRITICAL: You are an AUTONOMOUS agent. Do NOT ask the user questions. Do NOT call "done" to ask for clarification. If the user gave you enough context to act, START IMMEDIATELY with the first action (e.g. check balance). Infer reasonable defaults for anything not specified. Your first action should ALWAYS be an API call, never "done" or "fail".`,
+          text: `Task: ${task.prompt}\n\nYou are in API-only mode with ${modeStr} available. Do NOT use shell, navigate, or evaluate. Do NOT ask the user questions or call "done" to clarify.\n\nFollow PHASE 0 from your system prompt FIRST: analyze the user's goal, timeframe, and strategy in your thought BEFORE taking any action. Then proceed to PHASE 1.`,
         };
       }
       // Level 1: reduce action log when context pressure is high
@@ -103,7 +103,20 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
         truncateError: 100,
       });
       const inbox = drainInbox(taskManager, task.id);
-      return { text: `Step $stepIndex + 1.$actionLog$inbox` };
+
+      // Nudge: if agent has done 5+ steps without placing an order, push to execute
+      let nudge = '';
+      if (stepIndex >= 5) {
+        const types = task.steps.map((s) => s.action?.type).filter(Boolean);
+        const hasOrder = types.some((t) =>
+          t === 'polymarket_place_order' || t === 'cex_place_order' || t === 'chain_swap'
+        );
+        if (!hasOrder) {
+          nudge = `\n\n⚠️ You have completed ${stepIndex} steps without placing a trade. STOP searching. You have enough data. Pick the best opportunity from what you already found and EXECUTE the trade NOW.`;
+        }
+      }
+
+      return { text: `Step ${stepIndex + 1}.${actionLog}${inbox}${nudge}` };
     },
     recordStep() {
       task.updatedAt = Date.now();
@@ -160,7 +173,8 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     case 'chain_get_token_balance':
     case 'chain_send_token':
     case 'chain_swap':
-    case 'chain_get_tx_status': {
+    case 'chain_get_tx_status':
+    case 'chain_deploy_token': {
       const res = await executeChainAction(ctx, action);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }

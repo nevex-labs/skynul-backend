@@ -30,6 +30,7 @@ export const TASK_CAPABILITY_IDS = [
   'app.scripting',
   'onchain.trading',
   'cex.trading',
+  'token.deploy',
 ] as const;
 
 export type TaskCapabilityId = (typeof TASK_CAPABILITY_IDS)[number];
@@ -65,6 +66,11 @@ export const ALL_TASK_CAPABILITIES: Array<{
     id: 'cex.trading',
     title: 'CEX Trading',
     desc: 'Trade on centralized exchanges (Binance, Coinbase).',
+  },
+  {
+    id: 'token.deploy',
+    title: 'Token Deploy',
+    desc: 'Deploy ERC-20 tokens on EVM chains (Base, Ethereum, BSC).',
   },
 ];
 
@@ -202,6 +208,7 @@ export type TaskAction =
   | { type: 'chain_send_token'; chainId?: number; tokenAddress: string; to: string; amount: string }
   | { type: 'chain_swap'; chainId?: number; tokenIn: string; tokenOut: string; amountIn: string; slippageBps?: number }
   | { type: 'chain_get_tx_status'; chainId?: number; txHash: string }
+  | { type: 'chain_deploy_token'; chainId?: number; name: string; symbol: string; supply: string }
   // CEX trading actions (require cex.trading capability)
   | { type: 'cex_get_balance'; exchange: import('./trading').CexExchangeId }
   | {

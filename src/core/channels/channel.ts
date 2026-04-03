@@ -1,6 +1,8 @@
 import { stat } from 'fs/promises';
 import type { ChannelId, ChannelSettings, Task, TaskSource } from '../../types';
-import { inferTaskSetupRules } from '../agent/task-inference';
+import { inferTaskSetup } from '../agent/task-inference';
+import { dispatchChat } from '../providers/dispatch';
+import { policyState } from '../../routes/agent/policy';
 import type { TaskManager } from '../agent/task-manager';
 import type { ChannelManager } from './channel-manager';
 import { formatTaskComplete, formatTaskFailed, formatTaskSummary } from './message-formatter';
@@ -19,6 +21,7 @@ export abstract class Channel {
   abstract readonly id: ChannelId;
   protected taskManager: TaskManager;
   protected channelManager: ChannelManager | null = null;
+  private lastTaskId: string | null = null;
 
   constructor(taskManager: TaskManager) {
     this.taskManager = taskManager;
@@ -107,9 +110,46 @@ export abstract class Channel {
     }
   }
 
-  /** Helper: create a task from an incoming message. Auto-approves if global setting is ON. */
+  /**
+   * Check if the last task from this channel finished asking for info (no real execution).
+   * If so, the next message is likely a reply → resume instead of creating a new task.
+   */
+  private getResumableTask(): Task | null {
+    if (!this.lastTaskId) return null;
+    const task = this.taskManager.get(this.lastTaskId);
+    if (!task) return null;
+
+    const terminal = task.status === 'completed' || task.status === 'failed';
+    if (!terminal) return null;
+
+    // Check if the task ended without executing any real action (just asked for info)
+    const realActionTypes = new Set([
+      'chain_swap', 'chain_send_token', 'chain_deploy_token',
+      'cex_place_order', 'cex_cancel_order', 'cex_withdraw',
+      'polymarket_place_order', 'polymarket_close_position',
+      'navigate', 'click', 'type', 'shell',
+    ]);
+    const didRealWork = task.steps.some((s) => realActionTypes.has(s.action?.type));
+    if (didRealWork) return null;
+
+    return task;
+  }
+
+  /** Helper: create a task from an incoming message, or resume the last one if it was waiting for info. */
   protected async createTaskFromMessage(prompt: string): Promise<Task> {
-    const inferred = inferTaskSetupRules({ prompt });
+    // If the last task ended asking for data, resume it with this message
+    const resumable = this.getResumableTask();
+    if (resumable) {
+      this.lastTaskId = resumable.id;
+      const resumed = await this.taskManager.resume(resumable.id, prompt);
+      return resumed;
+    }
+
+    const inferred = await inferTaskSetup({
+      input: { prompt },
+      strategy: 'auto',
+      chat: (messages) => dispatchChat(policyState.provider.active, messages),
+    });
 
     const task = this.taskManager.create({
       prompt,
@@ -118,12 +158,10 @@ export abstract class Channel {
       source: this.id as TaskSource,
     });
 
+    this.lastTaskId = task.id;
+
     const autoApprove = this.channelManager?.isAutoApprove() ?? true;
     if (autoApprove) {
-      // Only send ack for tasks that will take time (have capabilities = real work)
-      if (inferred.capabilities.length > 0) {
-        await this.sendMessage('Dale, ya lo estoy haciendo.');
-      }
       await this.taskManager.approve(task.id);
     } else {
       await this.sendMessage('Tarea creada, aprobala desde la app.');

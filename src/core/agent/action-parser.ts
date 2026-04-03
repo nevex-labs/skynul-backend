@@ -13,7 +13,7 @@ type ModelResponse = {
 
 export type ParserState = { consecutiveTruncations: number };
 
-const MAX_TRUNCATION_RETRIES = 2;
+const MAX_TRUNCATION_RETRIES = 4;
 
 /** Regex that matches status-log noise (allows optional · and whitespace/newlines). */
 const NOISE_REGEX =
@@ -61,7 +61,8 @@ export function parseModelResponse(raw: string, state?: ParserState): ModelRespo
   // Try direct JSON parse first (single clean object)
   try {
     return validateResponse(JSON.parse(trimmed), s);
-  } catch {
+  } catch (e) {
+    console.warn(`[action-parser] Direct JSON.parse failed: ${(e as Error).message}\n  RAW (first 500): ${trimmed.slice(0, 500)}`);
     // continue
   }
 
@@ -81,9 +82,12 @@ export function parseModelResponse(raw: string, state?: ParserState): ModelRespo
   if (firstJson) {
     try {
       return validateResponse(JSON.parse(firstJson), s);
-    } catch {
+    } catch (e) {
+      console.warn(`[action-parser] extractFirstJson parse failed: ${(e as Error).message}\n  EXTRACTED: ${firstJson.slice(0, 500)}`);
       // continue
     }
+  } else {
+    console.warn(`[action-parser] extractFirstJson returned null.\n  INPUT (first 500): ${trimmed.slice(0, 500)}`);
   }
 
   // Fallback: tolerate invalid JSON in "thought" as long as "action" is well-formed.
@@ -234,6 +238,7 @@ const VALID_ACTION_TYPES = new Set([
   'chain_send_token',
   'chain_swap',
   'chain_get_tx_status',
+  'chain_deploy_token',
   // CEX trading actions
   'cex_get_balance',
   'cex_place_order',
