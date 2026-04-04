@@ -1,4 +1,4 @@
-import { integer, pgTable, primaryKey, real, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { date, integer, pgTable, primaryKey, real, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 /**
@@ -13,7 +13,7 @@ export const riskDailyVolume = pgTable(
     userId: integer('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    date: varchar('date', { length: 10 }).notNull(), // YYYY-MM-DD format
+    date: date('date', { mode: 'string' }).notNull(),
     venue: varchar('venue', { length: 50 }).notNull(),
     volumeUsd: real('volume_usd').notNull().default(0),
     updatedAt: timestamp('updated_at').defaultNow(),

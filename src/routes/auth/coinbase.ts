@@ -125,7 +125,7 @@ coinbaseAuthGroup.get('/callback', async (c) => {
         accessToken: tokenRes.access_token,
         refreshToken: tokenRes.refresh_token,
         expiresAt: Date.now() + tokenRes.expires_in * 1000,
-        userId: userData.data.id,
+        oauthSubject: userData.data.id,
         displayName: userData.data.name,
         avatarUrl: userData.data.avatar_url,
       });
@@ -150,8 +150,8 @@ coinbaseAuthGroup.get('/session', (c) =>
 
       return Http.ok({
         user: {
-          id: session.userId,
-          name: session.displayName ?? session.userId,
+          id: session.oauthSubject,
+          name: session.displayName ?? session.oauthSubject,
         },
       });
     }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))

@@ -1,5 +1,5 @@
 {
-  "id": "29a9c1ca-0aab-429d-adc3-89ad16b7e4a7",
+  "id": "5b300c71-ca00-4b6c-9454-1508518b9c45",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -80,10 +80,10 @@
         },
         "is_primary": {
           "name": "is_primary",
-          "type": "varchar(5)",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": "'true'"
+          "default": true
         },
         "last_signed_at": {
           "name": "last_signed_at",
@@ -146,6 +146,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "namespace": {
+          "name": "namespace",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
         "key_name": {
           "name": "key_name",
           "type": "varchar(255)",
@@ -157,6 +163,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -174,11 +187,17 @@
         }
       },
       "indexes": {
-        "unique_user_key": {
-          "name": "unique_user_key",
+        "secrets_user_namespace_key_unique": {
+          "name": "secrets_user_namespace_key_unique",
           "columns": [
             {
               "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "namespace",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -281,6 +300,12 @@
           "primaryKey": true,
           "notNull": true
         },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "name": {
           "name": "name",
           "type": "varchar(255)",
@@ -310,7 +335,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "projects_user_id_users_id_fk": {
+          "name": "projects_user_id_users_id_fk",
+          "tableFrom": "projects",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -325,6 +364,12 @@
           "name": "id",
           "type": "serial",
           "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -374,7 +419,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "skills_user_id_users_id_fk": {
+          "name": "skills_user_id_users_id_fk",
+          "tableFrom": "skills",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -473,11 +532,17 @@
           "primaryKey": false,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
+        "oauth_subject": {
+          "name": "oauth_subject",
           "type": "varchar(255)",
           "primaryKey": false,
           "notNull": true
+        },
+        "app_user_id": {
+          "name": "app_user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "display_name": {
           "name": "display_name",
@@ -506,8 +571,53 @@
           "default": "now()"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
+      "indexes": {
+        "sessions_oauth_subject_idx": {
+          "name": "sessions_oauth_subject_idx",
+          "columns": [
+            {
+              "expression": "oauth_subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_app_user_id_idx": {
+          "name": "sessions_app_user_id_idx",
+          "columns": [
+            {
+              "expression": "app_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sessions_app_user_id_users_id_fk": {
+          "name": "sessions_app_user_id_users_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "app_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "sessions_session_id_unique": {
@@ -554,7 +664,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "channel_global_settings_singleton": {
+          "name": "channel_global_settings_singleton",
+          "columns": [
+            {
+              "expression": "(true)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -679,34 +805,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "capability_fs_read": {
-          "name": "capability_fs_read",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "capability_fs_write": {
-          "name": "capability_fs_write",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "capability_cmd_run": {
-          "name": "capability_cmd_run",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "capability_net_http": {
-          "name": "capability_net_http",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "theme_mode": {
           "name": "theme_mode",
           "type": "varchar(20)",
@@ -749,19 +847,6 @@
           "notNull": true,
           "default": false
         },
-        "paper_trading_enabled": {
-          "name": "paper_trading_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "workspace_root": {
-          "name": "workspace_root",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -803,77 +888,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.provider_secrets": {
-      "name": "provider_secrets",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "key_name": {
-          "name": "key_name",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "encrypted_value": {
-          "name": "encrypted_value",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "provider_secrets_user_id_users_id_fk": {
-          "name": "provider_secrets_user_id_users_id_fk",
-          "tableFrom": "provider_secrets",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1128,6 +1142,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "tasks_parent_task_id_tasks_task_id_fk": {
+          "name": "tasks_parent_task_id_tasks_task_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "tasks",
+          "columnsFrom": [
+            "parent_task_id"
+          ],
+          "columnsTo": [
+            "task_id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -1397,7 +1424,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "paper_balances_user_asset_unique": {
+          "name": "paper_balances_user_asset_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id",
+            "asset"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1521,7 +1557,7 @@
         },
         "date": {
           "name": "date",
-          "type": "varchar(10)",
+          "type": "date",
           "primaryKey": false,
           "notNull": true
         },
@@ -1790,6 +1826,177 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.trade_scores": {
+      "name": "trade_scores",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "venue": {
+          "name": "venue",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capability": {
+          "name": "capability",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "side": {
+          "name": "side",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_price": {
+          "name": "entry_price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exit_price": {
+          "name": "exit_price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "size": {
+          "name": "size",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pnl_usd": {
+          "name": "pnl_usd",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "pnl_pct": {
+          "name": "pnl_pct",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "score_pnl": {
+          "name": "score_pnl",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "score_discipline": {
+          "name": "score_discipline",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "score_efficiency": {
+          "name": "score_efficiency",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "score_total": {
+          "name": "score_total",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "steps_used": {
+          "name": "steps_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "max_steps": {
+          "name": "max_steps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "had_open_positions_at_done": {
+          "name": "had_open_positions_at_done",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "is_paper": {
+          "name": "is_paper",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "trade_scores_user_id_users_id_fk": {
+          "name": "trade_scores_user_id_users_id_fk",
+          "tableFrom": "trade_scores",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.observations": {
       "name": "observations",
       "schema": "",
@@ -1831,9 +2038,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "project": {
-          "name": "project",
-          "type": "varchar(100)",
+        "project_id": {
+          "name": "project_id",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
@@ -1949,11 +2156,11 @@
           "method": "btree",
           "with": {}
         },
-        "observations_project_idx": {
-          "name": "observations_project_idx",
+        "observations_project_id_idx": {
+          "name": "observations_project_id_idx",
           "columns": [
             {
-              "expression": "project",
+              "expression": "project_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2038,6 +2245,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "observations_project_id_projects_id_fk": {
+          "name": "observations_project_id_projects_id_fk",
+          "tableFrom": "observations",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2046,8 +2266,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.task_memories": {
-      "name": "task_memories",
+    "public.task_logs": {
+      "name": "task_logs",
       "schema": "",
       "columns": {
         "id": {
@@ -2080,11 +2300,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "learnings": {
-          "name": "learnings",
+        "search_vector": {
+          "name": "search_vector",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "provider": {
           "name": "provider",
@@ -2098,12 +2318,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "search_vector": {
-          "name": "search_vector",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2113,8 +2327,8 @@
         }
       },
       "indexes": {
-        "task_memories_search_vector_idx": {
-          "name": "task_memories_search_vector_idx",
+        "task_logs_search_vector_idx": {
+          "name": "task_logs_search_vector_idx",
           "columns": [
             {
               "expression": "to_tsvector('english', \"search_vector\")",
@@ -2128,8 +2342,8 @@
           "method": "gin",
           "with": {}
         },
-        "task_memories_user_id_idx": {
-          "name": "task_memories_user_id_idx",
+        "task_logs_user_id_idx": {
+          "name": "task_logs_user_id_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -2143,8 +2357,8 @@
           "method": "btree",
           "with": {}
         },
-        "task_memories_task_id_idx": {
-          "name": "task_memories_task_id_idx",
+        "task_logs_task_id_idx": {
+          "name": "task_logs_task_id_idx",
           "columns": [
             {
               "expression": "task_id",
@@ -2158,8 +2372,8 @@
           "method": "btree",
           "with": {}
         },
-        "task_memories_created_at_idx": {
-          "name": "task_memories_created_at_idx",
+        "task_logs_created_at_idx": {
+          "name": "task_logs_created_at_idx",
           "columns": [
             {
               "expression": "created_at",
@@ -2175,9 +2389,9 @@
         }
       },
       "foreignKeys": {
-        "task_memories_user_id_users_id_fk": {
-          "name": "task_memories_user_id_users_id_fk",
-          "tableFrom": "task_memories",
+        "task_logs_user_id_users_id_fk": {
+          "name": "task_logs_user_id_users_id_fk",
+          "tableFrom": "task_logs",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
@@ -2191,8 +2405,8 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "task_memories_task_id_unique": {
-          "name": "task_memories_task_id_unique",
+        "task_logs_task_id_unique": {
+          "name": "task_logs_task_id_unique",
           "nullsNotDistinct": false,
           "columns": [
             "task_id"
@@ -2290,6 +2504,143 @@
         "user_facts_user_id_users_id_fk": {
           "name": "user_facts_user_id_users_id_fk",
           "tableFrom": "user_facts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user_learnings": {
+      "name": "user_learnings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "relevance_score": {
+          "name": "relevance_score",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "times_applied": {
+          "name": "times_applied",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "search_vector": {
+          "name": "search_vector",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "user_learnings_search_vector_idx": {
+          "name": "user_learnings_search_vector_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('english', \"search_vector\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "user_learnings_user_id_idx": {
+          "name": "user_learnings_user_id_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "user_learnings_task_id_idx": {
+          "name": "user_learnings_task_id_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "user_learnings_user_id_users_id_fk": {
+          "name": "user_learnings_user_id_users_id_fk",
+          "tableFrom": "user_learnings",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

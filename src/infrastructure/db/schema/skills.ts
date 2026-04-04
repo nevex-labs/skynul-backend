@@ -1,7 +1,11 @@
-import { boolean, pgTable, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { users } from './users';
 
 export const skills = pgTable('skills', {
   id: serial('id').primaryKey(),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   tag: varchar('tag', { length: 100 }).notNull(),
   description: text('description').notNull(),

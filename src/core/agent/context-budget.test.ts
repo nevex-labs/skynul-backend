@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import {
   computeBudget,
   estimateImageTokens,

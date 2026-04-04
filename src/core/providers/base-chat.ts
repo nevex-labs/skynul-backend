@@ -5,7 +5,7 @@
  * Each provider is pure config (~15-25 lines). No inline fetch logic.
  */
 
-import type { ChatMessage } from '../../types';
+import type { ChatMessage } from '../../shared/types';
 
 export type ChatProviderConfig = {
   name: string;

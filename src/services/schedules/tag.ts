@@ -1,7 +1,7 @@
 import { Context, Effect } from 'effect';
 import type { TaskSchedule } from '../../infrastructure/db/schema';
 import { DatabaseError } from '../../shared/errors';
-import type { Schedule, ScheduleFrequency } from '../../types/schedule';
+import type { Schedule, ScheduleFrequency } from '../../shared/types/schedule';
 
 export interface ScheduleInput {
   prompt: string;

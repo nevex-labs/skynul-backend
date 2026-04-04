@@ -1,15 +1,15 @@
 /**
  * Zod schemas for runtime validation of persisted store data.
  *
- * Reuses types from src/types/. Schemas are the validation layer on top.
+ * Reuses types from src/shared/types/. Schemas are the validation layer on top.
  * Used with safeParse() — never crashes, always degrades gracefully.
  */
 
 import { z } from 'zod';
-import type { CapabilityId, LanguageCode, PolicyState, ProviderId, ThemeMode } from '../../types/policy';
-import type { ScheduleFrequency } from '../../types/schedule';
-import type { TaskCapabilityId, TaskMode } from '../../types/task';
-import type { TradingSettings } from '../../types/trading';
+import type { CapabilityId, LanguageCode, PolicyState, ProviderId, ThemeMode } from '../../shared/types/policy';
+import type { ScheduleFrequency } from '../../shared/types/schedule';
+import type { TaskCapabilityId, TaskMode } from '../../shared/types/task';
+import type { TradingSettings } from '../../shared/types/trading';
 
 export const SkillSchema = z.object({
   id: z.string(),

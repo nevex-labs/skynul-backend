@@ -6,7 +6,7 @@
  * Images are sent as base64 in Anthropic's image content block format.
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { createVisionProvider } from './base-vision';
 import { getSecret } from './secret-adapter';
 import { toText } from './vision-utils';

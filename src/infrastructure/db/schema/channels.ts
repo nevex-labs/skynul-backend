@@ -1,11 +1,18 @@
-import { boolean, jsonb, pgTable, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { boolean, jsonb, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 
-export const channelGlobalSettings = pgTable('channel_global_settings', {
-  id: serial('id').primaryKey(),
-  autoApprove: boolean('auto_approve').notNull().default(true),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
+export const channelGlobalSettings = pgTable(
+  'channel_global_settings',
+  {
+    id: serial('id').primaryKey(),
+    autoApprove: boolean('auto_approve').notNull().default(true),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => ({
+    singleton: uniqueIndex('channel_global_settings_singleton').on(sql`(true)`),
+  })
+);
 
 export const channelSettings = pgTable('channel_settings', {
   id: serial('id').primaryKey(),

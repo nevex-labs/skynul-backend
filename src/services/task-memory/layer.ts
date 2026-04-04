@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
-import { and, desc, eq, gt, isNull, like, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
+import { projects } from '../../infrastructure/db/schema/projects';
 import {
   type ObservationDto,
   type SaveObservationInput,
@@ -8,45 +9,51 @@ import {
   type TaskMemoryDto,
   type UserFactDto,
   observations,
-  taskMemories,
+  taskLogs,
   userFacts,
+  userLearnings,
 } from '../../infrastructure/db/schema/task-memory';
 import { DatabaseError } from '../../shared/errors';
+import type { Database } from '../database/tag';
 import { DatabaseService } from '../database/tag';
 import { TaskMemoryService } from './tag';
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+const DEDUP_WINDOW_MS = 15 * 60 * 1000;
 
-const DEDUP_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-/** SHA-256 hash of lowercased, trimmed title+content (for dedup). */
 function hashNormalized(title: string, content: string): string {
   const normalized = `${title.trim().toLowerCase()}|${content.trim().toLowerCase()}`;
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
-/** Convert query string to PostgreSQL tsquery format */
-function toTsQuery(query: string): string {
-  // Split into words, filter short words, and join with & for AND semantics
-  const words = query
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-  if (words.length === 0) return '';
-  return words.map((w) => w.toLowerCase()).join(' & ');
-}
-
-/** Convert query string to PostgreSQL plainto_tsquery format */
 function toPlainTsQuery(query: string): string {
-  // For plainto_tsquery - just clean the input
   return query.replace(/[^\w\s]/g, ' ').trim();
 }
 
-function toTaskMemoryDto(row: typeof taskMemories.$inferSelect): TaskMemoryDto {
+async function resolveProjectIdFromDb(
+  db: Database,
+  userId: number,
+  projectName?: string,
+  projectId?: number
+): Promise<number | null> {
+  if (projectId != null) return projectId;
+  const name = projectName?.trim();
+  if (!name) return null;
+  const rows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.userId, userId), eq(projects.name, name)))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
+function toTaskMemoryDto(
+  log: typeof taskLogs.$inferSelect,
+  learnings: string
+): TaskMemoryDto {
   return {
-    prompt: row.prompt,
-    outcome: row.outcome as 'completed' | 'failed',
-    learnings: row.learnings,
+    prompt: log.prompt,
+    outcome: log.outcome as 'completed' | 'failed',
+    learnings,
   };
 }
 
@@ -65,7 +72,7 @@ function toObservationDto(row: typeof observations.$inferSelect): ObservationDto
     type: row.type,
     title: row.title,
     content: row.content,
-    project: row.project ?? undefined,
+    projectId: row.projectId ?? undefined,
     scope: row.scope,
     topicKey: row.topicKey ?? undefined,
     normalizedHash: row.normalizedHash ?? undefined,
@@ -77,8 +84,6 @@ function toObservationDto(row: typeof observations.$inferSelect): ObservationDto
     deletedAt: row.deletedAt?.getTime() ?? undefined,
   };
 }
-
-// ── Layer Implementation ─────────────────────────────────────────────────────
 
 export const TaskMemoryServiceLive = Layer.effect(
   TaskMemoryService,
@@ -98,35 +103,52 @@ export const TaskMemoryServiceLive = Layer.effect(
         }
       ) =>
         Effect.gen(function* () {
-          // Build search vector from prompt and learnings
-          const searchVector = `${entry.prompt} ${entry.learnings}`;
+          const logSearch = entry.prompt;
+          const learningSearch = entry.learnings.trim();
 
           yield* Effect.tryPromise({
             try: async () => {
               await db
-                .insert(taskMemories)
+                .insert(taskLogs)
                 .values({
                   userId,
                   taskId: entry.taskId,
                   prompt: entry.prompt,
                   outcome: entry.outcome,
-                  learnings: entry.learnings,
+                  searchVector: logSearch,
                   provider: entry.provider,
                   durationMs: entry.durationMs,
-                  searchVector,
                 })
                 .onConflictDoUpdate({
-                  target: taskMemories.taskId,
+                  target: taskLogs.taskId,
                   set: {
                     prompt: entry.prompt,
                     outcome: entry.outcome,
-                    learnings: entry.learnings,
+                    searchVector: logSearch,
                     provider: entry.provider,
                     durationMs: entry.durationMs,
-                    searchVector,
                     createdAt: new Date(),
                   },
                 });
+            },
+            catch: (error) => new DatabaseError(error),
+          });
+
+          yield* Effect.tryPromise({
+            try: async () => {
+              await db.delete(userLearnings).where(
+                and(eq(userLearnings.userId, userId), eq(userLearnings.taskId, entry.taskId))
+              );
+              if (learningSearch) {
+                await db.insert(userLearnings).values({
+                  userId,
+                  taskId: entry.taskId,
+                  content: entry.learnings,
+                  searchVector: learningSearch,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                });
+              }
             },
             catch: (error) => new DatabaseError(error),
           });
@@ -137,41 +159,79 @@ export const TaskMemoryServiceLive = Layer.effect(
           const tsQuery = toPlainTsQuery(query);
           if (!tsQuery) return [];
 
-          const rows = yield* Effect.tryPromise({
+          return yield* Effect.tryPromise({
             try: async () => {
-              // Use PostgreSQL full-text search with ts_rank_cd for relevance
-              // Combined with recency scoring: newer entries get boosted
-              return await db
+              const logRows = await db
                 .select({
-                  id: taskMemories.id,
-                  prompt: taskMemories.prompt,
-                  outcome: taskMemories.outcome,
-                  learnings: taskMemories.learnings,
-                  createdAt: taskMemories.createdAt,
-                  // Calculate rank combining relevance and recency
+                  log: taskLogs,
                   rank: sql<number>`
-                    ts_rank_cd(to_tsvector('english', ${taskMemories.searchVector}), plainto_tsquery('english', ${tsQuery})) *
-                    (1.0 + (EXTRACT(EPOCH FROM NOW() - ${taskMemories.createdAt}) / 2592000.0) * -0.1)
+                    ts_rank_cd(to_tsvector('english', ${taskLogs.searchVector}), plainto_tsquery('english', ${tsQuery})) *
+                    (1.0 + (EXTRACT(EPOCH FROM NOW() - ${taskLogs.createdAt}) / 2592000.0) * -0.1)
                   `.as('rank'),
                 })
-                .from(taskMemories)
+                .from(taskLogs)
                 .where(
                   and(
-                    eq(taskMemories.userId, userId),
-                    sql`to_tsvector('english', ${taskMemories.searchVector}) @@ plainto_tsquery('english', ${tsQuery})`
+                    eq(taskLogs.userId, userId),
+                    sql`to_tsvector('english', ${taskLogs.searchVector}) @@ plainto_tsquery('english', ${tsQuery})`
                   )
                 )
                 .orderBy(desc(sql`rank`))
                 .limit(limit);
+
+              const learnRows = await db
+                .select({
+                  learning: userLearnings,
+                  log: taskLogs,
+                  rank: sql<number>`
+                    ts_rank_cd(to_tsvector('english', ${userLearnings.searchVector}), plainto_tsquery('english', ${tsQuery})) *
+                    (1.0 + (EXTRACT(EPOCH FROM NOW() - ${userLearnings.createdAt}) / 2592000.0) * -0.1)
+                  `.as('rank'),
+                })
+                .from(userLearnings)
+                .innerJoin(taskLogs, eq(taskLogs.taskId, userLearnings.taskId))
+                .where(
+                  and(
+                    eq(userLearnings.userId, userId),
+                    eq(taskLogs.userId, userId),
+                    isNotNull(userLearnings.taskId),
+                    sql`to_tsvector('english', ${userLearnings.searchVector}) @@ plainto_tsquery('english', ${tsQuery})`
+                  )
+                )
+                .orderBy(desc(sql`rank`))
+                .limit(limit);
+
+              const byTask = new Map<string, { log: typeof taskLogs.$inferSelect; learnings: string; rank: number }>();
+
+              for (const r of logRows) {
+                const [ul] = await db
+                  .select()
+                  .from(userLearnings)
+                  .where(and(eq(userLearnings.userId, userId), eq(userLearnings.taskId, r.log.taskId)))
+                  .limit(1);
+                const learnings = ul?.content ?? '';
+                const prev = byTask.get(r.log.taskId);
+                const rank = r.rank ?? 0;
+                if (!prev || rank > prev.rank) {
+                  byTask.set(r.log.taskId, { log: r.log, learnings, rank });
+                }
+              }
+
+              for (const r of learnRows) {
+                const rank = r.rank ?? 0;
+                const prev = byTask.get(r.log.taskId);
+                if (!prev || rank > prev.rank) {
+                  byTask.set(r.log.taskId, { log: r.log, learnings: r.learning.content, rank });
+                }
+              }
+
+              return Array.from(byTask.values())
+                .sort((a, b) => b.rank - a.rank)
+                .slice(0, limit)
+                .map((x) => toTaskMemoryDto(x.log, x.learnings));
             },
             catch: (error) => new DatabaseError(error),
           });
-
-          return rows.map((row) => ({
-            prompt: row.prompt,
-            outcome: row.outcome as 'completed' | 'failed',
-            learnings: row.learnings,
-          }));
         }),
 
       formatMemoriesForPrompt: (memories: TaskMemoryDto[]): string => {
@@ -188,7 +248,6 @@ export const TaskMemoryServiceLive = Layer.effect(
           const trimmed = fact.trim();
           if (!trimmed) return;
 
-          // Check for existing similar fact
           const existingFacts = yield* Effect.tryPromise({
             try: async () => {
               return await db
@@ -202,7 +261,6 @@ export const TaskMemoryServiceLive = Layer.effect(
           const lower = trimmed.toLowerCase();
           for (const e of existingFacts) {
             const eLower = e.fact.toLowerCase();
-            // Exact or near-duplicate — update instead of inserting
             if (eLower === lower || eLower.includes(lower) || lower.includes(eLower)) {
               yield* Effect.tryPromise({
                 try: async () => {
@@ -221,7 +279,6 @@ export const TaskMemoryServiceLive = Layer.effect(
             }
           }
 
-          // Insert new fact
           yield* Effect.tryPromise({
             try: async () => {
               await db.insert(userFacts).values({
@@ -257,7 +314,6 @@ export const TaskMemoryServiceLive = Layer.effect(
 
       searchFacts: (userId: number, query: string, limit = 5) =>
         Effect.gen(function* () {
-          // First get all facts count
           const allFacts = yield* Effect.tryPromise({
             try: async () => {
               return await db
@@ -270,7 +326,6 @@ export const TaskMemoryServiceLive = Layer.effect(
 
           const totalCount = allFacts[0]?.count ?? 0;
 
-          // If few facts, return all
           if (totalCount <= 20) {
             const all = yield* Effect.tryPromise({
               try: async () => {
@@ -285,7 +340,6 @@ export const TaskMemoryServiceLive = Layer.effect(
             return all.map((r) => r.fact);
           }
 
-          // Many facts → FTS search
           const tsQuery = toPlainTsQuery(query);
           if (!tsQuery) return [];
 
@@ -324,8 +378,11 @@ export const TaskMemoryServiceLive = Layer.effect(
           const type = input.obsType ?? 'manual';
           const scope = input.scope ?? 'project';
           const hash = hashNormalized(input.title, input.content);
+          const projectIdResolved = yield* Effect.tryPromise({
+            try: () => resolveProjectIdFromDb(db, userId, input.project, input.projectId),
+            catch: (error) => new DatabaseError(error),
+          });
 
-          // 1. topic_key upsert
           if (input.topicKey) {
             const existing = yield* Effect.tryPromise({
               try: async () => {
@@ -354,7 +411,7 @@ export const TaskMemoryServiceLive = Layer.effect(
                       title: input.title,
                       content: input.content,
                       type,
-                      project: input.project ?? null,
+                      projectId: projectIdResolved,
                       scope,
                       normalizedHash: hash,
                       searchVector: `${input.title} ${input.content}`,
@@ -369,7 +426,6 @@ export const TaskMemoryServiceLive = Layer.effect(
             }
           }
 
-          // 2. Hash dedup within 15-minute window
           const cutoff = new Date(Date.now() - DEDUP_WINDOW_MS);
           const dup = yield* Effect.tryPromise({
             try: async () => {
@@ -390,24 +446,23 @@ export const TaskMemoryServiceLive = Layer.effect(
           });
 
           if (dup.length > 0) {
-            const existing = dup[0];
+            const existingDup = dup[0];
             yield* Effect.tryPromise({
               try: async () => {
                 await db
                   .update(observations)
                   .set({
-                    duplicateCount: existing.duplicateCount + 1,
+                    duplicateCount: existingDup.duplicateCount + 1,
                     lastSeenAt: now,
                     updatedAt: now,
                   })
-                  .where(and(eq(observations.id, existing.id), eq(observations.userId, userId)));
+                  .where(and(eq(observations.id, existingDup.id), eq(observations.userId, userId)));
               },
               catch: (error) => new DatabaseError(error),
             });
-            return existing.id;
+            return existingDup.id;
           }
 
-          // 3. Insert new observation
           const result = yield* Effect.tryPromise({
             try: async () => {
               const rows = await db
@@ -418,7 +473,7 @@ export const TaskMemoryServiceLive = Layer.effect(
                   type,
                   title: input.title,
                   content: input.content,
-                  project: input.project ?? null,
+                  projectId: projectIdResolved,
                   scope,
                   topicKey: input.topicKey ?? null,
                   normalizedHash: hash,
@@ -443,9 +498,13 @@ export const TaskMemoryServiceLive = Layer.effect(
           const tsQuery = toPlainTsQuery(query);
           if (!tsQuery) return [];
 
+          const projectFilterId = yield* Effect.tryPromise({
+            try: () => resolveProjectIdFromDb(db, userId, opts.project, opts.projectId ?? undefined),
+            catch: (error) => new DatabaseError(error),
+          });
+
           const rows = yield* Effect.tryPromise({
             try: async () => {
-              // Build conditions array
               const conditions = [
                 eq(observations.userId, userId),
                 isNull(observations.deletedAt),
@@ -455,8 +514,8 @@ export const TaskMemoryServiceLive = Layer.effect(
               if (opts.typeFilter) {
                 conditions.push(eq(observations.type, opts.typeFilter));
               }
-              if (opts.project) {
-                conditions.push(eq(observations.project, opts.project));
+              if (projectFilterId != null) {
+                conditions.push(eq(observations.projectId, projectFilterId));
               }
 
               return await db
@@ -467,7 +526,7 @@ export const TaskMemoryServiceLive = Layer.effect(
                   type: observations.type,
                   title: observations.title,
                   content: observations.content,
-                  project: observations.project,
+                  projectId: observations.projectId,
                   scope: observations.scope,
                   topicKey: observations.topicKey,
                   normalizedHash: observations.normalizedHash,
@@ -495,7 +554,7 @@ export const TaskMemoryServiceLive = Layer.effect(
             type: row.type,
             title: row.title,
             content: row.content,
-            project: row.project ?? undefined,
+            projectId: row.projectId ?? undefined,
             scope: row.scope,
             topicKey: row.topicKey ?? undefined,
             normalizedHash: row.normalizedHash ?? undefined,
@@ -509,28 +568,34 @@ export const TaskMemoryServiceLive = Layer.effect(
         }),
 
       getRecentObservations: (userId: number, opts: SearchObservationsOpts = {}) =>
-        Effect.tryPromise({
-          try: async () => {
-            // Build conditions array
-            const conditions = [eq(observations.userId, userId), isNull(observations.deletedAt)];
+        Effect.gen(function* () {
+          const projectFilterId = yield* Effect.tryPromise({
+            try: () => resolveProjectIdFromDb(db, userId, opts.project, opts.projectId ?? undefined),
+            catch: (error) => new DatabaseError(error),
+          });
 
-            if (opts.typeFilter) {
-              conditions.push(eq(observations.type, opts.typeFilter));
-            }
-            if (opts.project) {
-              conditions.push(eq(observations.project, opts.project));
-            }
+          return yield* Effect.tryPromise({
+            try: async () => {
+              const conditions = [eq(observations.userId, userId), isNull(observations.deletedAt)];
 
-            const rows = await db
-              .select()
-              .from(observations)
-              .where(and(...conditions))
-              .orderBy(desc(observations.updatedAt), desc(observations.id))
-              .limit(opts.limit ?? 20);
+              if (opts.typeFilter) {
+                conditions.push(eq(observations.type, opts.typeFilter));
+              }
+              if (projectFilterId != null) {
+                conditions.push(eq(observations.projectId, projectFilterId));
+              }
 
-            return rows.map(toObservationDto);
-          },
-          catch: (error) => new DatabaseError(error),
+              const rows = await db
+                .select()
+                .from(observations)
+                .where(and(...conditions))
+                .orderBy(desc(observations.updatedAt), desc(observations.id))
+                .limit(opts.limit ?? 20);
+
+              return rows.map(toObservationDto);
+            },
+            catch: (error) => new DatabaseError(error),
+          });
         }),
 
       deleteObservation: (userId: number, id: number) =>
@@ -547,7 +612,9 @@ export const TaskMemoryServiceLive = Layer.effect(
       formatObservationsForPrompt: (obs: ObservationDto[]): string => {
         if (obs.length === 0) return '';
         const lines = obs.map((o) => {
-          const meta = [o.type, o.topicKey ? `key:${o.topicKey}` : null].filter(Boolean).join(', ');
+          const meta = [o.type, o.topicKey ? `key:${o.topicKey}` : null, o.projectId ? `project:#${o.projectId}` : null]
+            .filter(Boolean)
+            .join(', ');
           return `[${meta}] **${o.title}**: ${o.content}`;
         });
         return `\n## Knowledge memory:\n${lines.join('\n')}\n`;
@@ -556,7 +623,6 @@ export const TaskMemoryServiceLive = Layer.effect(
   })
 );
 
-// Layer para testing
 export const TaskMemoryServiceTest = Layer.succeed(
   TaskMemoryService,
   TaskMemoryService.of({

@@ -2,8 +2,8 @@
  * Browser mode — setup, turn building, and action execution.
  */
 
-import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import type { BrowserEngine } from '../../browser/engine/browser-engine';
 import { acquireBrowserEngine } from '../../browser/engine/factory';
 import type { ExecutorContext } from '../action-executors';

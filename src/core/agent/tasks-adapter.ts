@@ -7,7 +7,7 @@
 import { Effect } from 'effect';
 import { AppLayer } from '../../config/layers';
 import { type TaskInput, type TaskUpdateInput, TasksService } from '../../services/tasks';
-import type { Task } from '../../types';
+import type { Task } from '../../shared/types';
 
 // System user ID para tasks sin owner (TaskManager legacy)
 const SYSTEM_USER_ID = 1;

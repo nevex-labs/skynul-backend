@@ -4,7 +4,7 @@
  * No auth required; baseUrl and model come from secrets or defaults.
  */
 
-import type { ChatMessage } from '../../types';
+import type { ChatMessage } from '../../shared/types';
 import { createChatProvider } from './base-chat';
 import { getSecret } from './secret-adapter';
 

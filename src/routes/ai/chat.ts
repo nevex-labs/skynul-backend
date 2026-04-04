@@ -6,7 +6,7 @@ import { dispatchChat } from '../../core/providers/dispatch';
 import { Http, createEffectRoute } from '../../lib/hono-effect';
 import type { HttpResponse } from '../../lib/hono-effect';
 import { SettingsService } from '../../services/settings';
-import type { ProviderId } from '../../types';
+import type { ProviderId } from '../../shared/types';
 
 const handler = createEffectRoute(AppLayer as any);
 
@@ -50,10 +50,6 @@ const chat = new Hono().post(
 
       const settingsService = yield* SettingsService;
       const settings = yield* settingsService.getSettings(userId);
-
-      if (!settings.capabilityNetHttp) {
-        return Http.ok({ error: 'Capability net.http is disabled' });
-      }
 
       const content = yield* Effect.tryPromise({
         try: () => dispatchChat(settings.activeProvider as ProviderId, parsed.data.messages),

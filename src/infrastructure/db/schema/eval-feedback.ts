@@ -11,7 +11,7 @@ export const tradeScores = pgTable('trade_scores', {
   userId: integer('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
-  taskId: varchar('task_id', { length: 255 }).notNull().unique(),
+  taskId: varchar('task_id', { length: 255 }).notNull(),
   venue: varchar('venue', { length: 50 }).notNull(),
   capability: varchar('capability', { length: 100 }).notNull(),
   symbol: varchar('symbol', { length: 50 }),

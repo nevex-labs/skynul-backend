@@ -1,4 +1,4 @@
-import type { TaskStep } from '../../types/task';
+import type { TaskStep } from '../../shared/types/task';
 
 export type ErrorCode =
   | 'RATE_LIMIT'

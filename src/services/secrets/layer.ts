@@ -1,13 +1,12 @@
 import { and, eq } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
-import { secrets } from '../../infrastructure/db/schema';
+import { APP_SECRET_NAMESPACE, secrets } from '../../infrastructure/db/schema';
 import { DatabaseError, SecretNotFoundError } from '../../shared/errors';
 import { CryptoService } from '../crypto/tag';
 import { DatabaseService } from '../database/tag';
 import { SecretService } from './tag';
 import type { SecretMetadata, SecretValue } from './tag';
 
-// Layer que obtiene dependencias del contexto
 export const SecretServiceLive = Layer.effect(
   SecretService,
   Effect.gen(function* () {
@@ -22,7 +21,13 @@ export const SecretServiceLive = Layer.effect(
               db
                 .select()
                 .from(secrets)
-                .where(and(eq(secrets.userId, userId), eq(secrets.keyName, keyName)))
+                .where(
+                  and(
+                    eq(secrets.userId, userId),
+                    eq(secrets.namespace, APP_SECRET_NAMESPACE),
+                    eq(secrets.keyName, keyName)
+                  )
+                )
                 .limit(1),
             catch: (error) => new DatabaseError(error),
           });
@@ -45,21 +50,28 @@ export const SecretServiceLive = Layer.effect(
                 .insert(secrets)
                 .values({
                   userId: value.userId,
+                  namespace: APP_SECRET_NAMESPACE,
                   keyName: value.keyName,
                   encryptedValue: encrypted,
                 })
                 .onConflictDoUpdate({
-                  target: [secrets.userId, secrets.keyName],
+                  target: [secrets.userId, secrets.namespace, secrets.keyName],
                   set: {
                     encryptedValue: encrypted,
                     updatedAt: new Date(),
                   },
                 })
-                .returning(),
+                .returning({
+                  id: secrets.id,
+                  userId: secrets.userId,
+                  keyName: secrets.keyName,
+                  createdAt: secrets.createdAt,
+                  updatedAt: secrets.updatedAt,
+                }),
             catch: (error) => new DatabaseError(error),
           });
 
-          return result[0];
+          return result[0] as SecretMetadata;
         }),
 
       delete: (userId: number, keyName: string) =>
@@ -68,7 +80,13 @@ export const SecretServiceLive = Layer.effect(
             try: () =>
               db
                 .delete(secrets)
-                .where(and(eq(secrets.userId, userId), eq(secrets.keyName, keyName)))
+                .where(
+                  and(
+                    eq(secrets.userId, userId),
+                    eq(secrets.namespace, APP_SECRET_NAMESPACE),
+                    eq(secrets.keyName, keyName)
+                  )
+                )
                 .returning(),
             catch: (error) => new DatabaseError(error),
           });
@@ -90,7 +108,7 @@ export const SecretServiceLive = Layer.effect(
                 updatedAt: secrets.updatedAt,
               })
               .from(secrets)
-              .where(eq(secrets.userId, userId)),
+              .where(and(eq(secrets.userId, userId), eq(secrets.namespace, APP_SECRET_NAMESPACE))),
           catch: (error) => new DatabaseError(error),
         }),
     });

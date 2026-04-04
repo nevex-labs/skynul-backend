@@ -46,11 +46,7 @@ MASTER_KEY=tu-master-key-super-segura-de-32-caracteres-minimo
 ### 3. Ejecutar Migraciones
 
 ```bash
-# Generar migración desde schema
-npm run db:generate
-
-# Aplicar migraciones
-npm run db:migrate
+pnpm db:migrate
 ```
 
 ### 4. Probar el Ejemplo
@@ -157,10 +153,8 @@ Effect.runPromise(testProgram);
 | `npm run db:up` | Levantar PostgreSQL |
 | `npm run db:down` | Detener PostgreSQL |
 | `npm run db:admin` | Levantar PostgreSQL + pgAdmin |
-| `npm run db:generate` | Generar migración |
-| `npm run db:migrate` | Aplicar migraciones |
-| `npm run db:push` | Push directo (desarrollo) |
-| `npm run db:studio` | UI de Drizzle Studio |
+| `pnpm db:migrate` | Aplicar migraciones SQL |
+| `pnpm db:studio` | Drizzle Studio |
 
 ## 🔐 Seguridad
 
@@ -171,10 +165,10 @@ Effect.runPromise(testProgram);
 
 ## 🔄 Migraciones
 
-1. Modificar schema en `src/infrastructure/db/schema/`
-2. Generar migración: `npm run db:generate`
-3. Revisar migración en `src/infrastructure/db/migrations/`
-4. Aplicar: `npm run db:migrate`
+1. Nuevo cambio: nuevo `NNNN_nombre.sql` + entrada en `meta/_journal.json` (y snapshot si usás `drizzle-kit generate`).
+2. `pnpm db:migrate`
+
+**Baseline único (`0000_baseline.sql`):** en una DB nueva vacía basta con `pnpm db:migrate`. Si tenías historial viejo de `drizzle.__drizzle_migrations`, en local podés `DROP SCHEMA public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS drizzle CASCADE;` y volver a migrar (solo datos locales).
 
 ## 📊 Schema Actual
 

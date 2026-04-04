@@ -2,8 +2,8 @@ import { and, eq } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 import { taskSchedules } from '../../infrastructure/db/schema';
 import { DatabaseError } from '../../shared/errors';
-import type { Schedule } from '../../types/schedule';
-import type { TaskCapabilityId } from '../../types/task';
+import type { Schedule } from '../../shared/types/schedule';
+import type { TaskCapabilityId } from '../../shared/types/task';
 import { DatabaseService } from '../database/tag';
 import { type ScheduleInput, SchedulesService } from './tag';
 

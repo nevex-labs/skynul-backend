@@ -3,9 +3,9 @@
  * Handles message compression, action logging, and inbox draining.
  */
 
-import type { TaskStep, VisionContentPart } from '../../types';
-import type { VisionMessage } from '../../types';
-import type { ProviderId } from '../../types';
+import type { TaskStep, VisionContentPart } from '../../shared/types';
+import type { VisionMessage } from '../../shared/types';
+import type { ProviderId } from '../../shared/types';
 import type { TaskManager } from './task-manager';
 
 /** Extract action type from an assistant message text. */

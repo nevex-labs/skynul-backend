@@ -1,4 +1,4 @@
-import { integer, pgEnum, pgTable, serial, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgEnum, pgTable, serial, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 export const chainEnum = pgEnum('chain', ['evm', 'solana', 'bitcoin']);
@@ -12,7 +12,7 @@ export const wallets = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     address: varchar('address', { length: 255 }).notNull(),
     chain: chainEnum('chain').notNull(),
-    isPrimary: varchar('is_primary', { length: 5 }).notNull().default('true'),
+    isPrimary: boolean('is_primary').notNull().default(true),
     lastSignedAt: timestamp('last_signed_at'),
     createdAt: timestamp('created_at').defaultNow(),
   },

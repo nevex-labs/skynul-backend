@@ -1,4 +1,4 @@
-import type { AgentDefinition } from '../../../types';
+import type { AgentDefinition } from '../../../shared/types';
 
 export const MONITOR_BUILTIN: AgentDefinition = {
   name: 'monitor',

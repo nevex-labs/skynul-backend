@@ -1,14 +1,10 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, pgTable, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { index, integer, pgTable, real, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { projects } from './projects';
 import { users } from './users';
 
-/**
- * Task Memory - Stores task execution history with full-text search.
- * Migrated from SQLite FTS5 to PostgreSQL tsvector.
- */
-
-export const taskMemories = pgTable(
-  'task_memories',
+export const taskLogs = pgTable(
+  'task_logs',
   {
     id: serial('id').primaryKey(),
     userId: integer('user_id')
@@ -16,23 +12,46 @@ export const taskMemories = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     taskId: varchar('task_id', { length: 255 }).notNull().unique(),
     prompt: text('prompt').notNull(),
-    outcome: varchar('outcome', { length: 20 }).notNull(), // 'completed' | 'failed'
-    learnings: text('learnings').notNull(),
+    outcome: varchar('outcome', { length: 20 }).notNull(),
+    searchVector: text('search_vector'),
     provider: varchar('provider', { length: 50 }),
     durationMs: integer('duration_ms'),
-    // Full-text search vector - will be created via migration with generated column
-    searchVector: text('search_vector'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
-    // GIN index for fast full-text search
-    searchVectorIdx: index('task_memories_search_vector_idx').using(
+    searchVectorIdx: index('task_logs_search_vector_idx').using(
       'gin',
       sql`to_tsvector('english', ${table.searchVector})`
     ),
-    userIdIdx: index('task_memories_user_id_idx').on(table.userId),
-    taskIdIdx: index('task_memories_task_id_idx').on(table.taskId),
-    createdAtIdx: index('task_memories_created_at_idx').on(table.createdAt),
+    userIdIdx: index('task_logs_user_id_idx').on(table.userId),
+    taskIdIdx: index('task_logs_task_id_idx').on(table.taskId),
+    createdAtIdx: index('task_logs_created_at_idx').on(table.createdAt),
+  })
+);
+
+export const userLearnings = pgTable(
+  'user_learnings',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    taskId: varchar('task_id', { length: 255 }),
+    content: text('content').notNull(),
+    category: varchar('category', { length: 100 }),
+    relevanceScore: real('relevance_score').notNull().default(1.0),
+    timesApplied: integer('times_applied').notNull().default(0),
+    searchVector: text('search_vector'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    searchVectorIdx: index('user_learnings_search_vector_idx').using(
+      'gin',
+      sql`to_tsvector('english', ${table.searchVector})`
+    ),
+    userIdIdx: index('user_learnings_user_id_idx').on(table.userId),
+    taskIdIdx: index('user_learnings_task_id_idx').on(table.taskId),
   })
 );
 
@@ -44,12 +63,10 @@ export const userFacts = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     fact: text('fact').notNull(),
-    // Full-text search vector - will be created via migration with generated column
     searchVector: text('search_vector'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
-    // GIN index for fast full-text search
     searchVectorIdx: index('user_facts_search_vector_idx').using(
       'gin',
       sql`to_tsvector('english', ${table.searchVector})`
@@ -70,28 +87,26 @@ export const observations = pgTable(
     type: varchar('type', { length: 50 }).notNull().default('manual'),
     title: text('title').notNull(),
     content: text('content').notNull(),
-    project: varchar('project', { length: 100 }),
-    scope: varchar('scope', { length: 20 }).notNull().default('project'), // 'project' | 'personal'
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    scope: varchar('scope', { length: 20 }).notNull().default('project'),
     topicKey: varchar('topic_key', { length: 255 }),
     normalizedHash: varchar('normalized_hash', { length: 32 }),
     revisionCount: integer('revision_count').notNull().default(1),
     duplicateCount: integer('duplicate_count').notNull().default(1),
     lastSeenAt: timestamp('last_seen_at'),
-    // Full-text search vector - will be created via migration with generated column
     searchVector: text('search_vector'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
-    deletedAt: timestamp('deleted_at'), // Soft delete
+    deletedAt: timestamp('deleted_at'),
   },
   (table) => ({
-    // GIN index for fast full-text search
     searchVectorIdx: index('observations_search_vector_idx').using(
       'gin',
       sql`to_tsvector('english', ${table.searchVector})`
     ),
     userIdIdx: index('observations_user_id_idx').on(table.userId),
     topicKeyIdx: index('observations_topic_key_idx').on(table.topicKey),
-    projectIdx: index('observations_project_idx').on(table.project),
+    projectIdIdx: index('observations_project_id_idx').on(table.projectId),
     typeIdx: index('observations_type_idx').on(table.type),
     hashIdx: index('observations_hash_idx').on(table.normalizedHash),
     updatedAtIdx: index('observations_updated_at_idx').on(table.updatedAt),
@@ -99,15 +114,15 @@ export const observations = pgTable(
   })
 );
 
-// Types
-export type TaskMemory = typeof taskMemories.$inferSelect;
-export type NewTaskMemory = typeof taskMemories.$inferInsert;
+export type TaskLog = typeof taskLogs.$inferSelect;
+export type NewTaskLog = typeof taskLogs.$inferInsert;
+export type UserLearning = typeof userLearnings.$inferSelect;
+export type NewUserLearning = typeof userLearnings.$inferInsert;
 export type UserFact = typeof userFacts.$inferSelect;
 export type NewUserFact = typeof userFacts.$inferInsert;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
 
-// DTOs for service layer
 export type TaskMemoryDto = {
   prompt: string;
   outcome: 'completed' | 'failed';
@@ -126,7 +141,7 @@ export type ObservationDto = {
   type: string;
   title: string;
   content: string;
-  project?: string;
+  projectId?: number;
   scope: string;
   topicKey?: string;
   normalizedHash?: string;
@@ -144,6 +159,7 @@ export type SaveObservationInput = {
   taskId?: string;
   obsType?: string;
   project?: string;
+  projectId?: number;
   scope?: string;
   topicKey?: string;
 };
@@ -151,5 +167,6 @@ export type SaveObservationInput = {
 export type SearchObservationsOpts = {
   typeFilter?: string;
   project?: string;
+  projectId?: number;
   limit?: number;
 };

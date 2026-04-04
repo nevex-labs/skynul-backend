@@ -9,15 +9,34 @@
  * - Blocking (fallback): vision → parse → execute (original behavior)
  */
 
-import type { Task, TaskAction, TaskStep } from '../../../types';
-import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction, TaskStep } from '../../../shared/types';
+import type { ProviderId } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { childLogger } from '../../logger';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { attemptRecovery, autoCompact, isContextLengthError, snipHistory } from '../compaction';
 import { computeBudget } from '../context-budget';
 import { formatError } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
+
+/**
+ * Clean up verbose provider errors (e.g. Gemini JSON payloads).
+ */
+function cleanErrorMessage(raw: string | undefined): string {
+  if (!raw) return 'Unknown error';
+  // Try to extract message from JSON error responses
+  try {
+    const jsonMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
+    if (jsonMatch) return jsonMatch[1];
+  } catch {
+    /* ignore */
+  }
+  // Truncate very long errors
+  if (raw.length > 300) {
+    return raw.slice(0, 300) + '...';
+  }
+  return raw;
+}
 import { TaskMetricsCollector, TurnTimer, storeTaskMetrics } from '../metrics';
 import { runStreamingTurn } from '../streaming/streaming-loop';
 import type { TaskManager } from '../task-manager';
@@ -380,9 +399,13 @@ export async function runAgentLoop(
         { step: stepIndex, reason: action.reason, totalMs: metrics.totalMs, costUsd: metrics.estimatedCostUsd },
         'Task failed'
       );
+      // Clean the error reason for storage (strip verbose JSON payloads)
+      const cleanReason = cleanErrorMessage(action.reason);
+      task.error = cleanReason;
+      task.summary = undefined; // Clear "Thinking..." summary
       task.steps.push(step);
       callbacks.recordStep(step);
-      return finish(task, 'failed', callbacks, action.reason);
+      return finish(task, 'failed', callbacks, cleanReason);
     }
 
     if (callbacks.isAborted()) {

@@ -6,7 +6,7 @@ import { Http, createEffectRoute } from '../../lib/hono-effect';
 import type { HttpResponse } from '../../lib/hono-effect';
 import { ChannelService } from '../../services/channels/tag';
 import { ChannelNotFoundError } from '../../shared/errors';
-import type { ChannelId } from '../../types';
+import type { ChannelId } from '../../shared/types';
 
 const handler = createEffectRoute(AppLayer as any);
 

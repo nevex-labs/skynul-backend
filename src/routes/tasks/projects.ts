@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AppLayer } from '../../config/layers';
 import { Http, createEffectRoute } from '../../lib/hono-effect';
 import type { HttpResponse } from '../../lib/hono-effect';
+import { getJwtUserId } from '../../middleware/jwt';
 import { ProjectService } from '../../services/projects/tag';
 
 const handler = createEffectRoute(AppLayer as any);
@@ -31,8 +32,10 @@ const projectsRoute = new Hono()
     '/',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const service = yield* ProjectService;
-        const list = yield* service.list();
+        const list = yield* service.list(userId);
         return Http.ok({ projects: list });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -41,6 +44,8 @@ const projectsRoute = new Hono()
     '/',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const body = yield* Effect.tryPromise({
           try: () => c.req.json(),
           catch: () => null,
@@ -52,7 +57,7 @@ const projectsRoute = new Hono()
         }
 
         const service = yield* ProjectService;
-        const project = yield* service.create(parsed.data.name, parsed.data.color);
+        const project = yield* service.create(userId, parsed.data.name, parsed.data.color);
         return Http.created(project);
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -61,6 +66,8 @@ const projectsRoute = new Hono()
     '/:id',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const id = Number.parseInt(c.req.param('id') || '', 10);
         if (isNaN(id)) {
           return Http.badRequest('Invalid project ID');
@@ -77,7 +84,7 @@ const projectsRoute = new Hono()
         }
 
         const service = yield* ProjectService;
-        yield* service.update(id, parsed.data.name, parsed.data.color);
+        yield* service.update(userId, id, parsed.data.name, parsed.data.color);
         return Http.ok({ ok: true });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -86,13 +93,15 @@ const projectsRoute = new Hono()
     '/:id',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const id = Number.parseInt(c.req.param('id') || '', 10);
         if (isNaN(id)) {
           return Http.badRequest('Invalid project ID');
         }
 
         const service = yield* ProjectService;
-        yield* service.delete(id);
+        yield* service.delete(userId, id);
         return Http.ok({ ok: true });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -101,6 +110,8 @@ const projectsRoute = new Hono()
     '/:id/tasks/:taskId',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const id = Number.parseInt(c.req.param('id') || '', 10);
         const taskId = c.req.param('taskId');
         if (isNaN(id) || !taskId) {
@@ -108,7 +119,7 @@ const projectsRoute = new Hono()
         }
 
         const service = yield* ProjectService;
-        yield* service.addTask(id, taskId);
+        yield* service.addTask(userId, id, taskId);
         return Http.ok({ ok: true });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -117,6 +128,8 @@ const projectsRoute = new Hono()
     '/:id/tasks/:taskId',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getJwtUserId(c);
+        if (userId == null) return Http.unauthorized();
         const id = Number.parseInt(c.req.param('id') || '', 10);
         const taskId = c.req.param('taskId');
         if (isNaN(id) || !taskId) {
@@ -124,7 +137,7 @@ const projectsRoute = new Hono()
         }
 
         const service = yield* ProjectService;
-        yield* service.removeTask(id, taskId);
+        yield* service.removeTask(userId, id, taskId);
         return Http.ok({ ok: true });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )

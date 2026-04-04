@@ -145,7 +145,7 @@ walletAuthGroup.post('/verify', async (c) => {
           id: userId,
           walletAddress: recoveredAddress,
           chain,
-          isPrimary: wallet.isPrimary === 'true',
+          isPrimary: wallet.isPrimary,
         },
       });
     }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
@@ -170,7 +170,7 @@ walletAuthGroup.get(
         wallets: wallets.map((w) => ({
           address: w.address,
           chain: w.chain,
-          isPrimary: w.isPrimary === 'true',
+          isPrimary: w.isPrimary,
           lastSignedAt: w.lastSignedAt,
         })),
       });

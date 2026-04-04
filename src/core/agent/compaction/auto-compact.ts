@@ -8,8 +8,8 @@
  * - Preserves system context and recent messages
  */
 
-import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { ProviderId } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { childLogger } from '../../logger';
 
 const logger = childLogger({ component: 'auto-compact' });

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../types';
+import type { ChatMessage } from '../../shared/types';
 import {
   CHATGPT_CODEX_API_ENDPOINT,
   type StoredTokens,

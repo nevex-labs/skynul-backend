@@ -2,7 +2,7 @@
  * Ollama vision provider — native Ollama API with JSON mode (local).
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { createVisionProvider } from './base-vision';
 import { getSecret } from './secret-adapter';
 import { toText } from './vision-utils';

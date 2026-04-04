@@ -5,8 +5,8 @@
  * When usage crosses thresholds, signals which compression levels to apply.
  */
 
-import type { ProviderId } from '../../types';
-import type { VisionMessage } from '../../types';
+import type { ProviderId } from '../../shared/types';
+import type { VisionMessage } from '../../shared/types';
 
 // ── Context window sizes by provider:model ────────────────────────────────────
 // Values are approximate. Override via policy.contextWindowOverride.

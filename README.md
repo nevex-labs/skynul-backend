@@ -145,7 +145,9 @@ src/
 │       ├── schedule-store.ts   # Cron-based recurring tasks
 │       ├── secret-store.ts     # Encrypted credential storage
 │       └── schemas.ts          # Zod validation schemas
-└── types/                      # Shared TypeScript types
+└── shared/
+    ├── types/                  # Tipos TypeScript transversales
+    └── errors/                 # Errores compartidos
 ```
 
 ## API

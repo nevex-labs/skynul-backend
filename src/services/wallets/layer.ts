@@ -57,7 +57,7 @@ export const WalletServiceLive = Layer.effect(
                   userId: newUser.id,
                   address: address.toLowerCase(),
                   chain,
-                  isPrimary: 'true',
+                  isPrimary: true,
                   lastSignedAt: new Date(),
                 })
                 .returning();
@@ -123,7 +123,7 @@ export const WalletServiceTest = Layer.succeed(
           userId: 1,
           address: address.toLowerCase(),
           chain,
-          isPrimary: 'true',
+          isPrimary: true,
           lastSignedAt: new Date(),
           createdAt: new Date(),
         } as Wallet,

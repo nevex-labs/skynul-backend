@@ -1,7 +1,11 @@
-import { boolean, integer, pgTable, primaryKey, serial, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { integer, pgTable, primaryKey, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { users } from './users';
 
 export const projects = pgTable('projects', {
   id: serial('id').primaryKey(),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   color: varchar('color', { length: 7 }).notNull().default('#6366f1'),
   createdAt: timestamp('created_at').defaultNow(),

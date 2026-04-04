@@ -3,8 +3,8 @@
  * Does NOT execute browser/code/cdp actions directly.
  */
 
-import type { OrchestratorPlan, Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { OrchestratorPlan, Task, TaskAction } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import {
   type ExecutorContext,
   executeFactAction,

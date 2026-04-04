@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../../types';
+import type { ChatMessage } from '../../shared/types';
 import { createChatProvider } from './base-chat';
 
 const makeMessages = (n: number): ChatMessage[] =>

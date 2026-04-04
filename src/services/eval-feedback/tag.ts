@@ -8,7 +8,7 @@ import type {
   TradeVenue,
 } from '../../infrastructure/db/schema/eval-feedback';
 import { DatabaseError } from '../../shared/errors';
-import type { Task } from '../../types';
+import type { Task } from '../../shared/types';
 
 export interface EvalFeedbackServiceApi {
   /**

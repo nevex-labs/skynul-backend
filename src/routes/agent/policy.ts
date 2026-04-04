@@ -2,11 +2,14 @@ import { Effect } from 'effect';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { AppLayer } from '../../config/layers';
-import type { AppSetting } from '../../infrastructure/db/schema';
+import { CAPABILITY_GROUPS, MODE_CAPABILITIES } from '../../core/agent/mode-capabilities';
+import type { TaskMode } from '../../core/agent/mode-capabilities';
+import type { AppSetting, TradingSetting } from '../../infrastructure/db/schema';
 import { Http, createEffectRoute } from '../../lib/hono-effect';
 import type { HttpResponse } from '../../lib/hono-effect';
 import { SettingsService } from '../../services/settings';
-import type { ProviderId } from '../../types';
+import type { ProviderId } from '../../shared/types';
+import { ALL_TASK_CAPABILITIES, type TaskCapabilityId } from '../../shared/types/task';
 
 const handler = createEffectRoute(AppLayer as any);
 
@@ -28,11 +31,6 @@ const VALID_PROVIDERS: ProviderId[] = [
 ];
 
 // Validation schemas
-const capabilitySchema = z.object({
-  id: z.enum(['fs.read', 'fs.write', 'cmd.run', 'net.http']),
-  enabled: z.boolean(),
-});
-
 const themeSchema = z.object({
   themeMode: z.enum(['system', 'light', 'dark']),
 });
@@ -53,19 +51,13 @@ const enabledSchema = z.object({
   enabled: z.boolean(),
 });
 
-const workspaceSchema = z.object({
-  path: z.string().nullable(),
-});
-
-// Convert DB settings to legacy policy format for backward compatibility
-function toPolicyFormat(settings: AppSetting) {
+function toPolicyFormat(settings: AppSetting, trading: TradingSetting) {
   return {
-    workspaceRoot: settings.workspaceRoot,
     capabilities: {
-      'fs.read': settings.capabilityFsRead,
-      'fs.write': settings.capabilityFsWrite,
-      'cmd.run': settings.capabilityCmdRun,
-      'net.http': settings.capabilityNetHttp,
+      'fs.read': true,
+      'fs.write': true,
+      'cmd.run': true,
+      'net.http': true,
     },
     themeMode: settings.themeMode,
     language: settings.language,
@@ -75,7 +67,7 @@ function toPolicyFormat(settings: AppSetting) {
     },
     taskMemoryEnabled: settings.taskMemoryEnabled,
     taskAutoApprove: settings.taskAutoApprove,
-    paperTradingEnabled: settings.paperTradingEnabled,
+    paperTradingEnabled: trading.paperTrading,
   };
 }
 
@@ -91,32 +83,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const settings = yield* service.getSettings(userId);
-        return Http.ok(toPolicyFormat(settings));
-      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
-    )
-  )
-  .put(
-    '/capability',
-    handler((c) =>
-      Effect.gen(function* () {
-        const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
-        if (!userId) {
-          return Http.unauthorized();
-        }
-
-        const body = yield* Effect.tryPromise({
-          try: () => c.req.json(),
-          catch: () => null,
-        });
-
-        const parsed = capabilitySchema.safeParse(body);
-        if (!parsed.success) {
-          return Http.badRequest(parsed.error.message);
-        }
-
-        const service = yield* SettingsService;
-        const updated = yield* service.updateCapability(userId, parsed.data.id, parsed.data.enabled);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(settings, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -141,7 +109,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const updated = yield* service.updateTheme(userId, parsed.data.themeMode);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -166,7 +135,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const updated = yield* service.updateLanguage(userId, parsed.data.language);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -190,12 +160,13 @@ const policyRoutes = new Hono()
         }
 
         if (!VALID_PROVIDERS.includes(parsed.data.active as ProviderId)) {
-          return Http.badRequest(`Unknown provider: ${parsed.data.active}`);
+          return Http.badRequest(`Invalid provider. Must be one of: ${VALID_PROVIDERS.join(', ')}`);
         }
 
         const service = yield* SettingsService;
         const updated = yield* service.updateProvider(userId, parsed.data.active);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -220,7 +191,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const updated = yield* service.updateProviderModel(userId, parsed.data.model);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -245,7 +217,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const updated = yield* service.updateTaskMemory(userId, parsed.data.enabled);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -270,7 +243,8 @@ const policyRoutes = new Hono()
 
         const service = yield* SettingsService;
         const updated = yield* service.updateTaskAutoApprove(userId, parsed.data.enabled);
-        return Http.ok(toPolicyFormat(updated));
+        const trading = yield* service.getTradingSettings(userId);
+        return Http.ok(toPolicyFormat(updated, trading));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   )
@@ -294,36 +268,29 @@ const policyRoutes = new Hono()
         }
 
         const service = yield* SettingsService;
-        const updated = yield* service.updatePaperTrading(userId, parsed.data.enabled);
-        return Http.ok(toPolicyFormat(updated));
-      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
-    )
-  )
-  .put(
-    '/workspace',
-    handler((c) =>
-      Effect.gen(function* () {
-        const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
-        if (!userId) {
-          return Http.unauthorized();
-        }
-
-        const body = yield* Effect.tryPromise({
-          try: () => c.req.json(),
-          catch: () => null,
-        });
-
-        const parsed = workspaceSchema.safeParse(body);
-        if (!parsed.success) {
-          return Http.badRequest(parsed.error.message);
-        }
-
-        const service = yield* SettingsService;
-        const updated = yield* service.updateWorkspace(userId, parsed.data.path);
-        return Http.ok(toPolicyFormat(updated));
+        const tradingUpdated = yield* service.updatePaperTrading(userId, parsed.data.enabled);
+        const settings = yield* service.getSettings(userId);
+        return Http.ok(toPolicyFormat(settings, tradingUpdated));
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
   );
 
 export { policyRoutes as policy };
-export type PolicyRoute = typeof policyRoutes;
+export type PolicyRoutes = typeof policyRoutes;
+
+// ── Capabilities endpoint ─────────────────────────────────────────────────────
+
+const capabilitiesRoute = new Hono().get(
+  '/',
+  handler(() =>
+    Effect.succeed(
+      Http.ok({
+        groups: CAPABILITY_GROUPS,
+        modeDefaults: MODE_CAPABILITIES,
+      })
+    )
+  )
+);
+
+export { capabilitiesRoute as capabilities };
+export type CapabilitiesRoute = typeof capabilitiesRoute;

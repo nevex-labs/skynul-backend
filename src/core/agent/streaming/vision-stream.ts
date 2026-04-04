@@ -4,8 +4,8 @@
  * For non-streaming providers, yields the full response as a single chunk.
  */
 
-import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { ProviderId } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { codexVisionRespond } from '../../providers/codex-vision';
 import { parseSSE } from '../../providers/sse';
 
@@ -16,6 +16,27 @@ export type StreamChunk = {
   usage?: { inputTokens: number; outputTokens: number };
   error?: string;
 };
+
+/**
+ * Clean up verbose provider errors (e.g. Gemini JSON payloads).
+ * Extracts the human-readable message from nested error objects.
+ */
+function cleanProviderError(raw: string): string {
+  // Try to extract message from JSON error responses (e.g. Gemini, OpenAI)
+  try {
+    const jsonMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
+    if (jsonMatch) return jsonMatch[1];
+  } catch {
+    /* ignore */
+  }
+
+  // Truncate very long errors
+  if (raw.length > 300) {
+    return raw.slice(0, 300) + '...';
+  }
+
+  return raw;
+}
 
 /**
  * Stream vision response as an async generator.
@@ -42,7 +63,10 @@ export async function* streamVision(
     yield { type: 'delta', text: result.text };
     yield { type: 'done', fullText: result.text, usage: result.usage };
   } catch (e) {
-    yield { type: 'error', error: e instanceof Error ? e.message : String(e) };
+    const raw = e instanceof Error ? e.message : String(e);
+    // Clean up verbose provider errors (e.g. Gemini JSON payloads)
+    const cleaned = cleanProviderError(raw);
+    yield { type: 'error', error: cleaned };
   }
 }
 

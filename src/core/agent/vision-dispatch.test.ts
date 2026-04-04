@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { callVision } from './vision-dispatch';
 
 function makeMsg(role: 'user' | 'assistant', text: string): VisionMessage {

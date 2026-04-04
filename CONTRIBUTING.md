@@ -63,7 +63,7 @@ Open an issue with:
 
 1. Create `src/core/providers/your-provider.ts` extending `base-chat.ts`
 2. Create `src/core/providers/your-provider-vision.ts` extending `base-vision.ts` (if it supports vision)
-3. Add the provider ID to `ProviderId` in `src/types/policy.ts`
+3. Add the provider ID to `ProviderId` in `src/shared/types/policy.ts`
 4. Register it in `src/core/providers/dispatch.ts`
 5. Add tests
 
@@ -71,7 +71,7 @@ Open an issue with:
 
 1. Create `src/core/channels/your-channel.ts` implementing the channel interface
 2. Register it in `src/core/channels/channel-manager.ts`
-3. Add the channel ID to `ChannelId` in `src/types/channel.ts`
+3. Add the channel ID to `ChannelId` in `src/shared/types/channel.ts`
 4. Add tests
 
 ## License

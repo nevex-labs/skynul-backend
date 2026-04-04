@@ -16,7 +16,6 @@ export type ProviderId =
   | 'ollama';
 
 export type PolicyState = {
-  workspaceRoot: string | null;
   capabilities: Record<CapabilityId, boolean>;
   themeMode: ThemeMode;
   language: LanguageCode;
@@ -30,12 +29,11 @@ export type PolicyState = {
 };
 
 export const DEFAULT_POLICY: PolicyState = {
-  workspaceRoot: null,
   capabilities: {
-    'fs.read': false,
-    'fs.write': false,
-    'cmd.run': false,
-    'net.http': false,
+    'fs.read': true,
+    'fs.write': true,
+    'cmd.run': true,
+    'net.http': true,
   },
   themeMode: 'dark',
   language: 'en',
@@ -76,12 +74,10 @@ export type ChatSendResponse = {
 };
 
 export type ReadTextFileRequest = {
-  /** Relative to workspaceRoot. */
   path: string;
 };
 
 export type WriteTextFileRequest = {
-  /** Relative to workspaceRoot. */
   path: string;
   content: string;
   ifExists?: 'fail' | 'overwrite';

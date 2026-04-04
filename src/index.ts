@@ -17,8 +17,10 @@ import { analytics } from './routes/analytics';
 import { coinbaseAuthGroup } from './routes/auth/coinbase';
 import { walletAuthGroup } from './routes/auth/wallet';
 import { channelManager, integrationsGroup } from './routes/integrations';
+import { providersGroup } from './routes/providers';
 import { systemGroup } from './routes/system';
 import { schedules, tasksGroup } from './routes/tasks';
+import { tradingProvidersGroup } from './routes/trading-providers';
 import { walletGroup } from './routes/wallet';
 import { getPool } from './services/database/layer';
 import { addClient, clientCount, removeClient } from './ws/events';
@@ -142,6 +144,8 @@ const routes = app
   .route('/api/ai', aiGroup)
   .route('/api/agent', agentGroup)
   .route('/api/integrations', integrationsGroup)
+  .route('/api/providers', providersGroup)
+  .route('/api/trading-providers', tradingProvidersGroup)
   .route('/api/system', systemGroup)
   .route('/api/wallet', walletGroup)
   .route('/api/analytics', analytics)
@@ -162,8 +166,7 @@ async function start() {
       await migrate(db, { migrationsFolder: './src/infrastructure/db/migrations' });
       console.log('✓ Database migrations up to date');
     } else {
-      // Dev mode: schema is synced via `pnpm db:push` before starting
-      console.log('✓ Database connected (dev mode — use `pnpm db:push` for schema changes)');
+      console.log('✓ Database connected (dev mode — ejecutá `pnpm db:migrate` si hay migraciones nuevas)');
     }
 
     // Ensure system user exists (for TaskManager and system-level operations)

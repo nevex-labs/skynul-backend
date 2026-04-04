@@ -2,8 +2,8 @@
  * CDP / Polymarket mode — API-only, no browser.
  */
 
-import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeCexAction,

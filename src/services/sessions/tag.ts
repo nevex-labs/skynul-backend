@@ -6,8 +6,9 @@ export interface SessionInput {
   sessionId: string;
   accessToken: string;
   refreshToken: string;
-  expiresAt: number; // unix ms
-  userId: string;
+  expiresAt: number;
+  oauthSubject: string;
+  appUserId?: number | null;
   displayName?: string;
   avatarUrl?: string;
 }

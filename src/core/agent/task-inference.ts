@@ -1,5 +1,5 @@
-import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode, type TaskRunnerId } from '../../types';
-import type { ChatMessage } from '../../types';
+import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode, type TaskRunnerId } from '../../shared/types';
+import type { ChatMessage } from '../../shared/types';
 import { deriveRunner } from './task-routing';
 
 export type TaskInferenceInput = {

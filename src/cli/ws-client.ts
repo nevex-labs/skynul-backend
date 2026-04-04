@@ -1,4 +1,4 @@
-import type { Task } from '../types/task.js';
+import type { Task } from '../shared/types/task.js';
 
 export type ServerEvent =
   | { type: 'connected'; payload: { ts: number } }

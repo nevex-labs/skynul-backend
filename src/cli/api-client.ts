@@ -1,5 +1,5 @@
-import type { ChannelSettings } from '../types/channel.js';
-import type { Task, TaskCreateRequest } from '../types/task.js';
+import type { ChannelSettings } from '../shared/types/channel.js';
+import type { Task, TaskCreateRequest } from '../shared/types/task.js';
 
 const DEFAULT_BASE = 'http://127.0.0.1:3141';
 

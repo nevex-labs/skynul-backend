@@ -3,7 +3,7 @@
  * edge function `chat-deepseek`, which holds the Deepseek API key.
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { buildSupabaseVisionRequest, createVisionProvider } from './base-vision';
 import { convertToEdgeMessages } from './vision-utils';
 

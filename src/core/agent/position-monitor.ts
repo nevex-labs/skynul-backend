@@ -9,7 +9,7 @@
 import { Effect } from 'effect';
 import { DatabaseLive } from '../../services/database';
 import { PaperPortfolioService, PaperPortfolioServiceLive } from '../../services/paper-portfolio';
-import type { Task } from '../../types';
+import type { Task } from '../../shared/types';
 import { PolymarketClient } from '../polymarket-client';
 import type { TaskManager } from './task-manager';
 

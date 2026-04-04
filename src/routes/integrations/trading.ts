@@ -5,7 +5,7 @@ import { getAllChains } from '../../core/chain/config';
 import { Http, createEffectRoute } from '../../lib/hono-effect';
 import type { HttpResponse } from '../../lib/hono-effect';
 import { SettingsService } from '../../services/settings';
-import type { CexExchangeId } from '../../types/trading';
+import type { CexExchangeId } from '../../shared/types/trading';
 
 const handler = createEffectRoute(AppLayer as any);
 

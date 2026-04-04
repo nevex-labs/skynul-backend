@@ -14,7 +14,7 @@
 
 import type { Effect } from 'effect';
 import type { ObservationDto } from '../../infrastructure/db/schema/task-memory';
-import type { ProviderId } from '../../types';
+import type { ProviderId } from '../../shared/types';
 import { childLogger } from '../logger';
 import { getSummarizationModel } from './compaction/auto-compact';
 

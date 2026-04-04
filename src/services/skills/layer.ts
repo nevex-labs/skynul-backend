@@ -1,6 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 import { skills } from '../../infrastructure/db/schema';
+import type { Skill } from '../../infrastructure/db/schema';
 import { DatabaseError, SkillNotFoundError } from '../../shared/errors';
 import { DatabaseService } from '../database';
 import { type SkillInput, SkillService } from './tag';
@@ -10,21 +11,24 @@ export const SkillServiceLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* DatabaseService;
 
+    const forUser = (userId: number) => and(eq(skills.userId, userId));
+
     return SkillService.of({
-      list: () =>
+      list: (userId) =>
         Effect.tryPromise({
           try: async () => {
-            return await db.select().from(skills).orderBy(skills.createdAt);
+            return await db.select().from(skills).where(forUser(userId)).orderBy(skills.createdAt);
           },
           catch: (error) => new DatabaseError(error),
         }),
 
-      create: (input) =>
+      create: (userId, input) =>
         Effect.tryPromise({
           try: async () => {
             const [skill] = await db
               .insert(skills)
               .values({
+                userId,
                 name: input.name,
                 tag: input.tag,
                 description: input.description,
@@ -37,7 +41,7 @@ export const SkillServiceLive = Layer.effect(
           catch: (error) => new DatabaseError(error),
         }),
 
-      update: (id, input) =>
+      update: (userId, id, input) =>
         Effect.gen(function* () {
           const result = yield* Effect.tryPromise({
             try: async () => {
@@ -51,7 +55,7 @@ export const SkillServiceLive = Layer.effect(
                   enabled: input.enabled,
                   updatedAt: new Date(),
                 })
-                .where(eq(skills.id, id))
+                .where(and(eq(skills.id, id), eq(skills.userId, userId)))
                 .returning();
               return updated;
             },
@@ -65,19 +69,33 @@ export const SkillServiceLive = Layer.effect(
           return result;
         }),
 
-      delete: (id) =>
-        Effect.tryPromise({
-          try: async () => {
-            await db.delete(skills).where(eq(skills.id, id));
-          },
-          catch: (error) => new DatabaseError(error),
+      delete: (userId, id) =>
+        Effect.gen(function* () {
+          const result = yield* Effect.tryPromise({
+            try: async () => {
+              const [deleted] = await db
+                .delete(skills)
+                .where(and(eq(skills.id, id), eq(skills.userId, userId)))
+                .returning();
+              return deleted;
+            },
+            catch: (error) => new DatabaseError(error),
+          });
+
+          if (!result) {
+            return yield* Effect.fail(new SkillNotFoundError(id));
+          }
         }),
 
-      toggle: (id) =>
+      toggle: (userId, id) =>
         Effect.gen(function* () {
           const skill = yield* Effect.tryPromise({
             try: async () => {
-              const [s] = await db.select().from(skills).where(eq(skills.id, id)).limit(1);
+              const [s] = await db
+                .select()
+                .from(skills)
+                .where(and(eq(skills.id, id), eq(skills.userId, userId)))
+                .limit(1);
               return s;
             },
             catch: (error) => new DatabaseError(error),
@@ -95,7 +113,7 @@ export const SkillServiceLive = Layer.effect(
                   enabled: !skill.enabled,
                   updatedAt: new Date(),
                 })
-                .where(eq(skills.id, id))
+                .where(and(eq(skills.id, id), eq(skills.userId, userId)))
                 .returning();
               return updated;
             },
@@ -105,17 +123,18 @@ export const SkillServiceLive = Layer.effect(
           return result!;
         }),
 
-      import: (input) =>
+      import: (userId, input) =>
         Effect.tryPromise({
           try: async () => {
             await db.insert(skills).values({
+              userId,
               name: input.name,
               tag: input.tag,
               description: input.description,
               prompt: input.prompt,
               enabled: input.enabled ?? true,
             });
-            return await db.select().from(skills).orderBy(skills.createdAt);
+            return await db.select().from(skills).where(forUser(userId)).orderBy(skills.createdAt);
           },
           catch: (error) => new DatabaseError(error),
         }),
@@ -123,14 +142,15 @@ export const SkillServiceLive = Layer.effect(
   })
 );
 
-// Layer para testing
+// Test layer
 export const SkillServiceTest = Layer.succeed(
   SkillService,
   SkillService.of({
     list: () => Effect.succeed([]),
-    create: (input) =>
+    create: (_userId, input) =>
       Effect.succeed({
         id: 1,
+        userId: _userId,
         name: input.name,
         tag: input.tag,
         description: input.description,
@@ -138,10 +158,11 @@ export const SkillServiceTest = Layer.succeed(
         enabled: input.enabled ?? true,
         createdAt: new Date(),
         updatedAt: new Date(),
-      }),
-    update: (id, input) =>
+      } as Skill),
+    update: (_userId, id, input) =>
       Effect.succeed({
         id,
+        userId: _userId,
         name: input.name,
         tag: input.tag,
         description: input.description,
@@ -149,11 +170,12 @@ export const SkillServiceTest = Layer.succeed(
         enabled: input.enabled ?? true,
         createdAt: new Date(),
         updatedAt: new Date(),
-      }),
+      } as Skill),
     delete: () => Effect.succeed(undefined),
-    toggle: (id) =>
+    toggle: (_userId, id) =>
       Effect.succeed({
         id,
+        userId: _userId,
         name: 'Test',
         tag: 'test',
         description: 'Test skill',
@@ -161,7 +183,7 @@ export const SkillServiceTest = Layer.succeed(
         enabled: false,
         createdAt: new Date(),
         updatedAt: new Date(),
-      }),
+      } as Skill),
     import: () => Effect.succeed([]),
   })
 );

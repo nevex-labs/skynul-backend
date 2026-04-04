@@ -4,7 +4,7 @@
 import { Effect } from 'effect';
 import { AppLayer } from '../../config/layers';
 import { SettingsService } from '../../services/settings';
-import type { CexExchangeId, TradingSettings } from '../../types/trading';
+import type { CexExchangeId, TradingSettings } from '../../shared/types/trading';
 
 const SYSTEM_USER_ID = 1;
 

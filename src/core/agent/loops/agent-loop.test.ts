@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { callVision } from '../vision-dispatch';
 import { runAgentLoop } from './agent-loop';
 

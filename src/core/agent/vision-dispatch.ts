@@ -3,8 +3,8 @@
  * Normalizes different return types to { text, usage? }.
  */
 
-import type { ProviderId } from '../../types';
-import type { VisionMessage } from '../../types';
+import type { ProviderId } from '../../shared/types';
+import type { VisionMessage } from '../../shared/types';
 import { codexVisionRespond } from '../providers/codex-vision';
 
 export type VisionResult = {

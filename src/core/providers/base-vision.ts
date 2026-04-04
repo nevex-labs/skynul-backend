@@ -14,7 +14,7 @@
  * };
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { getSupabaseToken } from '../supabase-token';
 import { getSecret } from './secret-adapter';
 

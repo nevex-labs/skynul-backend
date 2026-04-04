@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ChannelSettings } from '../types/channel.js';
-import type { Task, TaskCreateRequest } from '../types/task.js';
+import type { ChannelSettings } from '../shared/types/channel.js';
+import type { Task, TaskCreateRequest } from '../shared/types/task.js';
 import { SkynulClient } from './api-client.js';
 import { WsClient } from './ws-client.js';
 

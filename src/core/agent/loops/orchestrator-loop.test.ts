@@ -2,7 +2,7 @@ import { Effect, Layer } from 'effect';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseLive } from '../../../services/database';
 import { TaskMemoryService } from '../../../services/task-memory';
-import type { OrchestratorPlan, Task } from '../../../types';
+import type { OrchestratorPlan, Task } from '../../../shared/types';
 import type { ExecutorContext } from '../action-executors';
 import { executeOrchestratorAction, setupOrchestratorLoop } from './orchestrator-loop';
 

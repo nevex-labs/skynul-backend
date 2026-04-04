@@ -10,7 +10,7 @@ import {
   tradeScores,
 } from '../../infrastructure/db/schema/eval-feedback';
 import { DatabaseError } from '../../shared/errors';
-import type { Task } from '../../types';
+import type { Task } from '../../shared/types';
 import { DatabaseService } from '../database/tag';
 import { EvalFeedbackService } from './tag';
 
@@ -364,6 +364,7 @@ export const EvalFeedbackServiceLive = Layer.effect(
               .select()
               .from(tradeScores)
               .where(and(eq(tradeScores.userId, userId), eq(tradeScores.taskId, taskId)))
+              .orderBy(desc(tradeScores.createdAt))
               .limit(1);
             return row ? toTradeScoreDto(row) : null;
           },

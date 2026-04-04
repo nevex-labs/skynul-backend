@@ -1,0 +1,1 @@
+CREATE TYPE "public"."chain" AS ENUM('evm', 'solana', 'bitcoin');

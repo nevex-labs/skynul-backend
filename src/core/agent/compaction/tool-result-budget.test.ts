@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { VisionMessage } from '../../../types';
+import type { VisionMessage } from '../../../shared/types';
 import {
   ACTION_LIMITS,
   DEFAULT_MAX_RESULT_CHARS,

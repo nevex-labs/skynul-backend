@@ -3,7 +3,7 @@
  * Pure function, no side effects. Safe to call on every chunk.
  */
 
-import type { TaskAction } from '../../../types';
+import type { TaskAction } from '../../../shared/types';
 
 const VALID_ACTION_TYPES = new Set([
   'click',

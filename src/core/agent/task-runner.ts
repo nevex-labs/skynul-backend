@@ -5,7 +5,7 @@
  * iteration logic and action execution.
  */
 
-import type { ProviderId, Task } from '../../types';
+import type { ProviderId, Task } from '../../shared/types';
 import type { BrowserEngine } from '../browser/engine/browser-engine';
 import type { ExecutorContext } from './action-executors';
 import { AppBridge } from './app-bridge';

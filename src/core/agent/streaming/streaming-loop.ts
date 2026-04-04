@@ -6,9 +6,9 @@
  * as a drop-in replacement for the blocking callVision + parseModelResponse flow.
  */
 
-import type { Task, TaskAction, TaskStep } from '../../../types';
-import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction, TaskStep } from '../../../shared/types';
+import type { ProviderId } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { type DetectedAction, detectAction } from './json-detector';
 import { budgetResult } from './tool-result-budget';
 import { type StreamChunk, streamVision } from './vision-stream';

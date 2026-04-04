@@ -21,7 +21,29 @@ function getUserId(c: any): number | null {
 
 const secrets = new Hono()
   .get(
-    '/keys',
+    '/providers',
+    handler((c) =>
+      Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
+        const service = yield* SecretService;
+        const allKeys = yield* service.list(userId);
+        const configured = new Set(allKeys.map((s) => s.keyName));
+
+        return Http.ok({
+          providers: {
+            openai: configured.has('openai.apiKey'),
+            gemini: configured.has('gemini.apiKey'),
+            anthropic: configured.has('anthropic.apiKey'),
+            deepseek: configured.has('deepseek.apiKey'),
+            openrouter: configured.has('openrouter.apiKey'),
+          },
+        });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .get(
     handler((c) =>
       Effect.gen(function* () {
         const userId = getUserId(c);

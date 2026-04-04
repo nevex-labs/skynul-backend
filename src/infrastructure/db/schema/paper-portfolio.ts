@@ -1,4 +1,4 @@
-import { integer, pgTable, real, serial, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { integer, pgTable, real, serial, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 /**
@@ -6,15 +6,19 @@ import { users } from './users';
  * Each user has their own isolated paper trading environment.
  */
 
-export const paperBalances = pgTable('paper_balances', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  asset: varchar('asset', { length: 50 }).notNull(),
-  amount: real('amount').notNull().default(0),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
+export const paperBalances = pgTable(
+  'paper_balances',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    asset: varchar('asset', { length: 50 }).notNull(),
+    amount: real('amount').notNull().default(0),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (t) => [unique('paper_balances_user_asset_unique').on(t.userId, t.asset)]
+);
 
 export const paperTrades = pgTable('paper_trades', {
   id: serial('id').primaryKey(),

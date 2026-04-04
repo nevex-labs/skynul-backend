@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { AppLayer } from '../../config/layers';
 import { Http, type HttpResponse, createEffectRoute } from '../../lib/hono-effect';
 import { SchedulesService } from '../../services/schedules';
-import type { ScheduleFrequency } from '../../types';
+import type { ScheduleFrequency } from '../../shared/types';
 
 const handler = createEffectRoute(AppLayer as any);
 

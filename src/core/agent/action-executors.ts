@@ -22,7 +22,7 @@ import { SmartWalletService } from '../../services/smart-wallet/tag';
 import { SwapServiceLive } from '../../services/swap/layer';
 import { SwapService } from '../../services/swap/tag';
 import { DatabaseError } from '../../shared/errors';
-import type { Task, TaskAction } from '../../types';
+import type { Task, TaskAction } from '../../shared/types';
 
 // Helper to run SwapService effects
 async function runSwapEffect<T>(

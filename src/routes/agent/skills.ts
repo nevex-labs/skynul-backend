@@ -18,6 +18,10 @@ const handleError = (error: any): HttpResponse => {
   return Http.internalError();
 };
 
+function getUserId(c: any): number | null {
+  return (c.get('jwtPayload') as any)?.userId ?? null;
+}
+
 const skillSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1),
@@ -36,8 +40,11 @@ const skillsRoute = new Hono()
     '/',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
         const service = yield* SkillService;
-        const list = yield* service.list();
+        const list = yield* service.list(userId);
         return Http.ok({ skills: list });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -46,6 +53,9 @@ const skillsRoute = new Hono()
     '/',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
         const body = yield* Effect.tryPromise({
           try: () => c.req.json(),
           catch: () => null,
@@ -59,7 +69,7 @@ const skillsRoute = new Hono()
         const service = yield* SkillService;
 
         if (parsed.data.id) {
-          yield* service.update(parsed.data.id, {
+          yield* service.update(userId, parsed.data.id, {
             name: parsed.data.name,
             tag: parsed.data.tag,
             description: parsed.data.description,
@@ -67,7 +77,7 @@ const skillsRoute = new Hono()
             enabled: parsed.data.enabled,
           });
         } else {
-          yield* service.create({
+          yield* service.create(userId, {
             name: parsed.data.name,
             tag: parsed.data.tag,
             description: parsed.data.description,
@@ -76,7 +86,7 @@ const skillsRoute = new Hono()
           });
         }
 
-        const all = yield* service.list();
+        const all = yield* service.list(userId);
         return Http.ok({ skills: all });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -85,14 +95,17 @@ const skillsRoute = new Hono()
     '/:id',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
         const id = Number.parseInt(c.req.param('id') || '', 10);
         if (isNaN(id)) {
           return Http.badRequest('Invalid skill ID');
         }
 
         const service = yield* SkillService;
-        yield* service.delete(id);
-        const all = yield* service.list();
+        yield* service.delete(userId, id);
+        const all = yield* service.list(userId);
         return Http.ok({ skills: all });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -101,14 +114,17 @@ const skillsRoute = new Hono()
     '/:id/toggle',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
         const id = Number.parseInt(c.req.param('id') || '', 10);
         if (isNaN(id)) {
           return Http.badRequest('Invalid skill ID');
         }
 
         const service = yield* SkillService;
-        yield* service.toggle(id);
-        const all = yield* service.list();
+        yield* service.toggle(userId, id);
+        const all = yield* service.list(userId);
         return Http.ok({ skills: all });
       }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
     )
@@ -117,6 +133,9 @@ const skillsRoute = new Hono()
     '/import',
     handler((c) =>
       Effect.gen(function* () {
+        const userId = getUserId(c);
+        if (!userId) return Http.unauthorized();
+
         const body = yield* Effect.tryPromise({
           try: () => c.req.json(),
           catch: () => null,
@@ -165,7 +184,7 @@ const skillsRoute = new Hono()
           prompt = String(parsed.prompt ?? '');
         }
 
-        const all = yield* service.import({
+        const all = yield* service.import(userId, {
           name,
           tag,
           description,

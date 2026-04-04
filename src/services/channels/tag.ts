@@ -1,7 +1,7 @@
 import { Context, Effect } from 'effect';
 import type { ChannelGlobalSetting, ChannelSetting } from '../../infrastructure/db/schema';
 import { ChannelNotFoundError, DatabaseError } from '../../shared/errors';
-import type { ChannelId } from '../../types';
+import type { ChannelId } from '../../shared/types';
 
 export interface ChannelServiceApi {
   // Global settings

@@ -8,7 +8,7 @@ import { inferTaskSetup } from '../../core/agent/task-inference';
 import { TaskManager } from '../../core/agent/task-manager';
 import { dispatchChat } from '../../core/providers/dispatch';
 import { Http, type HttpResponse, createEffectRoute } from '../../lib/hono-effect';
-import { DEFAULT_POLICY, TASK_CAPABILITY_IDS, type TaskCreateRequest, type TaskListResponse } from '../../types';
+import { DEFAULT_POLICY, TASK_CAPABILITY_IDS, type TaskCreateRequest, type TaskListResponse } from '../../shared/types';
 
 const handler = createEffectRoute(AppLayer as any);
 

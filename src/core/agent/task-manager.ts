@@ -9,12 +9,13 @@ import { DatabaseLive } from '../../services/database';
 import { EvalFeedbackService, EvalFeedbackServiceLive } from '../../services/eval-feedback';
 import { TaskMemoryService, TaskMemoryServiceLive } from '../../services/task-memory';
 import { DatabaseError } from '../../shared/errors';
-import type { AgentDefinition, PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../types';
+import type { AgentDefinition, PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../shared/types';
 import { broadcast } from '../../ws/events';
 import { isPerTaskBrowserSessionMode, parseBrowserSessionMode } from '../browser/session-mode';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
 import type { AgentRegistry } from './agent-registry';
 import { recallMemoriesFast } from './memory-recall';
+import { loadPolicy } from './policy-loader';
 import { deriveRunner } from './task-routing';
 
 // Helper to run EvalFeedbackService effects
@@ -211,7 +212,8 @@ export class TaskManager extends EventEmitter {
     task.updatedAt = Date.now();
     this.pushUpdate(task);
 
-    const policy = this.getPolicy?.() ?? null;
+    // Read policy directly from DB (always fresh, never stale)
+    const policy = await loadPolicy(task.userId ?? 0);
     const provider = policy?.provider.active ?? 'chatgpt';
     const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
 
@@ -280,6 +282,7 @@ export class TaskManager extends EventEmitter {
       .catch(async (e) => {
         task.status = 'failed';
         task.error = e instanceof Error ? e.message : String(e);
+        task.summary = undefined; // Clear "Thinking..." summary
         task.updatedAt = Date.now();
         this.tasks.set(taskId, task);
         this.pushUpdate(task);
@@ -335,7 +338,7 @@ export class TaskManager extends EventEmitter {
     });
 
     const doneStep = [...result.steps].reverse().find((s) => (s.action as any)?.type === 'done') as
-      | (import('../../types').TaskStep & { action: { type: 'done'; summary: string } })
+      | (import('../../shared/types').TaskStep & { action: { type: 'done'; summary: string } })
       | undefined;
 
     const doneSummary = doneStep?.action?.summary;
@@ -519,7 +522,8 @@ export class TaskManager extends EventEmitter {
     this.pushUpdate(task);
 
     // Re-launch the runner (same logic as approve)
-    const policy = this.getPolicy?.() ?? null;
+    // Read policy directly from DB (always fresh, never stale)
+    const policy = await loadPolicy(task.userId ?? 0);
     const provider = policy?.provider.active ?? 'chatgpt';
     const openaiModel = task.model ?? policy?.provider.openaiModel ?? 'gpt-4.1';
 
@@ -591,6 +595,7 @@ export class TaskManager extends EventEmitter {
       .catch(async (e) => {
         task.status = 'failed';
         task.error = e instanceof Error ? e.message : String(e);
+        task.summary = undefined; // Clear "Thinking..." summary
         task.updatedAt = Date.now();
         this.tasks.set(taskId, task);
         this.pushUpdate(task);
@@ -890,6 +895,7 @@ export class TaskManager extends EventEmitter {
         } else {
           task.status = 'failed';
           task.error = 'Interrupted by server restart';
+          task.summary = undefined;
           task.updatedAt = Date.now();
           this.tasks.set(task.id, task);
         }

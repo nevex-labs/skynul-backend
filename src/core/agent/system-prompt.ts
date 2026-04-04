@@ -3,7 +3,7 @@
  * Instructs the model to analyze screenshots and respond with ONE action per turn.
  */
 
-import type { TaskCapabilityId } from '../../types';
+import type { TaskCapabilityId } from '../../shared/types';
 
 function getInterTaskBlock(): string {
   return `

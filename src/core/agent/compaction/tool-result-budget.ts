@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import type { VisionMessage } from '../../../types';
+import type { VisionMessage } from '../../../shared/types';
 import { childLogger } from '../../logger';
 
 const logger = childLogger({ component: 'tool-result-budget' });

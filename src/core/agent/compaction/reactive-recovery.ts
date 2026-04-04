@@ -11,8 +11,8 @@
  * Never fails silently — always reports what was attempted.
  */
 
-import type { ProviderId } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { ProviderId } from '../../../shared/types';
+import type { VisionMessage } from '../../../shared/types';
 import { childLogger } from '../../logger';
 import { DEFAULT_AUTO_COMPACT_CONFIG, autoCompact, getSummarizationModel } from './auto-compact';
 import { DEFAULT_SNIP_CONFIG, snipHistory } from './snip-compaction';

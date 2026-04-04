@@ -3,7 +3,7 @@
  * endpoint using OAuth tokens, following the same format as Clawdbot/OpenClaw.
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { CHATGPT_CODEX_API_ENDPOINT, loadTokens, refreshIfNeeded, saveTokens } from './chatgpt-oauth';
 import { parseSSE } from './sse';
 

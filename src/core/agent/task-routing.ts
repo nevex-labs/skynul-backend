@@ -1,4 +1,4 @@
-import type { Task, TaskCapabilityId, TaskMode, TaskRunnerId } from '../../types';
+import type { Task, TaskCapabilityId, TaskMode, TaskRunnerId } from '../../shared/types';
 
 export function deriveRunner(mode: TaskMode, capabilities: TaskCapabilityId[], orchestrate?: boolean): TaskRunnerId {
   if (orchestrate) return 'orchestrator';

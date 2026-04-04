@@ -10,4 +10,5 @@ export * from './app-settings';
 export * from './allowances';
 export * from './paper-portfolio';
 export * from './risk-guard';
+export * from './eval-feedback';
 export * from './task-memory';

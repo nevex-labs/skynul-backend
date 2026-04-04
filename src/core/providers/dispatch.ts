@@ -1,4 +1,4 @@
-import type { ChatMessage, ProviderId } from '../../types';
+import type { ChatMessage, ProviderId } from '../../shared/types';
 import { claudeRespond } from './claude';
 import { codexRespond, loadTokens } from './codex';
 import { deepseekRespond } from './deepseek';

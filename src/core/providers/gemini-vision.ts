@@ -2,7 +2,7 @@
  * Gemini vision provider — Google Generative Language API (generateContent).
  */
 
-import type { VisionMessage } from '../../types';
+import type { VisionMessage } from '../../shared/types';
 import { createVisionProvider } from './base-vision';
 import { getSecret } from './secret-adapter';
 import { extractDataUrl, toText } from './vision-utils';

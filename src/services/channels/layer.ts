@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 import { channelGlobalSettings, channelSettings } from '../../infrastructure/db/schema';
 import { ChannelNotFoundError, DatabaseError } from '../../shared/errors';
-import type { ChannelId } from '../../types';
+import type { ChannelId } from '../../shared/types';
 import { DatabaseService } from '../database';
 import { ChannelService } from './tag';
 

@@ -10,13 +10,13 @@
  */
 
 import { Effect } from 'effect';
-import type { MarketDataProvider } from '../../core/providers/market';
-import type { WalletProvider } from '../../core/providers/wallet';
-import type { TradingMode } from '../../infrastructure/db/schema/risk-guard';
-import { DatabaseLive } from '../../services/database';
-import { RiskGuardService, RiskGuardServiceLive } from '../../services/risk-guard';
-import type { TradingSkill } from '../../skills/trading';
-import type { StrategyContext, StrategyEvaluation, TradingStrategy } from '../../strategies';
+import type { MarketDataProvider } from '../../providers/market';
+import type { WalletProvider } from '../../providers/wallet';
+import type { TradingMode } from '../../../infrastructure/db/schema/risk-guard';
+import { DatabaseLive } from '../../../services/database';
+import { RiskGuardService, RiskGuardServiceLive } from '../../../services/risk-guard';
+import type { StrategyContext, StrategyEvaluation, TradingStrategy } from '../strategies';
+import type { TradingSkill } from '../trading-skill';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

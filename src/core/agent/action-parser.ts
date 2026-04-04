@@ -4,7 +4,7 @@
  * like markdown code fences or extra text around the JSON.
  */
 
-import type { TaskAction } from '../../types';
+import type { TaskAction } from '../../shared/types';
 
 type ModelResponse = {
   thought?: string;

@@ -10,7 +10,7 @@
  * Fast operation, no API calls.
  */
 
-import type { VisionMessage } from '../../../types';
+import type { VisionMessage } from '../../../shared/types';
 
 export type SnipConfig = {
   /** Max context percentage before snipping starts (default: 0.80) */
