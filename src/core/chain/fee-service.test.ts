@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../stores/secret-store', () => ({
+vi.mock('../providers/secret-adapter', () => ({
   getSecret: vi.fn(),
   setSecret: vi.fn(),
 }));
@@ -11,7 +11,7 @@ vi.mock('./evm-wallet', () => ({
   },
 }));
 
-import * as secretStore from '../stores/secret-store';
+import * as secretAdapter from '../providers/secret-adapter';
 import { EvmWallet } from './evm-wallet';
 import { FEE_USDC, FeeService } from './fee-service';
 
@@ -64,13 +64,13 @@ describe('FeeService', () => {
 
   describe('getTreasuryAddress()', () => {
     it('returns address from secret store', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TREASURY);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TREASURY);
       const addr = await FeeService.getTreasuryAddress();
       expect(addr).toBe(TREASURY);
     });
 
     it('falls back to env variable', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(null);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(null);
       const prev = process.env.CHAIN_TREASURY_ADDRESS;
       process.env.CHAIN_TREASURY_ADDRESS = TREASURY;
       const addr = await FeeService.getTreasuryAddress();
@@ -83,7 +83,7 @@ describe('FeeService', () => {
     });
 
     it('throws when not configured', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(null);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(null);
       const prev = process.env.CHAIN_TREASURY_ADDRESS;
       Reflect.deleteProperty(process.env, 'CHAIN_TREASURY_ADDRESS');
       await expect(FeeService.getTreasuryAddress()).rejects.toThrow('CHAIN_TREASURY_ADDRESS');
@@ -128,7 +128,7 @@ describe('FeeService', () => {
 
   describe('collectFee()', () => {
     it('sends 0.40 USDC to treasury', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TREASURY);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TREASURY);
       const wallet = mockWallet('5.00');
       vi.mocked(EvmWallet.load).mockResolvedValue(wallet as any);
 
@@ -150,7 +150,7 @@ describe('FeeService', () => {
     });
 
     it('throws when insufficient balance', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TREASURY);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TREASURY);
       vi.mocked(EvmWallet.load).mockResolvedValue(mockWallet('0.10') as any);
       await expect(FeeService.collectFee(84532)).rejects.toThrow('Insufficient USDC');
     });

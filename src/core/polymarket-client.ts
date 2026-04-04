@@ -53,7 +53,7 @@ export class PolymarketClient {
    * - POLYMARKET_SIGNATURE_TYPE   (0, 1 o 2; docs de Polymarket, default 2)
    */
   private async getLiveSdkClient(): Promise<unknown> {
-    const { getSecret } = await import('./stores/secret-store');
+    const { getSecret } = await import('./providers/secret-adapter');
     const pk = (await getSecret('POLYMARKET_PRIVATE_KEY')) ?? process.env.POLYMARKET_PRIVATE_KEY;
     const funder = (await getSecret('POLYMARKET_FUNDER_ADDRESS')) ?? process.env.POLYMARKET_FUNDER_ADDRESS;
     const sigTypeRaw = (await getSecret('POLYMARKET_SIGNATURE_TYPE')) ?? process.env.POLYMARKET_SIGNATURE_TYPE ?? '2';
@@ -115,7 +115,7 @@ export class PolymarketClient {
     }
 
     // LIVE MODE: read positions via public Data API.
-    const { getSecret } = await import('./stores/secret-store');
+    const { getSecret } = await import('./providers/secret-adapter');
     const funder = (await getSecret('POLYMARKET_FUNDER_ADDRESS')) ?? process.env.POLYMARKET_FUNDER_ADDRESS;
     if (!funder) {
       throw new Error('POLYMARKET_FUNDER_ADDRESS is not set. Configure it in Settings → Secrets.');

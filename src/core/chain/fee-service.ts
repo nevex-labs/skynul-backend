@@ -5,7 +5,7 @@ import type { TxReceipt } from './types';
 export const FEE_USDC = '0.40';
 
 async function getTreasuryAddress(): Promise<string> {
-  const { getSecret } = await import('../stores/secret-store');
+  const { getSecret } = await import('../providers/secret-adapter');
   const addr = (await getSecret('CHAIN_TREASURY_ADDRESS')) ?? process.env.CHAIN_TREASURY_ADDRESS;
   if (!addr) {
     throw new Error('CHAIN_TREASURY_ADDRESS is not set. Configure it in Settings → Trading.');

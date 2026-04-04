@@ -203,6 +203,8 @@ export type TaskAction =
   | { type: 'chain_send_token'; chainId?: number; tokenAddress: string; to: string; amount: string }
   | { type: 'chain_swap'; chainId?: number; tokenIn: string; tokenOut: string; amountIn: string; slippageBps?: number }
   | { type: 'chain_get_tx_status'; chainId?: number; txHash: string }
+  | { type: 'chain_get_allowance'; chainId?: number; tokenAddress?: string }
+  | { type: 'chain_get_smart_wallet'; chainId?: number }
   // CEX trading actions (require cex.trading capability)
   | { type: 'cex_get_balance'; exchange: import('./trading').CexExchangeId }
   | {
@@ -264,6 +266,8 @@ export type TaskRunnerId = 'browser' | 'code' | 'cdp' | 'orchestrator';
 
 export type Task = {
   id: string;
+  /** Owner user ID for multi-user isolation */
+  userId?: number;
   /** If present, this task was spawned from another task (sub-agent). */
   parentTaskId?: string;
   /** Optional display name for multi-agent UI. */

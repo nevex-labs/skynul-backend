@@ -1,67 +1,134 @@
-import { zValidator } from '@hono/zod-validator';
+import { Effect } from 'effect';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import {
-  projectAddTask,
-  projectCreate,
-  projectDelete,
-  projectList,
-  projectRemoveTask,
-  projectUpdate,
-} from '../../core/stores/project-store';
+import { AppLayer } from '../../config/layers';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { ProjectService } from '../../services/projects/tag';
 
-const projects = new Hono()
-  .get('/', (c) => {
-    return c.json({ projects: projectList() });
-  })
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Project operation error:', error);
+  if (error?._tag === 'ProjectNotFoundError') {
+    return Http.notFound(`Project ${error.projectId}`);
+  }
+  return Http.internalError();
+};
+
+const createProjectSchema = z.object({
+  name: z.string().min(1),
+  color: z.string().optional().default('#6366f1'),
+});
+
+const updateProjectSchema = z.object({
+  name: z.string().min(1),
+  color: z.string().min(1),
+});
+
+const projectsRoute = new Hono()
+  .get(
+    '/',
+    handler((c) =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService;
+        const list = yield* service.list();
+        return Http.ok({ projects: list });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
   .post(
     '/',
-    zValidator(
-      'json',
-      z.object({
-        name: z.string().min(1),
-        color: z.string().optional(),
-      })
-    ),
-    (c) => {
-      const { name, color } = c.req.valid('json');
-      const project = projectCreate(name, color);
-      return c.json(project);
-    }
+    handler((c) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        const parsed = createProjectSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* ProjectService;
+        const project = yield* service.create(parsed.data.name, parsed.data.color);
+        return Http.created(project);
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
   )
   .put(
     '/:id',
-    zValidator(
-      'json',
-      z.object({
-        name: z.string().min(1),
-        color: z.string(),
-      })
-    ),
-    (c) => {
-      const id = c.req.param('id');
-      const { name, color } = c.req.valid('json');
-      projectUpdate(id, name, color);
-      return c.json({ ok: true });
-    }
-  )
-  .delete('/:id', (c) => {
-    const id = c.req.param('id');
-    projectDelete(id);
-    return c.json({ ok: true });
-  })
-  .post('/:id/tasks/:taskId', (c) => {
-    const id = c.req.param('id');
-    const taskId = c.req.param('taskId');
-    projectAddTask(id, taskId);
-    return c.json({ ok: true });
-  })
-  .delete('/:id/tasks/:taskId', (c) => {
-    const id = c.req.param('id');
-    const taskId = c.req.param('taskId');
-    projectRemoveTask(id, taskId);
-    return c.json({ ok: true });
-  });
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        if (isNaN(id)) {
+          return Http.badRequest('Invalid project ID');
+        }
 
-export { projects };
-export type ProjectsRoute = typeof projects;
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        const parsed = updateProjectSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* ProjectService;
+        yield* service.update(id, parsed.data.name, parsed.data.color);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .delete(
+    '/:id',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        if (isNaN(id)) {
+          return Http.badRequest('Invalid project ID');
+        }
+
+        const service = yield* ProjectService;
+        yield* service.delete(id);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .post(
+    '/:id/tasks/:taskId',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        const taskId = c.req.param('taskId');
+        if (isNaN(id) || !taskId) {
+          return Http.badRequest('Invalid project ID or task ID');
+        }
+
+        const service = yield* ProjectService;
+        yield* service.addTask(id, taskId);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .delete(
+    '/:id/tasks/:taskId',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        const taskId = c.req.param('taskId');
+        if (isNaN(id) || !taskId) {
+          return Http.badRequest('Invalid project ID or task ID');
+        }
+
+        const service = yield* ProjectService;
+        yield* service.removeTask(id, taskId);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  );
+
+export { projectsRoute as projects };
+export type ProjectsRoute = typeof projectsRoute;

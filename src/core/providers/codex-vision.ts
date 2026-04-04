@@ -93,7 +93,7 @@ export async function codexVisionRespond(opts: {
 }): Promise<string> {
   let tokens = await loadTokens();
   if (!tokens || !tokens.access) {
-    throw new Error('ChatGPT: not connected. Sign in from Settings.');
+    throw new Error('Provider not connected. Sign in from Settings.');
   }
 
   // Refresh if expired (with 30s margin)

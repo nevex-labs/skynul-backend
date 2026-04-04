@@ -1,20 +1,26 @@
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Hono } from 'hono';
 import { config } from './core/config';
 import { logger } from './core/logger';
 import { isServerShuttingDown, markServerStarted, setupShutdownHandlers } from './core/shutdown';
+import * as schema from './infrastructure/db/schema';
 import { authMiddleware } from './middleware/auth';
+import { jwtMiddleware } from './middleware/jwt';
 import { checkWebSocketRateLimit, globalRateLimiter } from './middleware/rate-limit';
 import { requestLogger } from './middleware/request-logger';
 import { agentGroup } from './routes/agent';
 import { aiGroup } from './routes/ai';
+import { analytics } from './routes/analytics';
 import { coinbaseAuthGroup } from './routes/auth/coinbase';
 import { walletAuthGroup } from './routes/auth/wallet';
 import { channelManager, integrationsGroup } from './routes/integrations';
 import { systemGroup } from './routes/system';
-import { tasksGroup } from './routes/tasks';
+import { schedules, tasksGroup } from './routes/tasks';
 import { walletGroup } from './routes/wallet';
+import { getPool } from './services/database/layer';
 import { addClient, clientCount, removeClient } from './ws/events';
 
 // ASCII Art Banner
@@ -48,6 +54,7 @@ const routes = app
   .use(requestLogger)
   .use(globalRateLimiter)
   .use(authMiddleware)
+  .use(jwtMiddleware)
 
   // Health
   .get('/ping', (c) =>
@@ -58,11 +65,44 @@ const routes = app
       shuttingDown: isServerShuttingDown(),
     })
   )
-  .get('/health', (c) => {
+  .get('/health', async (c) => {
     if (isServerShuttingDown()) {
       return c.json({ status: 'shutting_down' }, 503);
     }
+
+    // Check database connectivity
+    const pool = getPool();
+    try {
+      await pool.query('SELECT 1');
+    } catch (err) {
+      return c.json({ status: 'degraded', database: 'unreachable' }, 503);
+    }
+
     return c.json({ status: 'ok', timestamp: Date.now() });
+  })
+
+  // Fly.io metrics endpoint (Prometheus format)
+  .get('/metrics', async (c) => {
+    const { taskManager } = await import('./routes/tasks');
+    const { getProcessRegistry } = await import('./core/agent/process-registry');
+    const registry = getProcessRegistry();
+    const activeTasks = taskManager.list().filter((t) => t.status === 'running').length;
+    const stats = registry.getStats();
+
+    const metrics = [
+      '# HELP app_active_tasks Number of currently running tasks',
+      '# TYPE app_active_tasks gauge',
+      `app_active_tasks ${activeTasks}`,
+      '# HELP app_ws_clients Number of connected WebSocket clients',
+      '# TYPE app_ws_clients gauge',
+      `app_ws_clients ${clientCount()}`,
+      '# HELP app_process_count Number of background processes',
+      '# TYPE app_process_count gauge',
+      `app_process_count ${stats.running}`,
+    ].join('\n');
+
+    c.header('Content-Type', 'text/plain');
+    return c.text(metrics);
   })
 
   // WebSocket
@@ -98,11 +138,13 @@ const routes = app
 
   // API Routes
   .route('/api/tasks', tasksGroup)
+  .route('/api/schedules', schedules)
   .route('/api/ai', aiGroup)
   .route('/api/agent', agentGroup)
   .route('/api/integrations', integrationsGroup)
   .route('/api/system', systemGroup)
   .route('/api/wallet', walletGroup)
+  .route('/api/analytics', analytics)
   .route('/auth/coinbase', coinbaseAuthGroup)
   .route('/auth/wallet', walletAuthGroup);
 
@@ -110,6 +152,27 @@ export type AppType = typeof routes;
 
 // Start server
 async function start() {
+  // Apply pending migrations (production) or sync schema (development)
+  try {
+    const pool = getPool();
+    const db = drizzle(pool, { schema });
+
+    if (config.nodeEnv === 'production') {
+      console.log('🔄 Applying database migrations...');
+      await migrate(db, { migrationsFolder: './src/infrastructure/db/migrations' });
+      console.log('✓ Database migrations up to date');
+    } else {
+      // Dev mode: schema is synced via `pnpm db:push` before starting
+      console.log('✓ Database connected (dev mode — use `pnpm db:push` for schema changes)');
+    }
+
+    // Ensure system user exists (for TaskManager and system-level operations)
+    await db.execute(`INSERT INTO users (id, email) VALUES (1, NULL) ON CONFLICT (id) DO NOTHING`);
+  } catch (err) {
+    console.error('⚠️  Database migration failed — server will start but DB features may not work');
+    console.error(`   Error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   for (let i = 0; i < 10; i++) {
     const p = config.port + i;
     try {

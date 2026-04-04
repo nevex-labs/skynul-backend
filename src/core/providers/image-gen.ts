@@ -1,6 +1,6 @@
 import os from 'os';
 import { writeFile } from 'fs/promises';
-import { getSecret } from '../stores/secret-store';
+import { getSecret } from './secret-adapter';
 
 export async function generateImage(
   prompt: string,

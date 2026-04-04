@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getAllChains, getChainConfig, getDefaultChainId } from './config';
+import { getAAChains, getAllChains, getChainConfig, getDefaultChainId } from './config';
 
 describe('chain config', () => {
   it('getDefaultChainId returns Base Sepolia', () => {
@@ -54,5 +54,34 @@ describe('chain config', () => {
       expect(chain.usdcDecimals).toBe(6);
       expect(chain.nativeCurrency.decimals).toBe(18);
     }
+  });
+
+  describe('AA fields', () => {
+    it('Base has bundler and paymaster URLs', () => {
+      const base = getChainConfig(8453);
+      expect(base?.bundlerUrl).toBeDefined();
+      expect(base?.paymasterUrl).toBeDefined();
+      expect(base?.entryPointAddress).toBe('0x0000000071727De22E5E9d8BAf0edAc6f37da032');
+    });
+
+    it('Arbitrum has bundler and paymaster URLs', () => {
+      const arb = getChainConfig(42161);
+      expect(arb?.bundlerUrl).toBeDefined();
+      expect(arb?.paymasterUrl).toBeDefined();
+    });
+
+    it('Ethereum has no AA fields', () => {
+      const eth = getChainConfig(1);
+      expect(eth?.bundlerUrl).toBeUndefined();
+      expect(eth?.paymasterUrl).toBeUndefined();
+    });
+  });
+
+  describe('getAAChains', () => {
+    it('returns only chains with full AA support', () => {
+      const aaChains = getAAChains();
+      expect(aaChains.length).toBe(3); // Base Sepolia, Base, Arbitrum
+      expect(aaChains.every((c) => c.bundlerUrl && c.paymasterUrl && c.entryPointAddress)).toBe(true);
+    });
   });
 });

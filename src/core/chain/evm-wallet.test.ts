@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../stores/secret-store', () => ({
+vi.mock('../providers/secret-adapter', () => ({
   getSecret: vi.fn(),
   setSecret: vi.fn(),
 }));
@@ -51,7 +51,7 @@ vi.mock('ethers', () => {
   };
 });
 
-import * as secretStore from '../stores/secret-store';
+import * as secretAdapter from '../providers/secret-adapter';
 import { EvmWallet } from './evm-wallet';
 
 const TEST_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -64,36 +64,36 @@ describe('EvmWallet', () => {
 
   describe('create()', () => {
     it('generates a new wallet and stores the private key', async () => {
-      vi.mocked(secretStore.setSecret).mockResolvedValue(undefined);
+      vi.mocked(secretAdapter.setSecret).mockResolvedValue(undefined);
 
       const result = await EvmWallet.create();
 
       expect(result.address).toBe(TEST_ADDRESS);
-      expect(secretStore.setSecret).toHaveBeenCalledWith('CHAIN_WALLET_PRIVATE_KEY', expect.stringMatching(/^0x/));
+      expect(secretAdapter.setSecret).toHaveBeenCalledWith('CHAIN_WALLET_PRIVATE_KEY', expect.stringMatching(/^0x/));
     });
   });
 
   describe('exists()', () => {
     it('returns true when private key is stored', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       expect(await EvmWallet.exists()).toBe(true);
     });
 
     it('returns false when no private key stored', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(null);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(null);
       expect(await EvmWallet.exists()).toBe(false);
     });
   });
 
   describe('load()', () => {
     it('returns EvmWallet instance when key exists', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       expect(wallet).not.toBeNull();
     });
 
     it('returns null when no key stored', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(null);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(null);
       const wallet = await EvmWallet.load();
       expect(wallet).toBeNull();
     });
@@ -101,7 +101,7 @@ describe('EvmWallet', () => {
 
   describe('getAddress()', () => {
     it('derives address from private key', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       expect(wallet!.getAddress()).toBe(TEST_ADDRESS);
     });
@@ -109,7 +109,7 @@ describe('EvmWallet', () => {
 
   describe('getUsdcBalance()', () => {
     it('returns USDC balance for Base Sepolia', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       const balance = await wallet!.getUsdcBalance(84532);
 
@@ -122,7 +122,7 @@ describe('EvmWallet', () => {
 
   describe('getNativeBalance()', () => {
     it('returns ETH balance', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       const balance = await wallet!.getNativeBalance(84532);
 
@@ -134,7 +134,7 @@ describe('EvmWallet', () => {
 
   describe('getTxStatus()', () => {
     it('returns success for confirmed tx', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       const receipt = await wallet!.getTxStatus(84532, '0xabc123');
 
@@ -146,13 +146,13 @@ describe('EvmWallet', () => {
 
   describe('throws on unknown chainId', () => {
     it('getNativeBalance throws for unknown chain', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       await expect(wallet!.getNativeBalance(99999)).rejects.toThrow('Unknown chainId');
     });
 
     it('getUsdcBalance throws for unknown chain', async () => {
-      vi.mocked(secretStore.getSecret).mockResolvedValue(TEST_PK);
+      vi.mocked(secretAdapter.getSecret).mockResolvedValue(TEST_PK);
       const wallet = await EvmWallet.load();
       await expect(wallet!.getUsdcBalance(99999)).rejects.toThrow('Unknown chainId');
     });

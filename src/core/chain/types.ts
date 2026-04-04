@@ -8,6 +8,11 @@ export type ChainConfig = {
   usdcDecimals: number;
   dexRouterAddress?: string;
   testnet: boolean;
+  // AA (Account Abstraction) fields
+  bundlerUrl?: string;
+  paymasterUrl?: string;
+  skynulRouterAddress?: string;
+  entryPointAddress?: string;
 };
 
 export type TokenBalance = {
@@ -29,27 +34,4 @@ export type SwapParams = {
   tokenOut: string;
   amountIn: string;
   slippageBps?: number;
-};
-
-export type CexBalance = {
-  asset: string;
-  free: number;
-  locked: number;
-};
-
-export type CexPosition = {
-  symbol: string;
-  side: 'long' | 'short';
-  size: number;
-  entryPrice: number;
-  markPrice: number;
-  unrealizedPnl: number;
-};
-
-export type CexOrder = {
-  symbol: string;
-  side: 'buy' | 'sell';
-  orderType: 'market' | 'limit';
-  amount: number;
-  price?: number;
 };

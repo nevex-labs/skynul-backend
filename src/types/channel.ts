@@ -1,18 +1,23 @@
 export type ChannelId = 'telegram' | 'whatsapp' | 'discord' | 'signal' | 'slack';
 
-export type ChannelStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type ChannelStatus = 'pending' | 'active' | 'inactive' | 'error';
 
 export type ChannelSettings = {
   id: ChannelId;
+  name: string;
   enabled: boolean;
-  status: ChannelStatus;
   paired: boolean;
-  pairingCode: string | null;
-  error: string | null;
-  hasCredentials: boolean;
-  meta: Record<string, unknown>;
+  webhookUrl?: string;
+  credentials?: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
 };
 
-export type ChannelGlobalSettings = {
-  autoApprove: boolean;
+export type ChannelConfig = {
+  id: ChannelId;
+  status: ChannelStatus;
+  credentials?: Record<string, string>;
+  webhookUrl?: string;
+  createdAt: number;
+  updatedAt: number;
 };

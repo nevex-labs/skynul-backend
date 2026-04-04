@@ -131,13 +131,13 @@ export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorCont
     }
     case 'remember_fact':
     case 'forget_fact': {
-      const res = executeFactAction(ctx, action as any);
+      const res = await executeFactAction(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'memory_save':
     case 'memory_search':
     case 'memory_context': {
-      const res = executeMemoryAction(ctx, action as any);
+      const res = await executeMemoryAction(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
     case 'set_identity': {

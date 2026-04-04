@@ -15,8 +15,8 @@
  */
 
 import type { VisionMessage } from '../../types';
-import { getSecret } from '../stores/secret-store';
 import { getSupabaseToken } from '../supabase-token';
+import { getSecret } from './secret-adapter';
 
 export type VisionProviderConfig = {
   name: string;

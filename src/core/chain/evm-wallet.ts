@@ -20,22 +20,35 @@ export class EvmWallet {
   static async create(): Promise<{ address: string }> {
     const { Wallet } = (await import('ethers')) as any;
     const wallet = Wallet.createRandom();
-    const { setSecret } = await import('../stores/secret-store');
+    const { setSecret } = await import('../providers/secret-adapter');
     await setSecret('CHAIN_WALLET_PRIVATE_KEY', wallet.privateKey);
     return { address: wallet.address };
   }
 
-  static async load(): Promise<EvmWallet | null> {
-    const { getSecret } = await import('../stores/secret-store');
-    const pk = (await getSecret('CHAIN_WALLET_PRIVATE_KEY')) ?? process.env.CHAIN_WALLET_PRIVATE_KEY;
-    if (!pk) return null;
+  static async load(userId?: number): Promise<EvmWallet | null> {
+    const { getSecret } = await import('../providers/secret-adapter');
+    // Per-user agent wallet key, fallback to legacy global env var
+    const secretKey = userId ? `agent_wallet_pk_${userId}` : 'CHAIN_WALLET_PRIVATE_KEY';
+    let pk: string | null = await getSecret(secretKey);
+    if (!pk && userId) {
+      // Try legacy format without userId prefix
+      pk = await getSecret('CHAIN_WALLET_PRIVATE_KEY');
+    }
+    if (!pk) {
+      pk = process.env.CHAIN_WALLET_PRIVATE_KEY ?? null;
+    }
+    if (!pk || pk === '0xyour-private-key' || !pk.startsWith('0x') || pk.length !== 66) return null;
     const { Wallet } = (await import('ethers')) as any;
-    const address = new Wallet(pk).address;
-    return new EvmWallet(pk, address);
+    try {
+      const address = new Wallet(pk).address;
+      return new EvmWallet(pk, address);
+    } catch {
+      return null;
+    }
   }
 
   static async exists(): Promise<boolean> {
-    const { getSecret } = await import('../stores/secret-store');
+    const { getSecret } = await import('../providers/secret-adapter');
     const pk = (await getSecret('CHAIN_WALLET_PRIVATE_KEY')) ?? process.env.CHAIN_WALLET_PRIVATE_KEY;
     return Boolean(pk);
   }

@@ -26,7 +26,7 @@ export {
 
 export async function codexRespond(opts: { messages: ChatMessage[] }): Promise<string> {
   let tokens = await loadTokens();
-  if (!tokens?.access) throw new Error('ChatGPT: not connected. Sign in from Settings.');
+  if (!tokens?.access) throw new Error('Provider not connected. Sign in from Settings.');
 
   tokens = await refreshIfNeeded(tokens);
   await saveTokens(tokens);

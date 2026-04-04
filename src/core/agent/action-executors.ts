@@ -8,33 +8,93 @@
 
 import { exec } from 'node:child_process';
 import { tmpdir } from 'os';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { writeFile } from 'fs/promises';
+import type { TradeResult } from '../../core/chain/domain';
+import { type AllowanceCheck, calculateFee, calculateNetAmount } from '../../services/allowances/fee-config';
+import { AllowanceServiceLive } from '../../services/allowances/layer';
+import { AllowanceService } from '../../services/allowances/tag';
+import { DatabaseLive } from '../../services/database/layer';
+import { PaperPortfolioServiceLive } from '../../services/paper-portfolio/layer';
+import { PaperPortfolioService } from '../../services/paper-portfolio/tag';
+import { SmartWalletServiceLive } from '../../services/smart-wallet/layer';
+import { SmartWalletService } from '../../services/smart-wallet/tag';
+import { SwapServiceLive } from '../../services/swap/layer';
+import { SwapService } from '../../services/swap/tag';
+import { DatabaseError } from '../../shared/errors';
 import type { Task, TaskAction } from '../../types';
+
+// Helper to run SwapService effects
+async function runSwapEffect<T>(
+  effect: Effect.Effect<T, Error | DatabaseError | { _tag: string; message: string }, SwapService>
+): Promise<T> {
+  const program = effect.pipe(
+    Effect.provide(SwapServiceLive),
+    Effect.provide(AllowanceServiceLive),
+    Effect.provide(SmartWalletServiceLive),
+    Effect.provide(DatabaseLive)
+  );
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run SmartWalletService effects
+async function runSmartWalletEffect<T>(
+  effect: Effect.Effect<T, Error | DatabaseError, SmartWalletService>
+): Promise<T> {
+  const program = effect.pipe(Effect.provide(SmartWalletServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run AllowanceService effects
+async function runAllowanceEffect<T>(effect: Effect.Effect<T, DatabaseError, AllowanceService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(AllowanceServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run PaperPortfolioService effects
+async function runPaperPortfolioEffect<T>(effect: Effect.Effect<T, DatabaseError, PaperPortfolioService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(PaperPortfolioServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run RiskGuardService effects
+async function runRiskGuardEffect<T>(effect: Effect.Effect<T, DatabaseError, RiskGuardService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(RiskGuardServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+import { RiskGuardServiceLive } from '../../services/risk-guard/layer';
+import { RiskGuardService } from '../../services/risk-guard/tag';
+import { TaskMemoryService, TaskMemoryServiceLive, TaskMemoryServiceTest } from '../../services/task-memory';
+
+// Layer override for testing (default: production)
+let taskMemoryLayer = TaskMemoryServiceLive;
+
+// Set custom layer (for testing)
+export function setTaskMemoryLayer(layer: typeof TaskMemoryServiceLive) {
+  taskMemoryLayer = layer;
+}
+
+// Helper to run TaskMemoryService effects
+async function runTaskMemoryEffect<T>(effect: Effect.Effect<T, DatabaseError, TaskMemoryService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(taskMemoryLayer), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run TaskMemoryService effects (testing - uses mock)
+export async function runTaskMemoryEffectTest<T>(
+  effect: Effect.Effect<T, DatabaseError, TaskMemoryService>
+): Promise<T> {
+  const program = effect.pipe(Effect.provide(TaskMemoryServiceTest), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
 import { PolymarketClient } from '../polymarket-client';
 import { generateImage } from '../providers/image-gen';
-import { getSecret } from '../stores/secret-store';
+import { getSecret } from '../providers/secret-adapter';
 import type { AppBridge } from './app-bridge';
 import { createExcelFromTsv } from './excel-writer';
 import { sandboxPath, validateShellCommand } from './input-guard';
-import {
-  adjustPaperBalance,
-  getPaperBalance,
-  getPaperBalances,
-  getPaperPositions,
-  getPaperTrades,
-  recordPaperTrade,
-} from './paper-portfolio';
-import { checkTradeAllowed, openRiskPosition, recordTradeVolume } from './risk-guard';
+
 import type { TaskManager } from './task-manager';
-import {
-  deleteFact,
-  formatObservationsForPrompt,
-  getRecentObservations,
-  saveFact,
-  saveObservation,
-  searchObservations,
-} from './task-memory';
 import { scrapeUrl } from './web-scraper';
 
 export type ExecutorContext = {
@@ -109,58 +169,106 @@ export async function executeInterTaskAction(
 }
 
 /** Execute fact memory actions. */
-export function executeFactAction(
+export async function executeFactAction(
   ctx: ExecutorContext,
   action: Extract<TaskAction, { type: 'remember_fact' | 'forget_fact' }>
-): ExecutorResult {
+): Promise<ExecutorResult> {
+  // Get userId from task context (default to 0 for backward compatibility during migration)
+  const userId = ctx.task.userId ?? 0;
+
   switch (action.type) {
     case 'remember_fact': {
       if (!action.fact || typeof action.fact !== 'string') {
         return errResult('"fact" string required');
       }
-      saveFact(action.fact);
-      return result(`Remembered: "${action.fact}"`);
+      try {
+        await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => service.saveFact(userId, action.fact))
+        );
+        return result(`Remembered: "${action.fact}"`);
+      } catch {
+        return errResult('Failed to save fact');
+      }
     }
     case 'forget_fact': {
       if (typeof action.factId !== 'number') return errResult('"factId" number required');
-      deleteFact(action.factId);
-      return result(`Forgot fact #${action.factId}`);
+      try {
+        await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => service.deleteFact(userId, action.factId))
+        );
+        return result(`Forgot fact #${action.factId}`);
+      } catch {
+        return errResult('Failed to delete fact');
+      }
     }
   }
 }
 
 /** Execute knowledge memory actions. */
-export function executeMemoryAction(
-  _ctx: ExecutorContext,
+export async function executeMemoryAction(
+  ctx: ExecutorContext,
   action: Extract<TaskAction, { type: 'memory_save' | 'memory_search' | 'memory_context' }>
-): ExecutorResult {
+): Promise<ExecutorResult> {
+  // Get userId from task context (default to 0 for backward compatibility during migration)
+  const userId = ctx.task.userId ?? 0;
+
   switch (action.type) {
     case 'memory_save': {
       if (!action.title || !action.content) return errResult('"title" and "content" are required');
-      const id = saveObservation({
-        title: action.title,
-        content: action.content,
-        obs_type: action.obs_type,
-        project: action.project,
-        topic_key: action.topic_key,
-      });
-      if (id < 0) return errResult('Failed to save observation');
-      return result(`Observation saved (id=${id}): "${action.title}"`);
+      try {
+        const id = await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) =>
+            service.saveObservation(userId, {
+              title: action.title,
+              content: action.content,
+              obsType: action.obs_type,
+              project: action.project,
+              topicKey: action.topic_key,
+            })
+          )
+        );
+        if (id < 0) return errResult('Failed to save observation');
+        return result(`Observation saved (id=${id}): "${action.title}"`);
+      } catch {
+        return errResult('Failed to save observation');
+      }
     }
     case 'memory_search': {
       if (!action.query) return errResult('"query" is required');
-      const obs = searchObservations(action.query, {
-        type_filter: action.type_filter,
-        project: action.project,
-        limit: action.limit,
-      });
-      if (obs.length === 0) return result('No matching observations found.');
-      return result(formatObservationsForPrompt(obs));
+      try {
+        const obs = await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) =>
+            service.searchObservations(userId, action.query, {
+              typeFilter: action.type_filter,
+              project: action.project,
+              limit: action.limit,
+            })
+          )
+        );
+        if (obs.length === 0) return result('No matching observations found.');
+        const formatted = await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => Effect.sync(() => service.formatObservationsForPrompt(obs)))
+        );
+        return result(formatted);
+      } catch {
+        return errResult('Failed to search observations');
+      }
     }
     case 'memory_context': {
-      const obs = getRecentObservations({ project: action.project, limit: action.limit });
-      if (obs.length === 0) return result('No observations in memory.');
-      return result(formatObservationsForPrompt(obs));
+      try {
+        const obs = await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) =>
+            service.getRecentObservations(userId, { project: action.project, limit: action.limit })
+          )
+        );
+        if (obs.length === 0) return result('No observations in memory.');
+        const formatted = await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => Effect.sync(() => service.formatObservationsForPrompt(obs)))
+        );
+        return result(formatted);
+      } catch {
+        return errResult('Failed to get recent observations');
+      }
     }
   }
 }
@@ -536,13 +644,22 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
 
   const client = new PolymarketClient({ mode: ctx.paperMode ? 'paper' : 'live' });
 
+  // Get userId from task context (default to 0 for backward compatibility during migration)
+  const userId = ctx.task.userId ?? 0;
+
   switch (action.type) {
     case 'polymarket_get_account_summary': {
       try {
         if (ctx.paperMode) {
-          const paperBals = getPaperBalances();
-          const usdcBal = getPaperBalance('USDC');
-          const positions = await getPaperPositions('polymarket');
+          const paperBals = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getBalances(userId))
+          );
+          const usdcBal = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, 'USDC'))
+          );
+          const positions = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getPositions(userId, 'polymarket'))
+          );
           const posCount = positions.length;
           const posLines = positions.map(
             (p) =>
@@ -602,28 +719,38 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         const raw = action as Extract<TaskAction, { type: 'polymarket_place_order' }>;
         if (ctx.paperMode) {
           const cost = raw.price * raw.size;
-          const usdcBal = getPaperBalance('USDC');
+          const usdcBal = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, 'USDC'))
+          );
           if (raw.side === 'buy' && cost > usdcBal) {
             return errResult(`[PAPER] Insufficient USDC: need $${cost.toFixed(2)}, have $${usdcBal.toFixed(2)}`);
           }
           const delta = raw.side === 'sell' ? cost : -cost;
-          adjustPaperBalance('USDC', delta);
-          const orderId = recordPaperTrade({
-            task_id: ctx.task.id,
-            venue: 'polymarket',
-            action_type: 'polymarket_place_order',
-            symbol: raw.tokenId.slice(0, 16),
-            side: raw.side,
-            price: raw.price,
-            size: raw.size,
-            amount_usd: cost,
-          });
+          await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.adjustBalance(userId, 'USDC', delta))
+          );
+          const orderId = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) =>
+              service.recordTrade(userId, {
+                taskId: ctx.task.id,
+                venue: 'polymarket',
+                actionType: 'polymarket_place_order',
+                symbol: raw.tokenId.slice(0, 16),
+                side: raw.side,
+                price: raw.price,
+                size: raw.size,
+                amountUsd: cost,
+              })
+            )
+          );
           return result(
             `[PAPER] FILLED: ${raw.side} ${raw.size} shares @ $${raw.price} on ${raw.tokenId.slice(0, 10)}... | cost: $${cost.toFixed(2)} | orderId: ${orderId}`
           );
         }
         const cost = raw.price * raw.size;
-        const riskCheck = checkTradeAllowed('polymarket', cost);
+        const riskCheck = await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.checkTradeAllowed(userId, 'polymarket', cost))
+        );
         if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         await client.placeOrder({
           tokenId: raw.tokenId,
@@ -633,8 +760,14 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
           tickSize: raw.tickSize,
           negRisk: raw.negRisk,
         });
-        recordTradeVolume('polymarket', cost);
-        openRiskPosition('polymarket', raw.tokenId.slice(0, 16), raw.side, cost, ctx.task.id);
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.recordTradeVolume(userId, 'polymarket', cost))
+        );
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.openRiskPosition(userId, 'polymarket', raw.tokenId.slice(0, 16), raw.side, cost, ctx.task.id)
+          )
+        );
         return result(`Order placed (GTC): ${raw.side} ${raw.size} @ $${raw.price} on ${raw.tokenId.slice(0, 10)}...`);
       } catch (e) {
         return errResult(String(e instanceof Error ? e.message : e));
@@ -646,31 +779,45 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         if (!raw.tokenId) return errResult('tokenId is required. Use polymarket_get_account_summary first.');
         if (ctx.paperMode) {
           const tokenKey = `PM:${raw.tokenId.slice(0, 16)}`;
-          const held = getPaperBalance(tokenKey);
+          const held = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, tokenKey))
+          );
           const sellSize = raw.size ?? held;
           if (sellSize <= 0 || held <= 0)
             return errResult(`[PAPER] No position to close on ${raw.tokenId.slice(0, 10)}...`);
           const actualSell = Math.min(sellSize, held);
           // Get REAL current price from Polymarket API
           const realPrice = await client.getTokenPrice(raw.tokenId);
-          const trades = getPaperTrades({ venue: 'polymarket', limit: 50 });
+          const trades = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) =>
+              service.getTrades(userId, { venue: 'polymarket', limit: 50 })
+            )
+          );
           const lastBuy = trades.find((t) => t.symbol === raw.tokenId.slice(0, 16) && t.side === 'buy');
           const buyPrice = lastBuy?.price ?? 0;
           const sellPrice = realPrice ?? buyPrice;
           const proceeds = actualSell * sellPrice * 0.999; // 0.1% fee
           const pnl = proceeds - actualSell * buyPrice;
-          adjustPaperBalance(tokenKey, -actualSell);
-          adjustPaperBalance('USDC', proceeds);
-          const orderId = recordPaperTrade({
-            task_id: ctx.task.id,
-            venue: 'polymarket',
-            action_type: 'polymarket_close_position',
-            symbol: raw.tokenId.slice(0, 16),
-            side: 'sell',
-            price: sellPrice,
-            size: actualSell,
-            amount_usd: proceeds,
-          });
+          await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.adjustBalance(userId, tokenKey, -actualSell))
+          );
+          await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.adjustBalance(userId, 'USDC', proceeds))
+          );
+          const orderId = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) =>
+              service.recordTrade(userId, {
+                taskId: ctx.task.id,
+                venue: 'polymarket',
+                actionType: 'polymarket_close_position',
+                symbol: raw.tokenId.slice(0, 16),
+                side: 'sell',
+                price: sellPrice,
+                size: actualSell,
+                amountUsd: proceeds,
+              })
+            )
+          );
           const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
           return result(
             `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... sold ${actualSell} shares @ $${sellPrice.toFixed(4)} (bought @ $${buyPrice.toFixed(4)}) | proceeds: $${proceeds.toFixed(2)} | PnL: ${pnlStr} | orderId: ${orderId}`
@@ -707,30 +854,47 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
     return errResult(`Unknown chain action: ${(action as any).type}`);
   }
 
+  // Get userId from task context
+  const userId = ctx.task.userId ?? 0;
+
   // ── Paper mode: simulate all chain operations without real clients ──────────
   if (ctx.paperMode) {
     switch (action.type) {
       case 'chain_get_balance': {
-        const usdc = getPaperBalance('USDC');
-        const eth = getPaperBalance('ETH');
+        const usdc = await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, 'USDC'))
+        );
+        const eth = await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, 'ETH'))
+        );
         return result(`[PAPER] USDC balance: ${usdc} USDC | Native balance: ${eth} ETH`);
       }
       case 'chain_get_token_balance': {
         const a = action as Extract<TaskAction, { type: 'chain_get_token_balance' }>;
-        const bal = getPaperBalance(a.tokenAddress);
+        const bal = await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) => service.getBalance(userId, a.tokenAddress))
+        );
         return result(`[PAPER] ${a.tokenAddress} balance: ${bal}`);
       }
       case 'chain_send_token': {
         const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
-        adjustPaperBalance(a.tokenAddress, -Number(a.amount));
-        const orderId = recordPaperTrade({
-          task_id: ctx.task.id,
-          venue: 'chain',
-          action_type: 'chain_send_token',
-          symbol: a.tokenAddress,
-          side: 'send',
-          amount_usd: Number(a.amount),
-        });
+        await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) =>
+            service.adjustBalance(userId, a.tokenAddress, -Number(a.amount))
+          )
+        );
+        const orderId = await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) =>
+            service.recordTrade(userId, {
+              taskId: ctx.task.id,
+              venue: 'chain',
+              actionType: 'chain_send_token',
+              symbol: a.tokenAddress,
+              side: 'send',
+              amountUsd: Number(a.amount),
+            })
+          )
+        );
         const hash = `0xpaper${orderId.replace(/-/g, '').slice(0, 40)}`;
         return result(`[PAPER] Token sent. Tx: ${hash} | Status: success`);
       }
@@ -738,14 +902,11 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
         const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
         const amtIn = Number(a.amountIn);
 
-        // Use realistic simulation instead of 1:1
-        const { recordRealisticPaperSwap } = await import('./paper-portfolio');
-        const simulation = await recordRealisticPaperSwap(
-          ctx.task.id,
-          a.tokenIn,
-          a.tokenOut,
-          amtIn,
-          'base' // Default to Base, could be dynamic based on ctx
+        // Use realistic simulation from the new PostgreSQL service
+        const simulation = await runPaperPortfolioEffect(
+          Effect.flatMap(PaperPortfolioService, (service) =>
+            service.recordSwap(userId, ctx.task.id, a.tokenIn, a.tokenOut, amtIn, 'base')
+          )
         );
 
         const hash = `0xpaper${simulation.orderId.replace(/-/g, '').slice(0, 40)}`;
@@ -789,11 +950,19 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
       try {
         const a = action as Extract<TaskAction, { type: 'chain_send_token' }>;
         const sendAmt = Number(a.amount);
-        const riskCheck = checkTradeAllowed('chain', sendAmt);
+        const riskCheck = await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.checkTradeAllowed(userId, 'chain', sendAmt))
+        );
         if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         const receipt = await client.sendToken(a.tokenAddress, a.to, a.amount);
-        recordTradeVolume('chain', sendAmt);
-        openRiskPosition('chain', a.tokenAddress, 'send', sendAmt, ctx.task.id);
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.recordTradeVolume(userId, 'chain', sendAmt))
+        );
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.openRiskPosition(userId, 'chain', a.tokenAddress, 'send', sendAmt, ctx.task.id)
+          )
+        );
         return result(
           `Token sent. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
         );
@@ -805,18 +974,42 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
       try {
         const a = action as Extract<TaskAction, { type: 'chain_swap' }>;
         const swapAmt = Number(a.amountIn);
-        const riskCheck = checkTradeAllowed('chain', swapAmt);
-        if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
-        const receipt = await client.swap({
-          tokenIn: a.tokenIn,
-          tokenOut: a.tokenOut,
-          amountIn: a.amountIn,
-          slippageBps: a.slippageBps,
-        });
-        recordTradeVolume('chain', swapAmt);
-        openRiskPosition('chain', `${a.tokenIn}->${a.tokenOut}`, 'swap', swapAmt, ctx.task.id);
+
+        const userId = ctx.task.userId ?? 1;
+        const chainId = (action as { chainId?: number }).chainId ?? 8453;
+
+        const riskCheck = await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.checkTradeAllowed(userId, 'chain', swapAmt))
+        );
+        if (!riskCheck.allowed) return errResult(`[RISK] ${riskCheck.reason}`);
+
+        // Use SwapService (AA flow)
+        const amountInRaw = BigInt(Math.floor(swapAmt * 1e6));
+        const tradeResult = await runSwapEffect(
+          Effect.flatMap(SwapService, (svc) =>
+            svc.executeSwap({
+              userId,
+              chainId,
+              tokenIn: a.tokenIn,
+              tokenOut: a.tokenOut,
+              amountIn: amountInRaw,
+              minAmountOut: BigInt(0),
+              slippageBps: a.slippageBps ?? 50,
+            })
+          ) as unknown as Effect.Effect<TradeResult, Error, SwapService>
+        );
+
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) => service.recordTradeVolume(userId, 'chain', swapAmt))
+        );
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.openRiskPosition(userId, 'chain', `${a.tokenIn}->${a.tokenOut}`, 'swap', swapAmt, ctx.task.id)
+          )
+        );
+
         return result(
-          `Swap executed. Tx: ${receipt.hash} | Status: ${receipt.status}${receipt.blockNumber ? ` | Block: ${receipt.blockNumber}` : ''}`
+          `Swap executed. UserOp: ${tradeResult.userOpHash} | Status: ${tradeResult.status} | Fee: ${tradeResult.feeAmount} (1%)`
         );
       } catch (e) {
         return errResult(String(e instanceof Error ? e.message : e));
@@ -833,6 +1026,57 @@ export async function executeChainAction(ctx: ExecutorContext, action: TaskActio
         return errResult(String(e instanceof Error ? e.message : e));
       }
     }
+    case 'chain_get_allowance': {
+      try {
+        const a = action as Extract<TaskAction, { type: 'chain_get_allowance' }>;
+        const userId = ctx.task.userId ?? 1;
+        const chainId = (action as { chainId?: number }).chainId ?? 8453;
+        const tokenAddress =
+          (a as { tokenAddress?: string }).tokenAddress ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+        const remaining = await runAllowanceEffect(
+          Effect.flatMap(AllowanceService, (svc) => svc.getRemainingAllowance(userId, tokenAddress, chainId))
+        );
+        const totalFees = await runAllowanceEffect(
+          Effect.flatMap(AllowanceService, (svc) => svc.getTotalFeesCollected(userId))
+        );
+
+        return result(
+          `Allowance for ${tokenAddress.slice(0, 8)}... on chain ${chainId}: ${Number(remaining) / 1e6} USDC remaining | Fees collected: ${Number(totalFees) / 1e6} USDC`
+        );
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
+    case 'chain_get_smart_wallet': {
+      try {
+        const userId = ctx.task.userId ?? 1;
+        const chainId = (action as { chainId?: number }).chainId ?? 8453;
+
+        const address = await runSmartWalletEffect(
+          Effect.flatMap(SmartWalletService, (svc) => svc.getSmartAccount(userId, chainId))
+        );
+
+        if (!address) {
+          return result(`No Smart Account found for user ${userId} on chain ${chainId}. Create one first.`);
+        }
+
+        const sessionKey = await runSmartWalletEffect(
+          Effect.flatMap(SmartWalletService, (svc) => svc.getSessionKey(userId, chainId))
+        );
+
+        let info = `Smart Account: ${address}\nChain: ${chainId}`;
+        if (sessionKey) {
+          info += `\nSession Key: ${sessionKey.address}\nMax per trade: ${Number(sessionKey.maxPerTrade) / 1e6} USDC\nDaily limit: ${Number(sessionKey.dailyLimit) / 1e6} USDC\nExpires: ${new Date(sessionKey.expiresAt).toISOString()}`;
+        } else {
+          info += '\nSession Key: Not configured';
+        }
+
+        return result(info);
+      } catch (e) {
+        return errResult(String(e instanceof Error ? e.message : e));
+      }
+    }
     default:
       return errResult(`Unknown chain action`);
   }
@@ -843,6 +1087,9 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
   if (!ctx.task.capabilities.includes('cex.trading')) {
     return errResult('CEX trading capability is not enabled for this task. Enable it in Capabilities settings.');
   }
+
+  // Get userId from task context
+  const userId = ctx.task.userId ?? 0;
 
   const raw = action as Record<string, unknown>;
   const exchange = raw.exchange as string | undefined;
@@ -865,7 +1112,7 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
 
   // Paper mode: allow any exchange label (simulated).
   if (!ctx.paperMode) {
-    const { loadTradingSettings } = await import('../stores/trading-store');
+    const { loadTradingSettings } = await import('../providers/trading-adapter');
     const settings = await loadTradingSettings();
     const ex = (settings.cex.exchanges as Record<string, { enabled: boolean; scopes: { withdraw: boolean } }>)[
       exchange
@@ -882,24 +1129,10 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
     }
   }
 
-  const { BinanceClient } = await import('../cex/binance-client');
-  const { CoinbaseClient } = await import('../cex/coinbase-client');
+  const { getCexClient } = await import('../cex/factory');
   const { FeeService, FEE_USDC } = await import('../chain/fee-service');
 
-  const mode = ctx.paperMode ? 'paper' : 'live';
-  let client: any;
-  if (exchange === 'binance') client = new BinanceClient({ mode });
-  else if (exchange === 'coinbase') client = new CoinbaseClient({ mode });
-  else {
-    if (ctx.paperMode) {
-      // For paper mode, we don't need a real client.
-      client = null;
-    } else {
-      return errResult(
-        `Exchange "${exchange}" is not implemented yet. Add a provider integration (recommended: CCXT adapter) before enabling live trading.`
-      );
-    }
-  }
+  const client = getCexClient(exchange as 'binance' | 'coinbase', ctx.paperMode ?? false);
 
   switch (action.type) {
     case 'cex_get_ticker': {
@@ -933,7 +1166,9 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
     case 'cex_get_balance': {
       try {
         if (ctx.paperMode) {
-          const paperBals = getPaperBalances();
+          const paperBals = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getBalances(userId))
+          );
           if (paperBals.length === 0) return result('[PAPER] No balances found.');
           const lines = paperBals.map((b) => `  ${b.asset}: ${b.amount} free, 0 locked`);
           return result(`[PAPER] ${exchange} balances:\n${lines.join('\n')}`);
@@ -949,7 +1184,9 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
     case 'cex_get_positions': {
       try {
         if (ctx.paperMode) {
-          const positions = await getPaperPositions(exchange);
+          const positions = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.getPositions(userId, exchange))
+          );
           if (positions.length === 0) return result('No open positions.');
           const lines = positions.map(
             (p) => `  ${p.symbol} ${p.side} ${p.totalShares} @ ${p.avgPrice.toFixed(6)}, PnL: ${p.pnlUsd.toFixed(2)}`
@@ -985,23 +1222,33 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
             }
           }
           const delta = a.side === 'sell' ? a.amount : -a.amount;
-          adjustPaperBalance('USDC', delta);
+          await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) => service.adjustBalance(userId, 'USDC', delta))
+          );
           const size = price ? a.amount / price : a.amount;
-          const orderId = recordPaperTrade({
-            task_id: ctx.task.id,
-            venue: exchange,
-            action_type: 'cex_place_order',
-            symbol: a.symbol,
-            side: a.side,
-            price: price ?? a.price,
-            size,
-            amount_usd: a.amount,
-          });
+          const orderId = await runPaperPortfolioEffect(
+            Effect.flatMap(PaperPortfolioService, (service) =>
+              service.recordTrade(userId, {
+                taskId: ctx.task.id,
+                venue: exchange,
+                actionType: 'cex_place_order',
+                symbol: a.symbol,
+                side: a.side,
+                price: price ?? a.price,
+                size,
+                amountUsd: a.amount,
+              })
+            )
+          );
           return result(
             `[PAPER] Order placed on ${exchange}: ${a.side} ${a.amount} ${a.symbol} | orderId: ${orderId} | status: FILLED`
           );
         }
-        const riskCheck = checkTradeAllowed(exchange as 'binance' | 'coinbase', a.amount);
+        const riskCheck = await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.checkTradeAllowed(userId, exchange as 'binance' | 'coinbase', a.amount)
+          )
+        );
         if (!riskCheck.allowed) return errResult(`[RISK] ${(riskCheck as { allowed: false; reason: string }).reason}`);
         const netAmount = FeeService.deductFeeFromAmount(a.amount);
         if (netAmount <= 0) {
@@ -1014,8 +1261,23 @@ export async function executeCexAction(ctx: ExecutorContext, action: TaskAction)
           amount: netAmount,
           price: a.price,
         });
-        recordTradeVolume(exchange as 'binance' | 'coinbase', a.amount);
-        openRiskPosition(exchange as 'binance' | 'coinbase', a.symbol, a.side, a.amount, ctx.task.id);
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.recordTradeVolume(userId, exchange as 'binance' | 'coinbase', a.amount)
+          )
+        );
+        await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.openRiskPosition(
+              userId,
+              exchange as 'binance' | 'coinbase',
+              a.symbol,
+              a.side,
+              a.amount,
+              ctx.task.id
+            )
+          )
+        );
         return result(
           `Order placed on ${exchange}: ${a.side} ${netAmount} ${a.symbol} | orderId: ${res.orderId} | status: ${res.status}`
         );

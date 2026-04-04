@@ -85,7 +85,7 @@ export class ChainClient {
     // We need the signer - access via EvmWallet internals pattern
     // Using dynamic import to get ethers Wallet
     const { Wallet } = (await import('ethers')) as any;
-    const { getSecret } = await import('../stores/secret-store');
+    const { getSecret } = await import('../providers/secret-adapter');
     const pk = (await getSecret('CHAIN_WALLET_PRIVATE_KEY')) ?? process.env.CHAIN_WALLET_PRIVATE_KEY;
     if (!pk) throw new Error('No wallet private key configured');
 

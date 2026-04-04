@@ -21,7 +21,7 @@ export const config = {
 
   // Rate Limiting
   rateLimit: {
-    enabled: process.env.SKYNUL_RATE_LIMIT_ENABLED !== 'false',
+    enabled: process.env.NODE_ENV === 'production' && process.env.SKYNUL_RATE_LIMIT_ENABLED !== 'false',
     globalRpm: Number.parseInt(process.env.SKYNUL_RATE_LIMIT_RPM ?? '100', 10),
     tasksPerMin: Number.parseInt(process.env.SKYNUL_RATE_LIMIT_TASKS_PER_MIN ?? '10', 10),
     messagesPerMin: 20,

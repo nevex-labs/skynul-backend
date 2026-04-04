@@ -1,6 +1,11 @@
 import { randomBytes } from 'crypto';
+import { Effect } from 'effect';
 import { Hono } from 'hono';
-import { deleteSession, getSession, setSession } from '../../core/stores/session-store';
+import { AppLayer } from '../../config/layers';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { SessionService } from '../../services/sessions/tag';
+import { SessionNotFoundError } from '../../shared/errors';
 
 const COINBASE_AUTH_URL = 'https://www.coinbase.com/oauth/authorize';
 const COINBASE_TOKEN_URL = 'https://api.coinbase.com/oauth/token';
@@ -15,25 +20,45 @@ function getConfig() {
   return { clientId, clientSecret, redirectUri };
 }
 
-// Temporary CSRF state store — replaced with DB later
+// Temporary CSRF state store
 const pendingStates = new Map<string, number>();
+
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Coinbase auth error:', error);
+
+  if (error?._tag === 'SessionNotFoundError') {
+    return Http.unauthorized();
+  }
+
+  if (error instanceof Error) {
+    return Http.badRequest(error.message);
+  }
+
+  return Http.internalError();
+};
 
 export const coinbaseAuthGroup = new Hono();
 
 // GET /auth/coinbase — redirect to Coinbase OAuth
 coinbaseAuthGroup.get('/', (c) => {
-  const { clientId, redirectUri } = getConfig();
-  const state = randomBytes(16).toString('hex');
-  pendingStates.set(state, Date.now() + 1000 * 60 * 10); // 10 min expiry
+  try {
+    const { clientId, redirectUri } = getConfig();
+    const state = randomBytes(16).toString('hex');
+    pendingStates.set(state, Date.now() + 1000 * 60 * 10); // 10 min expiry
 
-  const url = new URL(COINBASE_AUTH_URL);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', clientId);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('scope', 'wallet:user:read wallet:accounts:read wallet:transactions:read');
-  url.searchParams.set('state', state);
+    const url = new URL(COINBASE_AUTH_URL);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('scope', 'wallet:user:read wallet:accounts:read wallet:transactions:read');
+    url.searchParams.set('state', state);
 
-  return c.redirect(url.toString());
+    return c.redirect(url.toString());
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
 });
 
 // GET /auth/coinbase/callback — exchange code for tokens
@@ -51,62 +76,98 @@ coinbaseAuthGroup.get('/callback', async (c) => {
 
   const { clientId, clientSecret, redirectUri } = getConfig();
 
-  const tokenRes = await fetch(COINBASE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'authorization_code',
-      code,
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uri: redirectUri,
-    }),
-  });
+  return handler((ctx) =>
+    Effect.gen(function* () {
+      const tokenRes = yield* Effect.tryPromise({
+        try: async () => {
+          const res = await fetch(COINBASE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              grant_type: 'authorization_code',
+              code,
+              client_id: clientId,
+              client_secret: clientSecret,
+              redirect_uri: redirectUri,
+            }),
+          });
 
-  if (!tokenRes.ok) {
-    const err = await tokenRes.text();
-    return c.json({ error: `Token exchange failed: ${err}` }, 400);
-  }
+          if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Token exchange failed: ${err}`);
+          }
 
-  const tokens = (await tokenRes.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
+          return res.json() as Promise<{
+            access_token: string;
+            refresh_token: string;
+            expires_in: number;
+          }>;
+        },
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      });
 
-  // Fetch Coinbase user info
-  const userRes = await fetch(COINBASE_USER_URL, {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  const userData = (await userRes.json()) as { data: { id: string; name: string; avatar_url?: string } };
+      // Fetch Coinbase user info
+      const userData = yield* Effect.tryPromise({
+        try: async () => {
+          const res = await fetch(COINBASE_USER_URL, {
+            headers: { Authorization: `Bearer ${tokenRes.access_token}` },
+          });
+          return res.json() as Promise<{ data: { id: string; name: string; avatar_url?: string } }>;
+        },
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      });
 
-  const sessionId = randomBytes(32).toString('hex');
-  setSession({
-    sessionId,
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresAt: Date.now() + tokens.expires_in * 1000,
-    userId: userData.data.id,
-    displayName: userData.data.name,
-    avatarUrl: userData.data.avatar_url,
-  });
+      const sessionId = randomBytes(32).toString('hex');
+      const sessionService = yield* SessionService;
 
-  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
-  return c.redirect(`${frontendUrl}/auth/callback?sessionId=${sessionId}`);
+      yield* sessionService.create({
+        sessionId,
+        accessToken: tokenRes.access_token,
+        refreshToken: tokenRes.refresh_token,
+        expiresAt: Date.now() + tokenRes.expires_in * 1000,
+        userId: userData.data.id,
+        displayName: userData.data.name,
+        avatarUrl: userData.data.avatar_url,
+      });
+
+      const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+      return Http.ok({ redirect: `${frontendUrl}/auth/callback?sessionId=${sessionId}` });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )(c);
 });
 
 // GET /auth/coinbase/session — validate sessionId and return user
-coinbaseAuthGroup.get('/session', (c) => {
-  const sessionId = c.req.header('X-Session-Id');
-  if (!sessionId) return c.json({ error: 'Missing session' }, 401);
-  const session = getSession(sessionId);
-  if (!session) return c.json({ error: 'Invalid or expired session' }, 401);
-  return c.json({ user: { id: session.userId, name: session.displayName ?? session.userId } });
-});
+coinbaseAuthGroup.get('/session', (c) =>
+  handler((ctx) =>
+    Effect.gen(function* () {
+      const sessionId = ctx.req.header('X-Session-Id');
+      if (!sessionId) {
+        return Http.unauthorized();
+      }
+
+      const sessionService = yield* SessionService;
+      const session = yield* sessionService.getById(sessionId);
+
+      return Http.ok({
+        user: {
+          id: session.userId,
+          name: session.displayName ?? session.userId,
+        },
+      });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )(c)
+);
 
 // POST /auth/coinbase/logout
-coinbaseAuthGroup.post('/logout', (c) => {
-  const sessionId = c.req.header('X-Session-Id');
-  if (sessionId) deleteSession(sessionId);
-  return c.json({ ok: true });
-});
+coinbaseAuthGroup.post('/logout', (c) =>
+  handler((ctx) =>
+    Effect.gen(function* () {
+      const sessionId = ctx.req.header('X-Session-Id');
+      if (sessionId) {
+        const sessionService = yield* SessionService;
+        yield* sessionService.delete(sessionId);
+      }
+      return Http.ok({ ok: true });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )(c)
+);

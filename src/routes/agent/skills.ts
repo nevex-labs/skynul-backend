@@ -1,12 +1,25 @@
-import { zValidator } from '@hono/zod-validator';
+import { Effect } from 'effect';
 import { readFile } from 'fs/promises';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createSkillId, loadSkills, saveSkills } from '../../core/stores/skill-store';
-import type { Skill } from '../../types';
+import { AppLayer } from '../../config/layers';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { SkillService } from '../../services/skills/tag';
+import { SkillNotFoundError } from '../../shared/errors';
+
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Skill operation error:', error);
+  if (error?._tag === 'SkillNotFoundError') {
+    return Http.notFound(`Skill ${error.skillId}`);
+  }
+  return Http.internalError();
+};
 
 const skillSchema = z.object({
-  id: z.string().optional(),
+  id: z.number().optional(),
   name: z.string().min(1),
   tag: z.string().min(1),
   description: z.string(),
@@ -14,96 +27,156 @@ const skillSchema = z.object({
   enabled: z.boolean().optional().default(true),
 });
 
-const skills = new Hono()
-  .get('/', async (c) => {
-    return c.json({ skills: await loadSkills() });
-  })
-  .post('/', zValidator('json', skillSchema), async (c) => {
-    const body = c.req.valid('json');
-    const all = await loadSkills();
+const importSchema = z.object({
+  filePath: z.string(),
+});
 
-    if (body.id) {
-      const idx = all.findIndex((s) => s.id === body.id);
-      if (idx !== -1) {
-        all[idx] = { ...all[idx], ...body } as Skill;
-      }
-    } else {
-      all.push({ ...body, id: createSkillId(), createdAt: Date.now() } as Skill);
-    }
+const skillsRoute = new Hono()
+  .get(
+    '/',
+    handler((c) =>
+      Effect.gen(function* () {
+        const service = yield* SkillService;
+        const list = yield* service.list();
+        return Http.ok({ skills: list });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .post(
+    '/',
+    handler((c) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
 
-    await saveSkills(all);
-    return c.json({ skills: all });
-  })
-  .delete('/:id', async (c) => {
-    const id = c.req.param('id');
-    const all = (await loadSkills()).filter((s) => s.id !== id);
-    await saveSkills(all);
-    return c.json({ skills: all });
-  })
-  .put('/:id/toggle', async (c) => {
-    const id = c.req.param('id');
-    const all = await loadSkills();
-    const s = all.find((sk) => sk.id === id);
-    if (s) s.enabled = !s.enabled;
-    await saveSkills(all);
-    return c.json({ skills: all });
-  })
+        const parsed = skillSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* SkillService;
+
+        if (parsed.data.id) {
+          yield* service.update(parsed.data.id, {
+            name: parsed.data.name,
+            tag: parsed.data.tag,
+            description: parsed.data.description,
+            prompt: parsed.data.prompt,
+            enabled: parsed.data.enabled,
+          });
+        } else {
+          yield* service.create({
+            name: parsed.data.name,
+            tag: parsed.data.tag,
+            description: parsed.data.description,
+            prompt: parsed.data.prompt,
+            enabled: parsed.data.enabled,
+          });
+        }
+
+        const all = yield* service.list();
+        return Http.ok({ skills: all });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .delete(
+    '/:id',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        if (isNaN(id)) {
+          return Http.badRequest('Invalid skill ID');
+        }
+
+        const service = yield* SkillService;
+        yield* service.delete(id);
+        const all = yield* service.list();
+        return Http.ok({ skills: all });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .put(
+    '/:id/toggle',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = Number.parseInt(c.req.param('id') || '', 10);
+        if (isNaN(id)) {
+          return Http.badRequest('Invalid skill ID');
+        }
+
+        const service = yield* SkillService;
+        yield* service.toggle(id);
+        const all = yield* service.list();
+        return Http.ok({ skills: all });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
   .post(
     '/import',
-    zValidator(
-      'json',
-      z.object({
-        filePath: z.string(),
-      })
-    ),
-    async (c) => {
-      const { filePath } = c.req.valid('json');
-      const raw = await readFile(filePath, 'utf8');
-      const isMarkdown = filePath.endsWith('.md') || filePath.endsWith('.markdown');
+    handler((c) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
 
-      const basename = filePath.split(/[\\/]/).pop() ?? 'Imported';
-      const nameFromFile = basename.replace(/\.(json|md|markdown)$/i, '');
-
-      let name = nameFromFile;
-      let tag = '';
-      let description = '';
-      let prompt = raw;
-
-      if (isMarkdown) {
-        const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-        if (fmMatch) {
-          const frontmatter = fmMatch[1];
-          prompt = fmMatch[2].trim();
-          for (const line of frontmatter.split('\n')) {
-            const [key, ...rest] = line.split(':');
-            const val = rest.join(':').trim();
-            if (key.trim() === 'name') name = val;
-            else if (key.trim() === 'tag' || key.trim() === 'category') tag = val;
-            else if (key.trim() === 'description') description = val;
-          }
+        const parsed = importSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
         }
-      } else {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        name = String(parsed.name ?? nameFromFile);
-        tag = String(parsed.tag ?? parsed.category ?? '');
-        description = String(parsed.description ?? '');
-        prompt = String(parsed.prompt ?? '');
-      }
 
-      const all = await loadSkills();
-      all.push({
-        id: createSkillId(),
-        name,
-        tag,
-        description,
-        prompt,
-        enabled: true,
-        createdAt: Date.now(),
-      });
-      await saveSkills(all);
-      return c.json({ skills: all });
-    }
+        const service = yield* SkillService;
+
+        const raw = yield* Effect.tryPromise({
+          try: () => readFile(parsed.data.filePath, 'utf8'),
+          catch: (error) => new Error(`Failed to read file: ${error}`),
+        });
+
+        const filePath = parsed.data.filePath;
+        const isMarkdown = filePath.endsWith('.md') || filePath.endsWith('.markdown');
+        const basename = filePath.split(/[\\/]/).pop() ?? 'Imported';
+        const nameFromFile = basename.replace(/\.(json|md|markdown)$/i, '');
+
+        let name = nameFromFile;
+        let tag = '';
+        let description = '';
+        let prompt = raw;
+
+        if (isMarkdown) {
+          const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+          if (fmMatch) {
+            const frontmatter = fmMatch[1];
+            prompt = fmMatch[2].trim();
+            for (const line of frontmatter.split('\n')) {
+              const [key, ...rest] = line.split(':');
+              const val = rest.join(':').trim();
+              if (key.trim() === 'name') name = val;
+              else if (key.trim() === 'tag' || key.trim() === 'category') tag = val;
+              else if (key.trim() === 'description') description = val;
+            }
+          }
+        } else {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          name = String(parsed.name ?? nameFromFile);
+          tag = String(parsed.tag ?? parsed.category ?? '');
+          description = String(parsed.description ?? '');
+          prompt = String(parsed.prompt ?? '');
+        }
+
+        const all = yield* service.import({
+          name,
+          tag,
+          description,
+          prompt,
+          enabled: true,
+        });
+
+        return Http.ok({ skills: all });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
   );
 
-export { skills };
-export type SkillsRoute = typeof skills;
+export { skillsRoute as skills };
+export type SkillsRoute = typeof skillsRoute;

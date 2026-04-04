@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Set test database URL before any imports
+process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
+
 // ── Module mocks (hoisted) ────────────────────────────────────────────────────
 
 const M = vi.hoisted(() => ({
@@ -36,6 +39,30 @@ vi.mock('../chain/fee-service', () => ({
   },
 }));
 
+// AllowanceService mock for tests
+vi.mock('../../services/allowances/layer', () => ({
+  AllowanceServiceLive: {},
+  AllowanceServiceTest: {},
+}));
+
+vi.mock('../../services/allowances/tag', () => ({
+  AllowanceService: {
+    of: vi.fn(() => ({
+      checkAllowance: vi.fn(() => ({
+        available: BigInt(1000000000),
+        required: BigInt(0),
+        fee: BigInt(0),
+        sufficient: true,
+      })),
+      recordUsage: vi.fn(),
+      setApprovedAmount: vi.fn(),
+      getAllowance: vi.fn(() => null),
+      getTotalFeesCollected: vi.fn(() => BigInt(0)),
+      getRemainingAllowance: vi.fn(() => BigInt(1000000000)),
+    })),
+  },
+}));
+
 // Risk guard always allows in executor tests — risk logic has its own test file
 vi.mock('./risk-guard', () => ({
   checkTradeAllowed: vi.fn(() => ({ allowed: true })),
@@ -46,7 +73,7 @@ vi.mock('./risk-guard', () => ({
 }));
 
 // Trading settings: enable withdrawals in tests (executor-level behavior).
-vi.mock('../stores/trading-store', () => ({
+vi.mock('../providers/trading-adapter', () => ({
   loadTradingSettings: vi.fn(async () => ({
     version: 1,
     cex: {
@@ -286,7 +313,7 @@ describe('executeChainAction', () => {
       expect(chainInstance.swap).toHaveBeenCalledWith({
         tokenIn: '0xusdc',
         tokenOut: '0xweth',
-        amountIn: '5.0',
+        amountIn: '4950000', // 5.0 USDC - 1% fee = 4.95 USDC
         slippageBps: 100,
       });
     });

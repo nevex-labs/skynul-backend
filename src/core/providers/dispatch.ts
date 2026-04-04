@@ -1,5 +1,4 @@
 import type { ChatMessage, ProviderId } from '../../types';
-import { getSecret } from '../stores/secret-store';
 import { claudeRespond } from './claude';
 import { codexRespond, loadTokens } from './codex';
 import { deepseekRespond } from './deepseek';
@@ -9,6 +8,7 @@ import { kimiRespond } from './kimi';
 import { minimaxRespond } from './minimax';
 import { ollamaChat } from './ollama';
 import { openrouterRespond } from './openrouter';
+import { getSecret } from './secret-adapter';
 
 const PROVIDER_KEYS: Record<string, string | undefined> = {
   claude: 'claude.apiKey',
@@ -40,7 +40,7 @@ export async function dispatchChat(provider: ProviderId, messages: ChatMessage[]
 
     const apiKey = await getSecret('openai.apiKey');
     if (!apiKey) {
-      throw new Error('ChatGPT is not connected. Sign in via /api/ai/chatgpt/oauth or set openai.apiKey.');
+      throw new Error('Provider not connected. Sign in via Settings or set openai.apiKey.');
     }
 
     const res = await fetch('https://api.openai.com/v1/chat/completions', {

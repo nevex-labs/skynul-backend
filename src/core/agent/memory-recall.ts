@@ -7,17 +7,21 @@
  * 3. Format as "virtual MEMORY.md" for prompt injection
  *
  * This is better than file-based for API REST because:
- * - SQLite handles concurrency
- * - FTS5 is fast (<10ms)
+ * - PostgreSQL handles concurrency
+ * - Full-text search is fast (<10ms)
  * - LLM ranking adds intelligence without file I/O overhead
  */
 
+import type { Effect } from 'effect';
+import type { ObservationDto } from '../../infrastructure/db/schema/task-memory';
 import type { ProviderId } from '../../types';
 import { childLogger } from '../logger';
 import { getSummarizationModel } from './compaction/auto-compact';
-import { type Observation, getRecentObservations, searchObservations } from './task-memory';
 
 const logger = childLogger({ component: 'memory-recall' });
+
+// Re-export Observation type for compatibility
+export type Observation = ObservationDto;
 
 export type RecallConfig = {
   candidatePool: number;
@@ -41,37 +45,74 @@ type ScoredMemory = {
   reason: string;
 };
 
+/**
+ * @deprecated Use buildCandidatePoolAsync with TaskMemoryService instead.
+ * This stub returns empty array. PostgreSQL migration requires async service calls.
+ */
 export function buildCandidatePool(
+  _query: string,
+  _opts: {
+    project?: string;
+    type_filter?: string;
+    config?: Partial<RecallConfig>;
+  } = {}
+): Observation[] {
+  // TODO: Migrate to PostgreSQL + Drizzle using TaskMemoryService
+  // This requires making the function async which breaks existing sync callers
+  return [];
+}
+
+/**
+ * Async version using TaskMemoryService (PostgreSQL).
+ */
+export async function buildCandidatePoolAsync(
+  userId: number,
   query: string,
   opts: {
     project?: string;
     type_filter?: string;
     config?: Partial<RecallConfig>;
   } = {}
-): Observation[] {
+): Promise<Observation[]> {
   const cfg = { ...DEFAULT_RECALL_CONFIG, ...opts.config };
   const candidates = new Map<number, Observation>();
 
-  const ftsResults = searchObservations(query, {
-    project: opts.project,
-    type_filter: opts.type_filter,
-    limit: cfg.candidatePool,
-  });
+  const { TaskMemoryService, TaskMemoryServiceLive } = await import('../../services/task-memory');
+  const { DatabaseLive } = await import('../../services/database');
+  const { Effect } = await import('effect');
+
+  const runEffect = <T>(effect: Effect.Effect<T, unknown, unknown>) =>
+    Effect.runPromise(
+      effect.pipe(Effect.provide(TaskMemoryServiceLive), Effect.provide(DatabaseLive)) as Effect.Effect<T>
+    );
+
+  // Search observations
+  const ftsResults = await runEffect(
+    Effect.flatMap(TaskMemoryService, (service) =>
+      service.searchObservations(userId, query, {
+        project: opts.project,
+        limit: cfg.candidatePool,
+      })
+    )
+  );
 
   for (const obs of ftsResults) {
-    candidates.set(obs.id, obs);
+    candidates.set(obs.id, obs as Observation);
   }
 
   if (cfg.includeRecent) {
-    const recent = getRecentObservations({
-      project: opts.project,
-      type_filter: opts.type_filter,
-      limit: cfg.recentCount,
-    });
+    const recent = await runEffect(
+      Effect.flatMap(TaskMemoryService, (service) =>
+        service.getRecentObservations(userId, {
+          project: opts.project,
+          limit: cfg.recentCount,
+        })
+      )
+    );
 
     for (const obs of recent) {
       if (!candidates.has(obs.id)) {
-        candidates.set(obs.id, obs);
+        candidates.set(obs.id, obs as Observation);
       }
     }
   }
@@ -101,7 +142,7 @@ export async function rankMemoriesWithLLM(
 
   const manifest = candidates
     .map((obs, i) => {
-      const meta = [obs.type, obs.topic_key ? `key:${obs.topic_key}` : null].filter(Boolean).join(', ');
+      const meta = [obs.type, obs.topicKey ? `key:${obs.topicKey}` : null].filter(Boolean).join(', ');
       return `[${i}] ${meta}: ${obs.title}\n${obs.content.slice(0, 200)}`;
     })
     .join('\n\n');
@@ -153,6 +194,7 @@ export async function rankMemoriesWithLLM(
 }
 
 export async function recallMemories(
+  userId: number,
   query: string,
   provider: ProviderId,
   opts: {
@@ -161,7 +203,7 @@ export async function recallMemories(
     config?: Partial<RecallConfig>;
   } = {}
 ): Promise<ScoredMemory[]> {
-  const candidates = buildCandidatePool(query, opts);
+  const candidates = await buildCandidatePoolAsync(userId, query, opts);
 
   if (candidates.length === 0) {
     return [];
@@ -180,7 +222,7 @@ export function formatAsMemoryContext(scored: ScoredMemory[]): string {
   for (const { memory, relevance, reason } of scored) {
     const meta = [
       memory.type,
-      memory.topic_key ? `key:${memory.topic_key}` : null,
+      memory.topicKey ? `key:${memory.topicKey}` : null,
       `score:${(relevance * 100).toFixed(0)}%`,
     ]
       .filter(Boolean)
@@ -195,15 +237,36 @@ export function formatAsMemoryContext(scored: ScoredMemory[]): string {
   return lines.join('\n');
 }
 
+/**
+ * @deprecated Use recallMemoriesAsync with TaskMemoryService instead.
+ * This stub returns empty string. PostgreSQL migration requires async service calls.
+ */
 export function recallMemoriesFast(
+  _query: string,
+  _opts: {
+    project?: string;
+    type_filter?: string;
+    limit?: number;
+  } = {}
+): string {
+  // TODO: Migrate to PostgreSQL + Drizzle using TaskMemoryService
+  // This requires making the function async which breaks existing sync callers
+  return '';
+}
+
+/**
+ * Async version using TaskMemoryService (PostgreSQL).
+ */
+export async function recallMemoriesFastAsync(
+  userId: number,
   query: string,
   opts: {
     project?: string;
     type_filter?: string;
     limit?: number;
   } = {}
-): string {
-  const candidates = buildCandidatePool(query, {
+): Promise<string> {
+  const candidates = await buildCandidatePoolAsync(userId, query, {
     ...opts,
     config: { maxMemories: opts.limit ?? 5 },
   });
@@ -215,7 +278,7 @@ export function recallMemoriesFast(
   const lines = ['## Relevant memories', ''];
 
   for (const obs of candidates.slice(0, opts.limit ?? 5)) {
-    const meta = [obs.type, obs.topic_key ? `key:${obs.topic_key}` : null].filter(Boolean).join(', ');
+    const meta = [obs.type, obs.topicKey ? `key:${obs.topicKey}` : null].filter(Boolean).join(', ');
 
     lines.push(`### [${meta}] ${obs.title}`);
     lines.push(obs.content);

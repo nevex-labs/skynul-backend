@@ -1,18 +1,16 @@
-import type { CexBalance, CexOrder, CexPosition } from '../chain/types';
+import type { CexBalance, CexClient, CexOrder, CexOrderResult, CexPosition, CexTicker } from './types';
 
 const COINBASE_BASE = 'https://api.coinbase.com/api/v3/brokerage';
 
-type CoinbaseMode = 'paper' | 'live';
-
-export class CoinbaseClient {
-  private readonly mode: CoinbaseMode;
-
-  constructor(opts?: { mode?: CoinbaseMode }) {
-    this.mode = opts?.mode ?? 'paper';
+export class CoinbaseClient implements CexClient {
+  constructor(private _mode?: 'paper' | 'live') {
+    // Mode parameter kept for compatibility but not used
+    // Paper mode is handled by PaperCexClient in the factory
   }
+  readonly exchange = 'coinbase' as const;
 
   private async getCredentials(): Promise<{ apiKey: string; apiSecret: string }> {
-    const { getSecret } = await import('../stores/secret-store');
+    const { getSecret } = await import('../providers/secret-adapter');
     const apiKey = (await getSecret('COINBASE_API_KEY')) ?? process.env.COINBASE_API_KEY;
     const apiSecret = (await getSecret('COINBASE_API_SECRET')) ?? process.env.COINBASE_API_SECRET;
 
@@ -72,13 +70,6 @@ export class CoinbaseClient {
   }
 
   async getBalances(): Promise<CexBalance[]> {
-    if (this.mode === 'paper') {
-      return [
-        { asset: 'USD', free: 1000, locked: 0 },
-        { asset: 'BTC', free: 0.01, locked: 0 },
-      ];
-    }
-
     const data = await this.request<{
       accounts: Array<{ currency: string; available_balance: { value: string }; hold: { value: string } }>;
     }>('GET', '/api/v3/brokerage/accounts');
@@ -93,8 +84,6 @@ export class CoinbaseClient {
   }
 
   async getPositions(): Promise<CexPosition[]> {
-    if (this.mode === 'paper') return [];
-
     const data = await this.request<{
       orders: Array<{
         product_id: string;
@@ -115,11 +104,7 @@ export class CoinbaseClient {
     }));
   }
 
-  async placeOrder(order: CexOrder): Promise<{ orderId: string; status: string }> {
-    if (this.mode === 'paper') {
-      return { orderId: `paper-${Date.now()}`, status: 'FILLED' };
-    }
-
+  async placeOrder(order: CexOrder): Promise<CexOrderResult> {
     const clientOrderId = `skynul-${Date.now()}`;
     const body: Record<string, unknown> = {
       client_order_id: clientOrderId,
@@ -154,16 +139,22 @@ export class CoinbaseClient {
     return { orderId, status: data.success ? 'OPEN' : 'FAILED' };
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
-    if (this.mode === 'paper') return;
+  async cancelOrder(_symbol: string, orderId: string): Promise<void> {
     await this.request('POST', '/api/v3/brokerage/orders/batch_cancel', {
       order_ids: [orderId],
     });
   }
 
-  async withdraw(asset: string, amount: number, address: string, network: string): Promise<string> {
-    if (this.mode === 'paper') return `paper-withdraw-${Date.now()}`;
+  async getTicker(symbol: string): Promise<CexTicker> {
+    const data = await this.request<{ prices: Array<{ price: string }> }>(
+      'GET',
+      `/api/v3/brokerage/product_book?product_id=${symbol.toUpperCase()}`
+    );
+    const price = data.prices?.[0]?.price ?? '0';
+    return { symbol: symbol.toUpperCase(), price };
+  }
 
+  async withdraw(asset: string, amount: number, address: string, network: string): Promise<string> {
     const data = await this.request<{ id: string }>('POST', '/api/v3/brokerage/transfers', {
       type: 'SEND',
       to: address,

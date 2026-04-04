@@ -4,27 +4,32 @@
 
 import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
-import { mkdirSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { Effect } from 'effect';
+import { DatabaseLive } from '../../services/database';
+import { EvalFeedbackService, EvalFeedbackServiceLive } from '../../services/eval-feedback';
+import { TaskMemoryService, TaskMemoryServiceLive } from '../../services/task-memory';
+import { DatabaseError } from '../../shared/errors';
 import type { AgentDefinition, PolicyState, Task, TaskCapabilityId, TaskCreateRequest, TaskMode } from '../../types';
 import { broadcast } from '../../ws/events';
 import { isPerTaskBrowserSessionMode, parseBrowserSessionMode } from '../browser/session-mode';
-import { getDataDir } from '../config';
 import { getActiveSkillPrompts, loadSkills } from '../stores/skill-store';
 import type { AgentRegistry } from './agent-registry';
-import { buildFeedbackContext, extractTradesFromTask, saveTradeScore } from './eval-feedback';
 import { recallMemoriesFast } from './memory-recall';
-import {
-  closeMemoryDb,
-  formatFactsForPrompt,
-  formatMemoriesForPrompt,
-  saveMemory,
-  searchFacts,
-  searchMemories,
-} from './task-memory';
 import { deriveRunner } from './task-routing';
+
+// Helper to run EvalFeedbackService effects
+async function runEvalFeedbackEffect<T>(effect: Effect.Effect<T, DatabaseError, EvalFeedbackService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(EvalFeedbackServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
+
+// Helper to run TaskMemoryService effects
+async function runTaskMemoryEffect<T>(effect: Effect.Effect<T, DatabaseError, TaskMemoryService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(TaskMemoryServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T, never, never>);
+}
 import { TaskRunner } from './task-runner';
+import { loadTasks, saveTasks } from './tasks-adapter';
 
 const DEFAULT_MAX_STEPS = 200;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -110,8 +115,9 @@ export class TaskManager extends EventEmitter {
   constructor(agentRegistry?: AgentRegistry) {
     super();
     this.agentRegistry = agentRegistry ?? null;
-    this.persistPath = join(getDataDir(), 'tasks.json');
-    void this.loadFromDisk();
+    this.persistPath = 'tasks-db'; // Tasks are now persisted via PostgreSQL
+    // Load tasks after a short delay to let DB pool initialize
+    setTimeout(() => void this.loadFromDisk(), 1000);
   }
 
   setPolicyGetter(fn: () => PolicyState): void {
@@ -143,6 +149,7 @@ export class TaskManager extends EventEmitter {
 
     const task: Task = {
       id,
+      userId: (req as any).userId,
       parentTaskId: req.parentTaskId,
       agentName: agentName ?? agentDef?.description,
       agentRole,
@@ -211,13 +218,27 @@ export class TaskManager extends EventEmitter {
     const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
     const memoryContext = memoryEnabled ? recallMemoriesFast(task.prompt, { limit: 5 }) : '';
 
-    const facts = memoryEnabled ? searchFacts(task.prompt) : [];
-    const factsContext = formatFactsForPrompt(facts);
+    const facts = memoryEnabled
+      ? await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => service.searchFacts(task.userId ?? 0, task.prompt, 10))
+        )
+      : [];
+    const factsContext = memoryEnabled
+      ? await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => Effect.sync(() => service.formatFactsForPrompt(facts)))
+        )
+      : '';
 
     const skills = await loadSkills();
     const skillContext = getActiveSkillPrompts(skills, task.prompt);
 
-    const feedbackContext = memoryEnabled ? buildFeedbackContext(task.capabilities) : '';
+    const feedbackContext = memoryEnabled
+      ? await runEvalFeedbackEffect(
+          Effect.flatMap(EvalFeedbackService, (service) =>
+            service.buildFeedbackContext(task.userId ?? 0, task.capabilities)
+          )
+        )
+      : '';
     const paperMode = policy?.paperTradingEnabled ?? false;
 
     const agentDef = this.agentDefs.get(taskId);
@@ -249,22 +270,22 @@ export class TaskManager extends EventEmitter {
 
     void runner
       .run()
-      .then((final) => {
+      .then(async (final) => {
         this.tasks.set(final.id, final);
         this.runners.delete(taskId);
-        if (memoryEnabled) this.extractAndSaveMemory(final, provider, Date.now() - startTime);
-        this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
+        if (memoryEnabled) await this.extractAndSaveMemory(final, provider, Date.now() - startTime);
+        await this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       })
-      .catch((e) => {
+      .catch(async (e) => {
         task.status = 'failed';
         task.error = e instanceof Error ? e.message : String(e);
         task.updatedAt = Date.now();
         this.tasks.set(taskId, task);
         this.pushUpdate(task);
         this.runners.delete(taskId);
-        if (memoryEnabled) this.extractAndSaveMemory(task, provider, Date.now() - startTime);
-        this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
+        if (memoryEnabled) await this.extractAndSaveMemory(task, provider, Date.now() - startTime);
+        await this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       });
 
@@ -505,13 +526,27 @@ export class TaskManager extends EventEmitter {
     const memoryEnabled = (policy?.taskMemoryEnabled ?? true) && !task.skipMemory;
     const memoryContext = memoryEnabled ? recallMemoriesFast(task.prompt, { limit: 5 }) : '';
 
-    const facts = memoryEnabled ? searchFacts(task.prompt) : [];
-    const factsContext = formatFactsForPrompt(facts);
+    const facts = memoryEnabled
+      ? await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => service.searchFacts(task.userId ?? 0, task.prompt, 10))
+        )
+      : [];
+    const factsContext = memoryEnabled
+      ? await runTaskMemoryEffect(
+          Effect.flatMap(TaskMemoryService, (service) => Effect.sync(() => service.formatFactsForPrompt(facts)))
+        )
+      : '';
 
     const skills = await loadSkills();
     const skillContext = getActiveSkillPrompts(skills, task.prompt);
 
-    const feedbackContext = memoryEnabled ? buildFeedbackContext(task.capabilities) : '';
+    const feedbackContext = memoryEnabled
+      ? await runEvalFeedbackEffect(
+          Effect.flatMap(EvalFeedbackService, (service) =>
+            service.buildFeedbackContext(task.userId ?? 0, task.capabilities)
+          )
+        )
+      : '';
     const paperMode = policy?.paperTradingEnabled ?? false;
 
     const runner = new TaskRunner(
@@ -546,22 +581,22 @@ export class TaskManager extends EventEmitter {
 
     void runner
       .run()
-      .then((final) => {
+      .then(async (final) => {
         this.tasks.set(final.id, final);
         this.runners.delete(taskId);
-        if (memoryEnabled) this.extractAndSaveMemory(final, provider, Date.now() - startTime);
-        this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
+        if (memoryEnabled) await this.extractAndSaveMemory(final, provider, Date.now() - startTime);
+        await this.scoreTradeOutcome(final, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       })
-      .catch((e) => {
+      .catch(async (e) => {
         task.status = 'failed';
         task.error = e instanceof Error ? e.message : String(e);
         task.updatedAt = Date.now();
         this.tasks.set(taskId, task);
         this.pushUpdate(task);
         this.runners.delete(taskId);
-        if (memoryEnabled) this.extractAndSaveMemory(task, provider, Date.now() - startTime);
-        this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
+        if (memoryEnabled) await this.extractAndSaveMemory(task, provider, Date.now() - startTime);
+        await this.scoreTradeOutcome(task, Date.now() - startTime, paperMode);
         void this.persistToDisk();
       });
 
@@ -614,8 +649,12 @@ export class TaskManager extends EventEmitter {
     return this.tasks.get(taskId);
   }
 
-  list(): Task[] {
-    return [...this.tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
+  list(userId?: number): Task[] {
+    const all = [...this.tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
+    if (userId !== undefined) {
+      return all.filter((t) => t.userId === userId || t.userId === undefined);
+    }
+    return all;
   }
 
   /** Get the agent definition for a task (if it was created with one). */
@@ -690,10 +729,9 @@ export class TaskManager extends EventEmitter {
       }
     }
     this.persistToDiskSync();
-    closeMemoryDb();
   }
 
-  private extractAndSaveMemory(task: Task, provider: string, durationMs: number): void {
+  private async extractAndSaveMemory(task: Task, provider: string, durationMs: number): Promise<void> {
     if (task.status !== 'completed' && task.status !== 'failed') return;
 
     const outcome = task.status === 'completed' ? 'completed' : 'failed';
@@ -742,29 +780,52 @@ export class TaskManager extends EventEmitter {
     if (failedActions.length > 0) parts.push(`Failed: ${failedActions.slice(0, 5).join('; ')}`);
     if (successHints.length > 0) parts.push(`Insights: ${successHints.join(' | ')}`);
 
-    saveMemory({
-      taskId: task.id,
-      prompt: task.prompt,
-      outcome,
-      learnings: parts.join('\n'),
-      provider,
-      durationMs,
-    });
+    await runTaskMemoryEffect(
+      Effect.flatMap(TaskMemoryService, (service) =>
+        service.saveMemory(task.userId ?? 0, {
+          taskId: task.id,
+          prompt: task.prompt,
+          outcome,
+          learnings: parts.join('\n'),
+          provider,
+          durationMs,
+        })
+      )
+    );
   }
 
-  private scoreTradeOutcome(task: Task, durationMs: number, isPaper: boolean): void {
+  private async scoreTradeOutcome(task: Task, durationMs: number, isPaper: boolean): Promise<void> {
     try {
-      const extracted = extractTradesFromTask(task);
+      // Extract trades using the service
+      const extracted = await runEvalFeedbackEffect(
+        Effect.flatMap(EvalFeedbackService, (service) => service.extractTradesFromTask(task))
+      );
       if (!extracted) return;
-      saveTradeScore({
-        task,
-        venue: extracted.venue,
-        capability: extracted.capability,
-        trades: extracted.trades,
-        durationMs,
-        isPaper,
-        hadOpenPositionsAtDone: extracted.hadOpenPositionsAtDone,
-      });
+
+      // Save trade score using the service
+      // Map task status to valid ScoreInput status (filter out non-terminal statuses)
+      const validStatuses = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
+      const taskStatus = validStatuses.includes(task.status as (typeof validStatuses)[number])
+        ? (task.status as (typeof validStatuses)[number])
+        : 'pending';
+
+      await runEvalFeedbackEffect(
+        Effect.flatMap(EvalFeedbackService, (service) =>
+          service.saveTradeScore({
+            userId: task.userId ?? 0,
+            taskId: task.id,
+            taskStatus,
+            taskSteps: task.steps.map((s) => ({ action: { type: s.action.type }, result: s.result })),
+            taskMaxSteps: task.maxSteps,
+            venue: extracted.venue,
+            capability: extracted.capability,
+            trades: extracted.trades,
+            durationMs,
+            isPaper,
+            hadOpenPositionsAtDone: extracted.hadOpenPositionsAtDone,
+          })
+        )
+      );
     } catch {
       // Non-critical
     }
@@ -781,7 +842,7 @@ export class TaskManager extends EventEmitter {
     this.emit('taskUpdate', task);
   }
 
-  // ── Persistence ─────────────────────────────────────────────────────
+  // ── Persistence (PostgreSQL via TasksService) ─────────────────────────
 
   private schedulePersist(): void {
     if (this.persistTimer) return;
@@ -794,21 +855,15 @@ export class TaskManager extends EventEmitter {
   private async persistToDisk(): Promise<void> {
     try {
       const stripped = this.buildStripped();
-      await mkdir(dirname(this.persistPath), { recursive: true });
-      await writeFile(this.persistPath, JSON.stringify(stripped, null, 2), 'utf8');
+      await saveTasks(stripped as Task[]);
     } catch {
       // Non-critical
     }
   }
 
   private persistToDiskSync(): void {
-    try {
-      const stripped = this.buildStripped();
-      mkdirSync(dirname(this.persistPath), { recursive: true });
-      writeFileSync(this.persistPath, JSON.stringify(stripped, null, 2), 'utf8');
-    } catch {
-      // ignore
-    }
+    // Fire-and-forget async save (no sync fs needed with PostgreSQL)
+    void this.persistToDisk();
   }
 
   private buildStripped(): object[] {
@@ -820,9 +875,8 @@ export class TaskManager extends EventEmitter {
 
   private async loadFromDisk(): Promise<void> {
     try {
-      const raw = await readFile(this.persistPath, 'utf8');
-      const loaded = JSON.parse(raw) as Task[];
-      if (!Array.isArray(loaded)) return;
+      const loaded = await loadTasks();
+      if (!Array.isArray(loaded) || loaded.length === 0) return;
 
       for (const task of loaded) {
         // Backfill runner for older persisted tasks.
@@ -841,7 +895,7 @@ export class TaskManager extends EventEmitter {
         }
       }
     } catch {
-      // No file or invalid JSON — start fresh
+      // No tasks or error — start fresh
     }
   }
 

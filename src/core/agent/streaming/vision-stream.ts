@@ -64,7 +64,7 @@ async function* streamCodex(
 
   let tokens = await loadTokens();
   if (!tokens || !tokens.access) {
-    yield { type: 'error', error: 'ChatGPT: not connected. Sign in from Settings.' };
+    yield { type: 'error', error: 'Provider not connected. Sign in from Settings.' };
     return;
   }
 

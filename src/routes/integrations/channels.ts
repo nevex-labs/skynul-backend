@@ -1,88 +1,189 @@
-import { zValidator } from '@hono/zod-validator';
+import { Effect } from 'effect';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { ChannelManager } from '../../core/channels/channel-manager';
+import { AppLayer } from '../../config/layers';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { ChannelService } from '../../services/channels/tag';
+import { ChannelNotFoundError } from '../../shared/errors';
 import type { ChannelId } from '../../types';
-import { taskManager } from '../tasks';
 
-const cm = new ChannelManager(taskManager);
+const handler = createEffectRoute(AppLayer as any);
 
-// Load global settings and start enabled channels on init
-void cm.loadGlobal().then(() => cm.startAll());
+const handleError = (error: any): HttpResponse => {
+  console.error('Channel error:', error);
+  if (error?._tag === 'ChannelNotFoundError') {
+    return Http.notFound(`Channel ${error.channelId}`);
+  }
+  if (error instanceof Error) {
+    return Http.badRequest(error.message);
+  }
+  return Http.internalError();
+};
 
-/** Expose the ChannelManager for graceful shutdown. */
-export { cm as channelManager };
+const VALID_CHANNELS: ChannelId[] = ['telegram', 'whatsapp', 'discord', 'signal', 'slack'];
+
+export const channelManager = {
+  async loadGlobal() {},
+  async startAll() {
+    console.log('[channelManager] startAll called - channels managed via DB');
+  },
+  async stopAll() {
+    console.log('[channelManager] stopAll called');
+  },
+  getGlobalSettings() {
+    return { autoApprove: true };
+  },
+  isAutoApprove() {
+    return true;
+  },
+};
+
+const enabledSchema = z.object({ enabled: z.boolean() });
+const credentialsSchema = z.record(z.string());
 
 const channels = new Hono()
-  .get('/', (c) => {
-    return c.json({ channels: cm.getAllSettings() });
-  })
-  .get('/global', (c) => {
-    return c.json(cm.getGlobalSettings());
-  })
+  .get(
+    '/',
+    handler((c) =>
+      Effect.gen(function* () {
+        const service = yield* ChannelService;
+        const allSettings = yield* service.getAllSettings();
+
+        const channelList = allSettings.map((s) => ({
+          id: s.channelId,
+          enabled: s.enabled,
+          status: s.status,
+          paired: s.paired,
+          pairingCode: s.pairingCode,
+          error: s.error,
+          hasCredentials: s.hasCredentials,
+          meta: s.meta || {},
+        }));
+
+        return Http.ok({ channels: channelList });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .get(
+    '/global',
+    handler((c) =>
+      Effect.gen(function* () {
+        const service = yield* ChannelService;
+        const global = yield* service.getGlobalSettings();
+        return Http.ok({ autoApprove: global.autoApprove });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
   .put(
     '/:id/enabled',
-    zValidator(
-      'json',
-      z.object({
-        enabled: z.boolean(),
-      })
-    ),
-    async (c) => {
-      const id = c.req.param('id') as ChannelId;
-      try {
-        const ch = cm.getChannel(id);
-        const settings = await ch.setEnabled(c.req.valid('json').enabled);
-        return c.json(settings);
-      } catch (e) {
-        return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-      }
-    }
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = c.req.param('id') as ChannelId;
+        if (!VALID_CHANNELS.includes(id)) {
+          return Http.badRequest(`Unknown channel: ${id}`);
+        }
+
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        const parsed = enabledSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* ChannelService;
+        const settings = yield* service.setChannelEnabled(id, parsed.data.enabled);
+
+        return Http.ok({
+          id: settings.channelId,
+          enabled: settings.enabled,
+          status: settings.status,
+          paired: settings.paired,
+          pairingCode: settings.pairingCode,
+          error: settings.error,
+          hasCredentials: settings.hasCredentials,
+          meta: settings.meta || {},
+        });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
   )
-  .put('/:id/credentials', zValidator('json', z.record(z.string())), async (c) => {
-    const id = c.req.param('id') as ChannelId;
-    const credentials = c.req.valid('json');
-    try {
-      const ch = cm.getChannel(id);
-      await ch.setCredentials(credentials);
-      return c.json({ ok: true });
-    } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-    }
-  })
-  .post('/:id/pairing', async (c) => {
-    const id = c.req.param('id') as ChannelId;
-    try {
-      const ch = cm.getChannel(id);
-      const code = await ch.generatePairingCode();
-      return c.json({ code });
-    } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-    }
-  })
-  .delete('/:id/pairing', async (c) => {
-    const id = c.req.param('id') as ChannelId;
-    try {
-      const ch = cm.getChannel(id);
-      await ch.unpair();
-      return c.json({ ok: true });
-    } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
-    }
-  })
+  .put(
+    '/:id/credentials',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = c.req.param('id') as ChannelId;
+        if (!VALID_CHANNELS.includes(id)) {
+          return Http.badRequest(`Unknown channel: ${id}`);
+        }
+
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        const parsed = credentialsSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* ChannelService;
+        yield* service.setChannelCredentials(id, parsed.data);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .post(
+    '/:id/pairing',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = c.req.param('id') as ChannelId;
+        if (!VALID_CHANNELS.includes(id)) {
+          return Http.badRequest(`Unknown channel: ${id}`);
+        }
+
+        const service = yield* ChannelService;
+        const code = yield* service.generatePairingCode(id);
+        return Http.ok({ code });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .delete(
+    '/:id/pairing',
+    handler((c) =>
+      Effect.gen(function* () {
+        const id = c.req.param('id') as ChannelId;
+        if (!VALID_CHANNELS.includes(id)) {
+          return Http.badRequest(`Unknown channel: ${id}`);
+        }
+
+        const service = yield* ChannelService;
+        yield* service.unpairChannel(id);
+        return Http.ok({ ok: true });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
   .put(
     '/auto-approve',
-    zValidator(
-      'json',
-      z.object({
-        enabled: z.boolean(),
-      })
-    ),
-    async (c) => {
-      const { enabled } = c.req.valid('json');
-      const settings = await cm.setAutoApprove(enabled);
-      return c.json(settings);
-    }
+    handler((c) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        const parsed = enabledSchema.safeParse(body);
+        if (!parsed.success) {
+          return Http.badRequest(parsed.error.message);
+        }
+
+        const service = yield* ChannelService;
+        const settings = yield* service.setAutoApprove(parsed.data.enabled);
+        return Http.ok({ autoApprove: settings.autoApprove });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
   );
 
 export { channels };

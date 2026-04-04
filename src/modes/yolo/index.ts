@@ -9,15 +9,12 @@
  * - Track P&L and metrics
  */
 
-import type { TradingMode } from '../../core/agent/risk-guard';
-import {
-  checkDailyLossLimit,
-  checkExitTriggers,
-  checkTradeCooldown,
-  checkYoloEntryCriteria,
-} from '../../core/agent/risk-guard';
+import { Effect } from 'effect';
 import type { MarketDataProvider } from '../../core/providers/market';
 import type { WalletProvider } from '../../core/providers/wallet';
+import type { TradingMode } from '../../infrastructure/db/schema/risk-guard';
+import { DatabaseLive } from '../../services/database';
+import { RiskGuardService, RiskGuardServiceLive } from '../../services/risk-guard';
 import type { TradingSkill } from '../../skills/trading';
 import type { StrategyContext, StrategyEvaluation, TradingStrategy } from '../../strategies';
 
@@ -61,6 +58,12 @@ export interface YoloMetrics {
   worstStrategy: string;
 }
 
+// Helper to run RiskGuardService effects
+async function runRiskGuardEffect<T>(effect: Effect.Effect<T, unknown, RiskGuardService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(RiskGuardServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T>);
+}
+
 // ── YOLO Orchestrator ────────────────────────────────────────────────────────
 
 export class YoloOrchestrator {
@@ -69,6 +72,7 @@ export class YoloOrchestrator {
   private marketData: MarketDataProvider;
   private tradingSkill: TradingSkill;
   private strategies: TradingStrategy[];
+  private userId: number;
 
   private active = false;
   private scanInterval: NodeJS.Timeout | null = null;
@@ -85,13 +89,15 @@ export class YoloOrchestrator {
     wallet: WalletProvider,
     marketData: MarketDataProvider,
     tradingSkill: TradingSkill,
-    strategies: TradingStrategy[]
+    strategies: TradingStrategy[],
+    userId = 0
   ) {
     this.config = config;
     this.wallet = wallet;
     this.marketData = marketData;
     this.tradingSkill = tradingSkill;
     this.strategies = strategies;
+    this.userId = userId;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -102,7 +108,9 @@ export class YoloOrchestrator {
     }
 
     // Check daily loss limit
-    const lossCheck = checkDailyLossLimit('yolo');
+    const lossCheck = await runRiskGuardEffect(
+      Effect.flatMap(RiskGuardService, (service) => service.checkDailyLossLimit(this.userId, 'yolo'))
+    );
     if (!lossCheck.allowed) {
       throw new Error('Daily loss limit reached: ' + lossCheck.reason);
     }
@@ -138,13 +146,17 @@ export class YoloOrchestrator {
 
     try {
       // Check cooldown
-      const cooldownCheck = checkTradeCooldown('yolo');
+      const cooldownCheck = await runRiskGuardEffect(
+        Effect.flatMap(RiskGuardService, (service) => service.checkTradeCooldown(this.userId, 'yolo'))
+      );
       if (!cooldownCheck.allowed) {
         return; // Skip this scan
       }
 
       // Check daily loss limit
-      const lossCheck = checkDailyLossLimit('yolo');
+      const lossCheck = await runRiskGuardEffect(
+        Effect.flatMap(RiskGuardService, (service) => service.checkDailyLossLimit(this.userId, 'yolo'))
+      );
       if (!lossCheck.allowed) {
         console.log('[YOLO] Daily loss limit reached, stopping');
         this.stop();
@@ -214,17 +226,22 @@ export class YoloOrchestrator {
         if (action.type === 'market_buy') {
           // Check entry criteria
           const tokenInfo = await this.marketData.getTokenInfo(action.token);
-          const entryCheck = checkYoloEntryCriteria(
-            {
-              liquidityUsd: tokenInfo.liquidityUsd,
-              uniqueHolders: tokenInfo.uniqueHolders,
-              topHolderPercent: tokenInfo.topHolders[0]?.percent || 0,
-              devHoldingPercent: tokenInfo.devHoldingPercent || 0,
-              mintAuthority: tokenInfo.mintAuthority,
-              freezeAuthority: tokenInfo.freezeAuthority,
-              ageMinutes: tokenInfo.ageMinutes,
-            },
-            'yolo'
+          const entryCheck = await runRiskGuardEffect(
+            Effect.flatMap(RiskGuardService, (service) =>
+              service.checkYoloEntryCriteria(
+                this.userId,
+                {
+                  liquidityUsd: tokenInfo.liquidityUsd,
+                  uniqueHolders: tokenInfo.uniqueHolders,
+                  topHolderPercent: tokenInfo.topHolders[0]?.percent || 0,
+                  devHoldingPercent: tokenInfo.devHoldingPercent || 0,
+                  mintAuthority: tokenInfo.mintAuthority,
+                  freezeAuthority: tokenInfo.freezeAuthority,
+                  ageMinutes: tokenInfo.ageMinutes,
+                },
+                'yolo'
+              )
+            )
           );
 
           if (!entryCheck.allowed) {
@@ -260,14 +277,19 @@ export class YoloOrchestrator {
         const currentPrice = price.priceUsd;
 
         // Check exit triggers
-        const exit = checkExitTriggers(
-          {
-            entryPrice: position.entryPrice,
-            currentPrice,
-            sizeUsd: position.sizeUsd,
-            openedAt: position.openedAt,
-          },
-          'yolo'
+        const exit = await runRiskGuardEffect(
+          Effect.flatMap(RiskGuardService, (service) =>
+            service.checkExitTriggers(
+              this.userId,
+              {
+                entryPrice: position.entryPrice,
+                currentPrice,
+                sizeUsd: position.sizeUsd,
+                openedAt: position.openedAt,
+              },
+              'yolo'
+            )
+          )
         );
 
         if (exit) {
@@ -354,9 +376,10 @@ export function createYoloOrchestrator(
   wallet: WalletProvider,
   marketData: MarketDataProvider,
   tradingSkill: TradingSkill,
-  strategies: TradingStrategy[]
+  strategies: TradingStrategy[],
+  userId = 0
 ): YoloOrchestrator {
-  return new YoloOrchestrator(config, wallet, marketData, tradingSkill, strategies);
+  return new YoloOrchestrator(config, wallet, marketData, tradingSkill, strategies, userId);
 }
 
 // ── Default Config ───────────────────────────────────────────────────────────

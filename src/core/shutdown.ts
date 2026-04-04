@@ -108,10 +108,10 @@ async function gracefulShutdown(server: { close: () => void }) {
 
   // 8. Close database connections
   logger.info('Closing database connections...');
-  const { closeProjectDb } = await import('./stores/project-store');
-  closeProjectDb();
-  const { closeMemoryDb } = await import('./agent/task-memory');
-  closeMemoryDb();
+  const { disposeAllRuntimes } = await import('../lib/hono-effect');
+  await disposeAllRuntimes();
+  const { closeDatabasePool } = await import('../services/database');
+  await closeDatabasePool();
 
   // 9. Flush logs
   logger.info('Flushing logs...');

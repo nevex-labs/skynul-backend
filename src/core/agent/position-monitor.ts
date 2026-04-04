@@ -6,9 +6,11 @@
  * and completes the task with a summary.
  */
 
+import { Effect } from 'effect';
+import { DatabaseLive } from '../../services/database';
+import { PaperPortfolioService, PaperPortfolioServiceLive } from '../../services/paper-portfolio';
 import type { Task } from '../../types';
 import { PolymarketClient } from '../polymarket-client';
-import { adjustPaperBalance, recordPaperTrade } from './paper-portfolio';
 import type { TaskManager } from './task-manager';
 
 type MonitorEntry = {
@@ -20,6 +22,12 @@ const activeMonitors = new Map<string, MonitorEntry>();
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const DEFAULT_MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// Helper to run PaperPortfolioService effects
+async function runPaperPortfolioEffect<T>(effect: Effect.Effect<T, unknown, PaperPortfolioService>): Promise<T> {
+  const program = effect.pipe(Effect.provide(PaperPortfolioServiceLive), Effect.provide(DatabaseLive));
+  return Effect.runPromise(program as Effect.Effect<T>);
+}
 
 export function startPositionMonitor(task: Task, taskManager: TaskManager, paperMode: boolean): string {
   const m = task.monitor;
@@ -53,7 +61,7 @@ export function stopMonitor(taskId: string): void {
   if (entry) {
     clearInterval(entry.timer);
     activeMonitors.delete(taskId);
-    console.log(`[monitor] Stopped for task ${taskId}`);
+    console.log(`[monitor] Stopped for ${taskId}`);
   }
 }
 
@@ -128,20 +136,27 @@ async function closeAndFinish(
   const m = task.monitor!;
   stopMonitor(task.id);
 
+  const userId = task.userId ?? 0;
+
   try {
     if (paperMode) {
       const proceeds = m.size * (currentPrice ?? m.entryPrice);
-      adjustPaperBalance('USDC', proceeds);
-      recordPaperTrade({
-        task_id: task.id,
-        venue: m.venue,
-        action_type: 'monitor_close',
-        symbol: m.tokenId.slice(0, 16),
-        side: 'sell',
-        price: currentPrice,
-        size: m.size,
-        amount_usd: proceeds,
-      });
+      await runPaperPortfolioEffect(
+        Effect.flatMap(PaperPortfolioService, (service) => service.adjustBalance(userId, 'USDC', proceeds))
+      );
+      await runPaperPortfolioEffect(
+        Effect.flatMap(PaperPortfolioService, (service) =>
+          service.recordTrade(userId, {
+            venue: m.venue,
+            actionType: 'monitor_close',
+            symbol: m.tokenId.slice(0, 16),
+            side: 'sell',
+            price: currentPrice,
+            size: m.size,
+            amountUsd: proceeds,
+          })
+        )
+      );
     } else if (m.venue === 'polymarket') {
       const client = new PolymarketClient({ mode: 'live' });
       await client.closePosition({ tokenId: m.tokenId, size: m.size });

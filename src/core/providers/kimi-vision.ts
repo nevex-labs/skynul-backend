@@ -7,8 +7,8 @@
  */
 
 import type { VisionMessage } from '../../types';
-import { getSecret } from '../stores/secret-store';
 import { createVisionProvider } from './base-vision';
+import { getSecret } from './secret-adapter';
 import { toText } from './vision-utils';
 
 type ContentBlock =

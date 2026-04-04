@@ -198,14 +198,17 @@ export async function executeOrchestratorAction(ctx: ExecutorContext, action: Ta
 
     case 'remember_fact':
     case 'forget_fact': {
-      const res = executeFactAction(ctx, action as Extract<TaskAction, { type: 'remember_fact' | 'forget_fact' }>);
+      const res = await executeFactAction(
+        ctx,
+        action as Extract<TaskAction, { type: 'remember_fact' | 'forget_fact' }>
+      );
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
 
     case 'memory_save':
     case 'memory_search':
     case 'memory_context': {
-      const res = executeMemoryAction(
+      const res = await executeMemoryAction(
         ctx,
         action as Extract<TaskAction, { type: 'memory_save' | 'memory_search' | 'memory_context' }>
       );

@@ -1,11 +1,18 @@
-import { zValidator } from '@hono/zod-validator';
+import { Effect } from 'effect';
 import { Hono } from 'hono';
+import { AppLayer } from '../../config/layers';
 import { getAllChains } from '../../core/chain/config';
-import { TradingSettingsSchema } from '../../core/stores/schemas';
-import { loadTradingSettings, saveTradingSettings } from '../../core/stores/trading-store';
-import { type CexExchangeId, type TradingSettings } from '../../types/trading';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { SettingsService } from '../../services/settings';
+import type { CexExchangeId } from '../../types/trading';
 
-let trading = await loadTradingSettings();
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Trading operation error:', error);
+  return Http.internalError();
+};
 
 const CEX_EXCHANGES: Array<{ id: CexExchangeId; label: string; liveImplemented: boolean }> = [
   { id: 'binance', label: 'Binance', liveImplemented: true },
@@ -20,29 +27,72 @@ const CEX_EXCHANGES: Array<{ id: CexExchangeId; label: string; liveImplemented: 
 ];
 
 const tradingRoutes = new Hono()
-  .get('/settings', async (c) => {
-    return c.json(trading);
-  })
-  .put('/settings', zValidator('json', TradingSettingsSchema), async (c) => {
-    trading = c.req.valid('json') as TradingSettings;
-    await saveTradingSettings(trading);
-    return c.json(trading);
-  })
-  .get('/providers', async (c) => {
-    const chains = getAllChains();
-    return c.json({
-      cex: {
-        exchanges: CEX_EXCHANGES,
-      },
-      dex: {
-        evm: {
-          supportedChainIds: chains.map((x) => x.chainId),
-        },
-        solana: { supported: false },
-        bitcoin: { supported: false },
-      },
-    });
-  });
+  .get(
+    '/settings',
+    handler((c) =>
+      Effect.gen(function* () {
+        const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+        if (!userId) {
+          return Http.unauthorized();
+        }
+
+        const service = yield* SettingsService;
+        const settings = yield* service.getTradingSettings(userId);
+        return Http.ok(settings);
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .put(
+    '/settings',
+    handler((c) =>
+      Effect.gen(function* () {
+        const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+        if (!userId) {
+          return Http.unauthorized();
+        }
+
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json(),
+          catch: () => null,
+        });
+
+        if (!body || typeof body !== 'object') {
+          return Http.badRequest('Invalid request body');
+        }
+
+        const service = yield* SettingsService;
+        const settings = yield* service.updateTradingSettings(userId, {
+          paperTrading: body.paperTrading,
+          autoApprove: body.autoApprove,
+          cexProviders: body.cexProviders,
+          dexProviders: body.dexProviders,
+          chainConfigs: body.chainConfigs,
+        });
+
+        return Http.ok(settings);
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  )
+  .get(
+    '/providers',
+    handler((c) =>
+      Effect.gen(function* () {
+        const chains = getAllChains();
+        return Http.ok({
+          cex: {
+            exchanges: CEX_EXCHANGES,
+          },
+          dex: {
+            evm: {
+              supportedChainIds: chains.map((x) => x.chainId),
+            },
+            solana: { supported: false },
+            bitcoin: { supported: false },
+          },
+        });
+      }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+    )
+  );
 
 export { tradingRoutes as trading };
 export type TradingRoute = typeof tradingRoutes;

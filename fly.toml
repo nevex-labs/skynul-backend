@@ -29,8 +29,12 @@ primary_region = 'ams'
     grace_period = "30s"
     interval = "15s"
     method = "GET"
-    path = "/ping"
+    path = "/health"
     timeout = "5s"
+
+[metrics]
+  port = 8080
+  path = "/metrics"
 
 [[vm]]
   memory = '512mb'

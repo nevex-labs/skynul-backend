@@ -1,38 +1,68 @@
-import { zValidator } from '@hono/zod-validator';
+import { Effect } from 'effect';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { AppLayer } from '../../config/layers';
 import { dispatchChat } from '../../core/providers/dispatch';
-import type { ChatSendResponse } from '../../types';
-import { policyState } from '../agent/policy';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { SettingsService } from '../../services/settings';
+import type { ProviderId } from '../../types';
+
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Chat error:', error);
+
+  if (error instanceof Error) {
+    return Http.badRequest(error.message);
+  }
+
+  return Http.internalError();
+};
 
 const chatMessageSchema = z.object({
   role: z.enum(['user', 'assistant']),
   content: z.string(),
 });
 
+const chatRequestSchema = z.object({
+  messages: z.array(chatMessageSchema).min(1),
+});
+
 const chat = new Hono().post(
   '/send',
-  zValidator(
-    'json',
-    z.object({
-      messages: z.array(chatMessageSchema).min(1),
-    })
-  ),
-  async (c) => {
-    if (!policyState.capabilities['net.http']) {
-      return c.json({ error: 'Capability net.http is disabled' }, 403);
-    }
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) {
+        return Http.unauthorized();
+      }
 
-    const { messages } = c.req.valid('json');
-    try {
-      const content = await dispatchChat(policyState.provider.active, messages);
-      const response: ChatSendResponse = { content };
-      return c.json(response);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: msg }, 400);
-    }
-  }
+      const body = yield* Effect.tryPromise({
+        try: () => c.req.json(),
+        catch: () => null,
+      });
+
+      const parsed = chatRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        return Http.badRequest(parsed.error.message);
+      }
+
+      const settingsService = yield* SettingsService;
+      const settings = yield* settingsService.getSettings(userId);
+
+      if (!settings.capabilityNetHttp) {
+        return Http.ok({ error: 'Capability net.http is disabled' });
+      }
+
+      const content = yield* Effect.tryPromise({
+        try: () => dispatchChat(settings.activeProvider as ProviderId, parsed.data.messages),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      });
+
+      return Http.ok({ content });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
 );
 
 export { chat };

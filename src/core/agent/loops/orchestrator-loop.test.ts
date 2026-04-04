@@ -1,9 +1,42 @@
+import { Effect, Layer } from 'effect';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DatabaseLive } from '../../../services/database';
+import { TaskMemoryService } from '../../../services/task-memory';
 import type { OrchestratorPlan, Task } from '../../../types';
 import type { ExecutorContext } from '../action-executors';
 import { executeOrchestratorAction, setupOrchestratorLoop } from './orchestrator-loop';
 
 vi.mock('../../config', () => ({ getDataDir: vi.fn(() => '/tmp') }));
+
+// Mock runTaskMemoryEffect for tests
+vi.mock('../action-executors', async () => {
+  const { TaskMemoryService: TMS } = await import('../../../services/task-memory');
+
+  const mockService = TMS.of({
+    saveMemory: () => Effect.succeed(undefined),
+    searchMemories: () => Effect.succeed([]),
+    formatMemoriesForPrompt: () => '',
+    saveFact: () => Effect.succeed(undefined),
+    deleteFact: () => Effect.succeed(undefined),
+    listFacts: () => Effect.succeed([]),
+    searchFacts: () => Effect.succeed([]),
+    formatFactsForPrompt: () => '',
+    saveObservation: () => Effect.succeed(1),
+    searchObservations: () => Effect.succeed([]),
+    getRecentObservations: () => Effect.succeed([]),
+    deleteObservation: () => Effect.succeed(undefined),
+    formatObservationsForPrompt: () => '',
+  });
+
+  const mockLayer = Layer.succeed(TMS, mockService);
+
+  return {
+    runTaskMemoryEffect: async (effect: any) => {
+      const program = effect.pipe(Effect.provide(mockLayer), Effect.provide(DatabaseLive));
+      return Effect.runPromise(program);
+    },
+  };
+});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

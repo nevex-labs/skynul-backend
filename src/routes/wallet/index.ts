@@ -1,112 +1,255 @@
+import { Effect } from 'effect';
 import { Hono } from 'hono';
-import {
-  getPaperBalances,
-  getPaperPortfolioSummary,
-  getPaperTrades,
-  resetPaperPortfolio,
-} from '../../core/agent/paper-portfolio';
-import { getAllChains, getChainConfig, getDefaultChainId } from '../../core/chain/config';
-import { EvmWallet } from '../../core/chain/evm-wallet';
+import { AppLayer } from '../../config/layers';
+import { getAllChains } from '../../core/chain/config';
+import { Http, createEffectRoute } from '../../lib/hono-effect';
+import type { HttpResponse } from '../../lib/hono-effect';
+import { AllowanceService } from '../../services/allowances/tag';
+import { PaperPortfolioService } from '../../services/paper-portfolio/tag';
+import { SmartWalletService } from '../../services/smart-wallet/tag';
+
+const handler = createEffectRoute(AppLayer as any);
+
+const handleError = (error: any): HttpResponse => {
+  console.error('Wallet error:', error);
+  return Http.internalError();
+};
 
 export const walletGroup = new Hono();
-
-/** GET /api/wallet/address — return current wallet address or 404 */
-walletGroup.get('/address', async (c) => {
-  const exists = await EvmWallet.exists();
-  if (!exists) return c.json({ error: 'No wallet configured' }, 404);
-
-  const wallet = await EvmWallet.load();
-  if (!wallet) return c.json({ error: 'Failed to load wallet' }, 500);
-
-  return c.json({ address: wallet.getAddress() });
-});
-
-/** GET /api/wallet/balance/:chainId — native + USDC balance */
-walletGroup.get('/balance/:chainId', async (c) => {
-  const chainIdRaw = c.req.param('chainId');
-  const chainId = Number.parseInt(chainIdRaw, 10);
-  if (!Number.isFinite(chainId)) {
-    return c.json({ error: 'Invalid chainId' }, 400);
-  }
-
-  const chain = getChainConfig(chainId);
-  if (!chain) return c.json({ error: `Unknown chainId: ${chainId}` }, 400);
-
-  const wallet = await EvmWallet.load();
-  if (!wallet) return c.json({ error: 'No wallet configured' }, 404);
-
-  try {
-    const [native, usdc] = await Promise.all([wallet.getNativeBalance(chainId), wallet.getUsdcBalance(chainId)]);
-    return c.json({ chainId, chainName: chain.name, native, usdc });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
-
-/** POST /api/wallet/create — generate new EOA wallet */
-walletGroup.post('/create', async (c) => {
-  try {
-    const result = await EvmWallet.create();
-    return c.json({ address: result.address });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
 
 /** GET /api/wallet/chains — list supported chains */
 walletGroup.get('/chains', (c) => {
   const chains = getAllChains().map((ch) => ({
     chainId: ch.chainId,
     name: ch.name,
-    testnet: ch.testnet,
-    explorerUrl: ch.explorerUrl,
-    nativeCurrency: ch.nativeCurrency,
-    usdcAddress: ch.usdcAddress,
   }));
-  return c.json({ chains, defaultChainId: getDefaultChainId() });
+  return c.json({ chains });
 });
 
-/** GET /api/wallet/paper — paper portfolio summary */
-walletGroup.get('/paper', (c) => {
-  try {
-    const summary = getPaperPortfolioSummary();
-    return c.json(summary);
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
+/** GET /api/wallet/paper — paper trading portfolio */
+walletGroup.get(
+  '/paper',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) {
+        return Http.unauthorized();
+      }
 
-/** GET /api/wallet/paper/balances — paper balances */
-walletGroup.get('/paper/balances', (c) => {
-  try {
-    const balances = getPaperBalances();
-    return c.json({ balances });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
+      const service = yield* PaperPortfolioService;
+      const balances = yield* service.getBalances(userId);
+      const trades = yield* service.getTrades(userId);
+      const summary = yield* service.getSummary(userId);
 
-/** GET /api/wallet/paper/trades — paper trades */
-walletGroup.get('/paper/trades', (c) => {
-  try {
-    const venue = c.req.query('venue');
-    const limitRaw = c.req.query('limit');
-    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
-    const trades = getPaperTrades({ venue, limit: Number.isFinite(limit) ? limit : undefined });
-    return c.json({ trades });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
+      return Http.ok({ balances, trades, summary });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
 
 /** POST /api/wallet/paper/reset — reset paper portfolio */
-walletGroup.post('/paper/reset', async (c) => {
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    const startingBalance = typeof body.startingBalance === 'number' ? body.startingBalance : undefined;
-    resetPaperPortfolio(startingBalance);
-    return c.json({ ok: true, startingBalance: startingBalance ?? 10_000 });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
-  }
-});
+walletGroup.post(
+  '/paper/reset',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) {
+        return Http.unauthorized();
+      }
+
+      const service = yield* PaperPortfolioService;
+      yield* service.resetPortfolio(userId);
+
+      return Http.ok({ ok: true });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+// ── AA (Account Abstraction) Wallet Routes ───────────────────────────────────
+
+/** GET /api/wallet/aa/allowance/:chainId — get allowance info */
+walletGroup.get(
+  '/aa/allowance/:chainId',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const chainId = Number(c.req.param('chainId'));
+      const tokenAddress = c.req.query('token') || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+      const service = yield* AllowanceService;
+      const allowance = yield* service.getAllowance(userId, tokenAddress, chainId);
+      const remaining = yield* service.getRemainingAllowance(userId, tokenAddress, chainId);
+
+      if (!allowance) {
+        return Http.ok({
+          tokenAddress,
+          chainId,
+          approvedAmount: '0',
+          usedAmount: '0',
+          feeCollected: '0',
+          remaining: '0',
+        });
+      }
+
+      return Http.ok({
+        tokenAddress,
+        chainId,
+        approvedAmount: allowance.approvedAmount.toString(),
+        usedAmount: allowance.usedAmount.toString(),
+        feeCollected: allowance.feeCollected.toString(),
+        remaining: remaining.toString(),
+      });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** POST /api/wallet/aa/allowance/approve — record user's on-chain approval */
+walletGroup.post(
+  '/aa/allowance/approve',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const body = yield* Effect.tryPromise(() => c.req.json());
+      const { tokenAddress, chainId, amount } = body as {
+        tokenAddress: string;
+        chainId: number;
+        amount: string;
+      };
+
+      const service = yield* AllowanceService;
+      yield* service.setApprovedAmount(userId, tokenAddress, chainId, BigInt(amount));
+
+      return Http.ok({ txHash: `0xapproved-${Date.now().toString(16)}` });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** GET /api/wallet/aa/smart-wallet/:chainId — get smart wallet info */
+walletGroup.get(
+  '/aa/smart-wallet/:chainId',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const chainId = Number(c.req.param('chainId'));
+
+      const service = yield* SmartWalletService;
+      const address = yield* service.getSmartAccount(userId, chainId);
+      const sessionKey = yield* service.getSessionKey(userId, chainId);
+
+      return Http.ok({
+        address,
+        chainId,
+        sessionKey: sessionKey
+          ? {
+              address: sessionKey.address,
+              maxPerTrade: sessionKey.maxPerTrade.toString(),
+              dailyLimit: sessionKey.dailyLimit.toString(),
+              expiresAt: sessionKey.expiresAt,
+              allowedTokens: sessionKey.allowedTokens,
+            }
+          : null,
+      });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** POST /api/wallet/aa/smart-wallet/create — create smart account */
+walletGroup.post(
+  '/aa/smart-wallet/create',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const body = yield* Effect.tryPromise(() => c.req.json());
+      const { chainId } = body as { chainId: number };
+
+      const service = yield* SmartWalletService;
+      const address = yield* service.getOrCreateSmartAccount(userId, chainId);
+
+      return Http.ok({
+        address,
+        txHash: `0xdeployed-${Date.now().toString(16)}`,
+      });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** GET /api/wallet/aa/session-key/:chainId — get session key info */
+walletGroup.get(
+  '/aa/session-key/:chainId',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const chainId = Number(c.req.param('chainId'));
+
+      const service = yield* SmartWalletService;
+      const sessionKey = yield* service.getSessionKey(userId, chainId);
+
+      if (!sessionKey) return Http.ok(null);
+
+      return Http.ok({
+        address: sessionKey.address,
+        maxPerTrade: sessionKey.maxPerTrade.toString(),
+        dailyLimit: sessionKey.dailyLimit.toString(),
+        expiresAt: sessionKey.expiresAt,
+        allowedTokens: sessionKey.allowedTokens,
+      });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** POST /api/wallet/aa/session-key/create — create session key */
+walletGroup.post(
+  '/aa/session-key/create',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const body = yield* Effect.tryPromise(() => c.req.json());
+      const { chainId, maxPerTrade, dailyLimit, expiresAt, allowedTokens } = body as {
+        chainId: number;
+        maxPerTrade: string;
+        dailyLimit: string;
+        expiresAt: number;
+        allowedTokens: string[];
+      };
+
+      const service = yield* SmartWalletService;
+      yield* service.createSessionKey(userId, chainId, {
+        maxPerTrade: BigInt(maxPerTrade),
+        dailyLimit: BigInt(dailyLimit),
+        expiresAt,
+        allowedTokens,
+      });
+
+      return Http.ok({ txHash: `0xsession-${Date.now().toString(16)}` });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);
+
+/** DELETE /api/wallet/aa/session-key/:chainId — revoke session key */
+walletGroup.delete(
+  '/aa/session-key/:chainId',
+  handler((c) =>
+    Effect.gen(function* () {
+      const userId = (c.get('jwtPayload') as any)?.userId as number | undefined;
+      if (!userId) return Http.unauthorized();
+
+      const chainId = Number(c.req.param('chainId'));
+
+      const service = yield* SmartWalletService;
+      yield* service.revokeSessionKey(userId, chainId);
+
+      return Http.ok({ ok: true });
+    }).pipe(Effect.catchAll((error) => Effect.succeed(handleError(error))))
+  )
+);

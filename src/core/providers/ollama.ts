@@ -5,8 +5,8 @@
  */
 
 import type { ChatMessage } from '../../types';
-import { getSecret } from '../stores/secret-store';
 import { createChatProvider } from './base-chat';
+import { getSecret } from './secret-adapter';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 const DEFAULT_MODEL = 'qwen3.5:27b';

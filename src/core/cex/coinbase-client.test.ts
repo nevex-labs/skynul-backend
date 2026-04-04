@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoinbaseClient } from './coinbase-client';
 
-vi.mock('../stores/secret-store', () => ({
+vi.mock('../providers/secret-adapter', () => ({
   getSecret: vi.fn(),
 }));
 
@@ -31,7 +31,7 @@ describe('CoinbaseClient', () => {
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const { getSecret } = await import('../stores/secret-store');
+    const { getSecret } = await import('../providers/secret-adapter');
     vi.mocked(getSecret).mockImplementation(async (key: string) => {
       if (key === 'COINBASE_API_KEY') return TEST_API_KEY;
       if (key === 'COINBASE_API_SECRET') return TEST_API_SECRET;
@@ -39,48 +39,9 @@ describe('CoinbaseClient', () => {
     });
   });
 
-  describe('paper mode (default)', () => {
-    beforeEach(() => {
-      client = new CoinbaseClient();
-    });
-
-    it('getBalances() returns paper balances without calling fetch', async () => {
-      const balances = await client.getBalances();
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(balances).toEqual([
-        { asset: 'USD', free: 1000, locked: 0 },
-        { asset: 'BTC', free: 0.01, locked: 0 },
-      ]);
-    });
-
-    it('getPositions() returns empty array without calling fetch', async () => {
-      const positions = await client.getPositions();
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(positions).toEqual([]);
-    });
-
-    it('placeOrder() returns paper order without calling fetch', async () => {
-      const result = await client.placeOrder({ symbol: 'BTC-USD', side: 'buy', orderType: 'market', amount: 0.01 });
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(result.status).toBe('FILLED');
-      expect(result.orderId).toMatch(/^paper-/);
-    });
-
-    it('cancelOrder() resolves without calling fetch', async () => {
-      await expect(client.cancelOrder('order-123')).resolves.toBeUndefined();
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('withdraw() returns paper withdrawal id without calling fetch', async () => {
-      const id = await client.withdraw('USD', 100, '0xabc', 'ethereum');
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(id).toMatch(/^paper-withdraw-/);
-    });
-  });
-
   describe('live mode', () => {
     beforeEach(() => {
-      client = new CoinbaseClient({ mode: 'live' });
+      client = new CoinbaseClient();
     });
 
     describe('JWT auth', () => {
@@ -324,7 +285,7 @@ describe('CoinbaseClient', () => {
       it('sends POST to batch_cancel with order id array', async () => {
         fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
 
-        await client.cancelOrder('order-xyz');
+        await client.cancelOrder('BTC-USD', 'order-xyz');
 
         const [url, opts] = fetchMock.mock.calls[0];
         expect(url).toContain('orders/batch_cancel');
@@ -372,7 +333,7 @@ describe('CoinbaseClient', () => {
       });
 
       it('throws when credentials are missing', async () => {
-        const { getSecret } = await import('../stores/secret-store');
+        const { getSecret } = await import('../providers/secret-adapter');
         vi.mocked(getSecret).mockResolvedValue(null);
         const prevKey = process.env.COINBASE_API_KEY;
         const prevSecret = process.env.COINBASE_API_SECRET;
