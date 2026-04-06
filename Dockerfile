@@ -27,18 +27,17 @@ RUN npm install -g pnpm@$PNPM_VERSION
 
 # Set production environment
 ENV NODE_ENV=production
+ENV MIGRATIONS_FOLDER=/app/migrations
 
 # =============================================================================
 # Build Stage
 # =============================================================================
 FROM base AS build
 
-# Install build dependencies for native modules (SQLite, etc.)
 RUN apk add --no-cache \
     python3 \
     make \
-    g++ \
-    sqlite-dev
+    g++
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
@@ -65,6 +64,7 @@ RUN addgroup -g 1001 -S skynul && \
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/dist /app/dist
 COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/src/infrastructure/db/migrations /app/migrations
 
 # Create data directory for persistence (SQLite, logs, etc.)
 RUN mkdir -p /app/data /app/logs && \

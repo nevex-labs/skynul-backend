@@ -1,11 +1,9 @@
-import { channelManager } from '../routes/integrations';
+import { closeSecretReaderPool } from '../v2/secret-reader';
 import { logger } from './logger';
 
-// State
 let isShuttingDown = false;
 let serverStarted = false;
 
-// Config
 const SHUTDOWN_TIMEOUT = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '30000', 10);
 const AGENT_LOOP_TIMEOUT = Number.parseInt(process.env.AGENT_LOOP_TIMEOUT_MS ?? '60000', 10);
 
@@ -64,20 +62,9 @@ export function setupShutdownHandlers(server: { close: () => void }): void {
 }
 
 async function gracefulShutdown(server: { close: () => void }) {
-  // 1. Stop accepting new connections
   logger.info('Closing HTTP server...');
   server.close();
 
-  // 2. Close WebSocket connections
-  logger.info('Closing WebSocket connections...');
-  const { closeAllClients } = await import('../ws/events');
-  closeAllClients();
-
-  // 3. Stop all channel integrations
-  logger.info('Stopping channel integrations...');
-  await channelManager.stopAll();
-
-  // 4. Mark running tasks as shutting_down and wait for them
   const { taskManager } = await import('../routes/tasks');
   const activeTaskCount = taskManager.markShuttingDown();
   logger.info({ activeTaskCount }, 'Marked tasks as shutting_down, waiting for completion...');
@@ -91,29 +78,16 @@ async function gracefulShutdown(server: { close: () => void }) {
     }
   }
 
-  // 5. Kill background processes
-  logger.info('Killing background processes...');
-  const { getProcessRegistry } = await import('./agent/process-registry');
-  const processRegistry = getProcessRegistry();
-  processRegistry.destroyAll();
-
-  // 6. Destroy remaining tasks
   logger.info('Destroying remaining tasks...');
   taskManager.destroyAll();
 
-  // 7. Close browser connections
   logger.info('Closing browser connections...');
   const { closeSharedPlaywrightChromeCdp } = await import('./browser/playwright-cdp');
   await closeSharedPlaywrightChromeCdp();
 
-  // 8. Close database connections
   logger.info('Closing database connections...');
-  const { disposeAllRuntimes } = await import('../lib/hono-effect');
-  await disposeAllRuntimes();
-  const { closeDatabasePool } = await import('../services/database');
-  await closeDatabasePool();
+  await closeSecretReaderPool();
 
-  // 9. Flush logs
   logger.info('Flushing logs...');
   await logger.flush();
 }

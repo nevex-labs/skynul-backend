@@ -10,9 +10,8 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     return;
   }
 
-  // Skip auth for health check and WebSocket upgrade
   const path = c.req.path;
-  if (path === '/ping' || path === '/ws') {
+  if (path === '/ping' || path === '/health' || path === '/metrics') {
     await next();
     return;
   }
