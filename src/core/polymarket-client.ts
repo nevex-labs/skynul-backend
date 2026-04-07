@@ -406,23 +406,54 @@ export class PolymarketClient {
    * Get current midpoint price for a token. Used by position monitor.
    */
   async getTokenPrice(tokenId: string): Promise<number | null> {
-    if (this.mode === 'paper') return null; // Paper mode doesn't track live prices
-
+    // First try public CLOB midpoint (works for both paper and live)
     try {
-      const client = (await this.getLiveSdkClient()) as any;
-      const book = await client.getOrderBook(tokenId);
-      if (!book) return null;
+      const res = await fetch(`https://clob.polymarket.com/midpoint?token_id=${encodeURIComponent(tokenId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const mid = Number(data.mid ?? data.price);
+        if (Number.isFinite(mid) && mid > 0) return mid;
+      }
+    } catch { /* fall through */ }
 
-      const bestBid = book.bids?.[0]?.price;
-      const bestAsk = book.asks?.[0]?.price;
+    // Fallback: gamma-api price lookup
+    try {
+      const res = await fetch(`https://gamma-api.polymarket.com/markets?clob_token_ids=${encodeURIComponent(tokenId)}&limit=1`);
+      if (res.ok) {
+        const markets = await res.json();
+        if (Array.isArray(markets) && markets.length > 0) {
+          const m = markets[0];
+          const prices: number[] = typeof m.outcomePrices === 'string'
+            ? JSON.parse(m.outcomePrices).map(Number)
+            : [];
+          // Find the price for the matching token
+          const tids: string[] = typeof m.clobTokenIds === 'string'
+            ? JSON.parse(m.clobTokenIds)
+            : Array.isArray(m.clobTokenIds) ? m.clobTokenIds : [];
+          const idx = tids.indexOf(tokenId);
+          if (idx >= 0 && Number.isFinite(prices[idx]) && prices[idx] > 0) return prices[idx];
+          if (prices.length > 0 && Number.isFinite(prices[0]) && prices[0] > 0) return prices[0];
+        }
+      }
+    } catch { /* fall through */ }
 
-      if (bestBid && bestAsk) return (Number(bestBid) + Number(bestAsk)) / 2;
-      if (bestBid) return Number(bestBid);
-      if (bestAsk) return Number(bestAsk);
-      return null;
-    } catch {
-      return null;
+    // Live mode: try SDK order book as last resort
+    if (this.mode !== 'paper') {
+      try {
+        const client = (await this.getLiveSdkClient()) as any;
+        const book = await client.getOrderBook(tokenId);
+        if (!book) return null;
+
+        const bestBid = book.bids?.[0]?.price;
+        const bestAsk = book.asks?.[0]?.price;
+
+        if (bestBid && bestAsk) return (Number(bestBid) + Number(bestAsk)) / 2;
+        if (bestBid) return Number(bestBid);
+        if (bestAsk) return Number(bestAsk);
+      } catch { /* fall through */ }
     }
+
+    return null;
   }
 
   /**

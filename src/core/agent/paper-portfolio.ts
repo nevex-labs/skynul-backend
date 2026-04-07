@@ -205,9 +205,49 @@ export async function getPaperPositions(venue?: string): Promise<PaperPosition[]
     if (v.shares > 0.001) {
       const symbol = key.split(':')[1] ?? key;
       const avgPrice = v.cost / v.shares;
-      // Try real price for CEX venues, fall back to simulation
+      // Try real price for all venues, fall back to simulation
       let currentPrice: number;
-      if (v.venue !== 'polymarket') {
+      if (v.venue === 'polymarket') {
+        // Polymarket: use public CLOB midpoint API with token ID
+        let fetched = false;
+        try {
+          const res = await fetch(`https://clob.polymarket.com/midpoint?token_id=${encodeURIComponent(symbol)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const mid = Number(data.mid ?? data.price);
+            if (Number.isFinite(mid) && mid > 0) {
+              currentPrice = mid;
+              fetched = true;
+            }
+          }
+        } catch { /* fall through */ }
+        if (!fetched) {
+          try {
+            const res = await fetch(`https://gamma-api.polymarket.com/markets?clob_token_ids=${encodeURIComponent(symbol)}&limit=1`);
+            if (res.ok) {
+              const markets = await res.json();
+              if (Array.isArray(markets) && markets.length > 0) {
+                const prices: number[] = typeof markets[0].outcomePrices === 'string'
+                  ? JSON.parse(markets[0].outcomePrices).map(Number)
+                  : [];
+                const tids: string[] = typeof markets[0].clobTokenIds === 'string'
+                  ? JSON.parse(markets[0].clobTokenIds)
+                  : Array.isArray(markets[0].clobTokenIds) ? markets[0].clobTokenIds : [];
+                const idx = tids.indexOf(symbol);
+                if (idx >= 0 && Number.isFinite(prices[idx]) && prices[idx] > 0) {
+                  currentPrice = prices[idx];
+                  fetched = true;
+                } else if (prices.length > 0 && Number.isFinite(prices[0]) && prices[0] > 0) {
+                  currentPrice = prices[0];
+                  fetched = true;
+                }
+              }
+            }
+          } catch { /* fall through */ }
+        }
+        if (!fetched) currentPrice = _simulatePrice(key, avgPrice);
+      } else {
+        // CEX: try Binance API
         try {
           let res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
           if (!res.ok) res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`);
@@ -220,8 +260,6 @@ export async function getPaperPositions(venue?: string): Promise<PaperPosition[]
         } catch {
           currentPrice = _simulatePrice(key, avgPrice);
         }
-      } else {
-        currentPrice = _simulatePrice(key, avgPrice);
       }
       const pnlUsd = (currentPrice - avgPrice) * v.shares;
       positions.push({

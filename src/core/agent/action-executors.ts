@@ -445,7 +445,7 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
             task_id: ctx.task.id,
             venue: 'polymarket',
             action_type: 'polymarket_place_order',
-            symbol: raw.tokenId.slice(0, 16),
+            symbol: raw.tokenId,
             side: raw.side,
             price: raw.price,
             size: raw.size,
@@ -478,19 +478,27 @@ export async function executePolymarketAction(ctx: ExecutorContext, action: Task
         const raw = action as Extract<TaskAction, { type: 'polymarket_close_position' }>;
         if (!raw.tokenId) return errResult('tokenId is required. Use polymarket_get_account_summary first.');
         if (ctx.paperMode) {
-          const proceeds = (raw.size ?? 1) * 0.999;
+          // Fetch real market price for the token instead of hardcoded 0.999
+          let exitPrice = 0.999;
+          try {
+            const realPrice = await client.getTokenPrice(raw.tokenId);
+            if (realPrice !== null && realPrice > 0) exitPrice = realPrice;
+          } catch { /* use fallback */ }
+          const size = raw.size ?? 1;
+          const proceeds = size * exitPrice;
           adjustPaperBalance('USDC', proceeds);
           const orderId = recordPaperTrade({
             task_id: ctx.task.id,
             venue: 'polymarket',
             action_type: 'polymarket_close_position',
-            symbol: raw.tokenId.slice(0, 16),
+            symbol: raw.tokenId,
             side: 'sell',
+            price: exitPrice,
             size: raw.size,
             amount_usd: proceeds,
           });
           return result(
-            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${raw.size ?? 'full'} | orderId: ${orderId}`
+            `[PAPER] Position closed: ${raw.tokenId.slice(0, 10)}... size=${size} @ $${exitPrice.toFixed(4)} | orderId: ${orderId}`
           );
         }
         await client.closePosition({ tokenId: raw.tokenId, size: raw.size });
