@@ -971,6 +971,7 @@ export function buildBrowserSystemPrompt(isSubagent = false, compact = false, pa
 {"thought":"...", "action":{"type":"fail","reason":"..."}}
 
 ## SELECTORS: Prefer element-refs (e5, e12). Fallback: [data-testid="..."] > [aria-label="..."] > CSS.
+## GOOGLE MAPS: NEVER click map pins (canvas). Extract list with evaluate('div.Nv2PK') — names, ratings, addresses only. Website info is ONLY in detail panel: click each result ONE AT A TIME, evaluate a[data-item-id="authority"], press Escape to go back. NEVER use async evaluate with clicks inside — it crashes. Stop checking when you have enough data. NEVER repeat same evaluate. If user gives a direct instruction, OBEY IMMEDIATELY.
 ${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
 ${tradingAuthBlock}
@@ -1061,6 +1062,36 @@ When asked to post on X/Twitter, Facebook, Instagram, Reddit, or any site:
 5. Click the post/publish button
 6. Wait and verify the post went through
 7. Return the post URL in your done summary
+
+## GOOGLE MAPS SCRAPING:
+When searching for businesses/places on Google Maps:
+
+### Phase 1 — Search & extract list
+1. Navigate to google.com/maps, type the search query, press Enter
+2. NEVER click map pins — the map is canvas/WebGL, clicks will fail
+3. Extract visible results from the sidebar list:
+   {"type": "evaluate", "script": "JSON.stringify([...document.querySelectorAll('div.Nv2PK')].map((el,i) => ({i, name: el.querySelector('.qBF1Pd')?.textContent || '', rating: el.querySelector('.MW4etd')?.textContent || '', address: el.querySelector('.W4Efsd:last-child > span:last-child')?.textContent || ''})))"}
+4. To scroll for more results: {"type": "evaluate", "script": "document.querySelector('div[role=\\"feed\\"]')?.scrollBy(0, 2000); 'scrolled'"}
+5. Extract again after scrolling. Do NOT extract more than twice — you should have 15-20 results.
+
+### Phase 2 — Check each result for website (ONE AT A TIME)
+Website info is ONLY visible in the detail panel, NOT in the list cards. You MUST click each result individually:
+1. Click the result card's aria-ref link from the snapshot (the clickable heading/name)
+2. Once the detail panel loads, check for a website link:
+   {"type": "evaluate", "script": "JSON.stringify({website: document.querySelector('a[data-item-id=\\"authority\\"]')?.href || '', phone: document.querySelector('[data-item-id^=\\"phone\\"]')?.textContent || ''})"}
+3. Go back to the list: {"type": "pressKey", "key": "Escape"} or click the back arrow
+4. Record the result and move to the next one
+5. STOP checking as soon as you have enough results for the task (e.g. 20 businesses without websites). Do NOT check every single result.
+
+### Phase 3 — Create the output
+Once you have enough data, IMMEDIATELY navigate to create the spreadsheet/document. Do NOT keep collecting.
+
+### CRITICAL RULES:
+- NEVER use async evaluate that clicks elements and navigates — it will CRASH. One click per step.
+- NEVER repeat the same evaluate. If you already extracted the list, do NOT extract again.
+- NEVER re-search if you still have results visible.
+- Keep a running count of collected data. The moment you hit the target number, move to Phase 3.
+- If the user gives you a DIRECT INSTRUCTION (e.g. "go to Drive now"), OBEY IMMEDIATELY. Drop whatever you're doing and follow their order.
 
 ## DOWNLOADING IMAGES FROM CHATGPT:
 After ChatGPT generates an image, to get it as a local file:
