@@ -7,6 +7,7 @@
 
 import type { ProviderId, Task } from '../../types';
 import type { BrowserEngine } from '../browser/engine/browser-engine';
+import { unregisterScreencast } from '../browser/screencast-registry';
 import type { ExecutorContext } from './action-executors';
 import { AppBridge } from './app-bridge';
 import { runAgentLoop } from './loops/agent-loop';
@@ -143,12 +144,14 @@ export class TaskRunner {
         systemPromptCompact
       );
     } catch (e) {
+      unregisterScreencast(this.task.id);
       if (release) await release().catch(() => {});
       if (this.activeRelease === release) this.activeRelease = null;
       if ((e as any)?.__cancelled || this.aborted) return this.finish('cancelled', this.task.error);
       return this.finish('failed', `Browser loop error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
+    unregisterScreencast(this.task.id);
     if (release) await release().catch(() => {});
     if (this.activeRelease === release) this.activeRelease = null;
     return loopResult;

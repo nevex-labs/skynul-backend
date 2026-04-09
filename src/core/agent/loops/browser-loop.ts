@@ -6,6 +6,7 @@ import type { Task, TaskAction } from '../../../types';
 import type { VisionMessage } from '../../../types';
 import type { BrowserEngine } from '../../browser/engine/browser-engine';
 import { acquireBrowserEngine } from '../../browser/engine/factory';
+import { registerScreencast, unregisterScreencast } from '../../browser/screencast-registry';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,
@@ -54,6 +55,7 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
     const acquired = await acquireBrowserEngine();
     engine = acquired.engine;
     release = acquired.release;
+    registerScreencast(task.id, engine);
     setup.onStatus('Browser ready');
   } catch (e) {
     task.status = 'failed';

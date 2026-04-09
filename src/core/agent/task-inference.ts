@@ -154,6 +154,18 @@ function isInformationQuestion(prompt: string): boolean {
     'git',
     'endpoint',
     'api',
+    'twitter',
+    'tweet',
+    'x.com',
+    'facebook',
+    'instagram',
+    'reddit',
+    'linkedin',
+    'tiktok',
+    'youtube',
+    'publicar',
+    'postea',
+    'postear',
   ];
 
   return !hasAny(p, toolSignals);
@@ -194,7 +206,12 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
     ' abrir',
   ];
   const webTargets = ['amazon', 'mercadolibre', 'airbnb', 'despegar'];
-  if (hasUrl || hasAny(p, webActionVerbs) || hasAny(p, webTargets)) caps.add('browser.cdp');
+  const socialPlatforms = [
+    'twitter', 'tweet', 'x.com', 'post en x', 'postea en x', 'postear en x',
+    'facebook', 'instagram', 'reddit', 'linkedin', 'tiktok', 'youtube',
+    'publicar', 'postea', 'postear', 'twittear', 'tuitear',
+  ];
+  if (hasUrl || hasAny(p, webActionVerbs) || hasAny(p, webTargets) || hasAny(p, socialPlatforms)) caps.add('browser.cdp');
 
   // Trading
   if (hasAny(p, ['polymarket', 'poly market', 'prediction market'])) caps.add('polymarket.trading');
@@ -260,7 +277,9 @@ function inferModeRules(prompt: string, capabilities: TaskCapabilityId[], attach
     'unit test',
     'docker',
     'kubernetes',
-    'ci',
+    'ci/cd',
+    'ci cd',
+    ' ci ',
     'lint',
     'repo',
     'pull request',

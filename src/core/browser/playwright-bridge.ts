@@ -254,6 +254,10 @@ export class PlaywrightBridge {
     return buf.toString('base64');
   }
 
+  async screenshotJpeg(quality = 40): Promise<Buffer> {
+    return this.page.screenshot({ type: 'jpeg', quality, fullPage: false });
+  }
+
   async uploadFile(selector: string, filePaths: string[], frameId?: string): Promise<void> {
     const loc = this.resolveLocator(selector, frameId);
     await loc.setInputFiles(filePaths);

@@ -24,6 +24,7 @@ import { systemGroup } from './routes/system';
 import { tasksGroup } from './routes/tasks';
 import { walletGroup } from './routes/wallet';
 import { addClient, clientCount, removeClient } from './ws/events';
+import { createScreencastHandler } from './ws/screencast';
 
 const app = new Hono();
 
@@ -60,6 +61,9 @@ const routes = app
       },
     }))
   )
+
+  // ── Screencast WebSocket ───────────────────────────────────────────────────
+  .get('/ws/screencast/:taskId', createScreencastHandler(upgradeWebSocket))
 
   // ── Routes ──────────────────────────────────────────────────────────────────
   .route('/api/tasks', tasksGroup)

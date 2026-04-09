@@ -43,6 +43,10 @@ class PlaywrightBrowserEngine implements BrowserEngine {
     return this.bridge.screenshot();
   };
 
+  screenshotJpeg = async (quality = 40): Promise<Buffer> => {
+    return this.bridge.screenshotJpeg(quality);
+  };
+
   getPageInfo = async (frameId?: string): Promise<BrowserPageInfo> => {
     void frameId;
     // We intentionally return minimal info as part of the stable port.

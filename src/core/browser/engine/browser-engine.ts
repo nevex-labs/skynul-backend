@@ -35,5 +35,6 @@ export interface BrowserEngine {
   evaluate: (script: string, frameId?: string) => Promise<string>;
   uploadFile: (selector: string, filePaths: string[], frameId?: string) => Promise<void>;
   screenshot: () => Promise<string>;
+  screenshotJpeg?: (quality?: number) => Promise<Buffer>;
   getPageInfo: (frameId?: string) => Promise<BrowserPageInfo>;
 }
