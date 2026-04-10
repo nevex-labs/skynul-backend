@@ -184,6 +184,8 @@ export type TaskAction =
   // Sub-agent identity — first action in a sub-agent task
   | { type: 'set_identity'; name: string; role?: string }
   | { type: 'generate_image'; prompt: string; size?: '1024x1024' | '1792x1024' | '1024x1792' }
+  // Batch browser actions — execute multiple actions in sequence within a single step
+  | { type: 'batch'; actions: Array<{ type: string; [key: string]: unknown }> }
   // On-chain trading actions (require onchain.trading capability)
   | { type: 'chain_get_balance'; chainId?: number }
   | { type: 'chain_get_token_balance'; chainId?: number; tokenAddress: string }

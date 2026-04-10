@@ -272,6 +272,37 @@ export async function executeBrowserAction(
       const res = await executeGenerateImage(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
+    case 'batch': {
+      const MAX_BATCH = 10;
+      const batchActions = (raw.actions as Array<Record<string, unknown>>) ?? [];
+      if (!Array.isArray(batchActions) || batchActions.length === 0) {
+        return '[batch] No actions provided';
+      }
+      if (batchActions.length > MAX_BATCH) {
+        return `[batch] Max ${MAX_BATCH} actions allowed, got ${batchActions.length}`;
+      }
+      const results: string[] = [];
+      for (let i = 0; i < batchActions.length; i++) {
+        const sub = batchActions[i];
+        const subType = String(sub.type ?? '');
+        // Only allow safe browser primitives inside batch
+        const ALLOWED = new Set(['click', 'type', 'pressKey', 'key', 'evaluate', 'navigate', 'scroll', 'scrollIntoView', 'upload_file']);
+        if (!ALLOWED.has(subType)) {
+          results.push(`[${i}] Skipped: ${subType} not allowed in batch`);
+          continue;
+        }
+        try {
+          const subResult = await executeBrowserAction(engine, sub as TaskAction, ctx);
+          if (subResult) results.push(`[${i}:${subType}] ${subResult}`);
+          // Small delay between batch actions to let page settle
+          if (i < batchActions.length - 1) await sleep(800);
+        } catch (err) {
+          results.push(`[${i}:${subType}] Error: ${err instanceof Error ? err.message : String(err)}`);
+          break; // Stop batch on error
+        }
+      }
+      return results.length > 0 ? results.join('\n') : undefined;
+    }
     default:
       throw new Error(`Unknown action type: ${action.type}`);
   }

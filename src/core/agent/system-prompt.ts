@@ -967,11 +967,12 @@ export function buildBrowserSystemPrompt(isSubagent = false, compact = false, pa
 {"thought":"...", "action":{"type":"upload_file","selector":"input[type=\\"file\\"]","filePaths":["/tmp/img.png"]}}
 {"thought":"...", "action":{"type":"evaluate","script":"document.title"}}
 {"thought":"...", "action":{"type":"wait","ms":1500}}
+{"thought":"...", "action":{"type":"batch","actions":[{"type":"click","selector":"e5"},{"type":"evaluate","script":"document.title"},{"type":"pressKey","key":"Escape"}]}}
 {"thought":"...", "action":{"type":"done","summary":"..."}}
 {"thought":"...", "action":{"type":"fail","reason":"..."}}
 
 ## SELECTORS: Prefer element-refs (e5, e12). Fallback: [data-testid="..."] > [aria-label="..."] > CSS.
-## GOOGLE MAPS: NEVER click map pins (canvas). Extract list with evaluate('div.Nv2PK') — names, ratings, addresses only. Website info is ONLY in detail panel: click each result ONE AT A TIME, evaluate a[data-item-id="authority"], press Escape to go back. NEVER use async evaluate with clicks inside — it crashes. Stop checking when you have enough data. NEVER repeat same evaluate. If user gives a direct instruction, OBEY IMMEDIATELY.
+## GOOGLE MAPS: NEVER click map pins (canvas). Extract list with evaluate('div.Nv2PK') — names, ratings, addresses only. Website info is ONLY in detail panel. Use BATCH to check each: {"type":"batch","actions":[{"type":"click","selector":"REF"},{"type":"evaluate","script":"JSON.stringify({website:document.querySelector('a[data-item-id=\"authority\"]')?.href||'',phone:document.querySelector('[data-item-id^=\"phone\"]')?.textContent||''})"},{"type":"pressKey","key":"Escape"}]}. NEVER use async evaluate with navigation. Stop when you have enough. If user gives direct instruction, OBEY IMMEDIATELY.
 ${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
 ${tradingAuthBlock}
@@ -1020,6 +1021,10 @@ The snapshot uses an accessibility-tree format. Interactive elements appear with
 
 ### Run JavaScript in the page:
 {"thought": "Get page text", "action": {"type": "evaluate", "script": "document.title"}}
+
+### Batch (run multiple browser actions in ONE step — max 10):
+{"thought": "Check this business for website", "action": {"type": "batch", "actions": [{"type": "click", "selector": "e5"}, {"type": "evaluate", "script": "document.title"}, {"type": "pressKey", "key": "Escape"}]}}
+Only browser primitives allowed inside batch: click, type, pressKey, evaluate, navigate, scroll.
 
 ### Done:
 {"thought": "Task complete", "action": {"type": "done", "summary": "Posted to X: https://x.com/user/status/123"}}
@@ -1074,20 +1079,21 @@ When searching for businesses/places on Google Maps:
 4. To scroll for more results: {"type": "evaluate", "script": "document.querySelector('div[role=\\"feed\\"]')?.scrollBy(0, 2000); 'scrolled'"}
 5. Extract again after scrolling. Do NOT extract more than twice — you should have 15-20 results.
 
-### Phase 2 — Check each result for website (ONE AT A TIME)
-Website info is ONLY visible in the detail panel, NOT in the list cards. You MUST click each result individually:
-1. Click the result card's aria-ref link from the snapshot (the clickable heading/name)
-2. Once the detail panel loads, check for a website link:
-   {"type": "evaluate", "script": "JSON.stringify({website: document.querySelector('a[data-item-id=\\"authority\\"]')?.href || '', phone: document.querySelector('[data-item-id^=\\"phone\\"]')?.textContent || ''})"}
-3. Go back to the list: {"type": "pressKey", "key": "Escape"} or click the back arrow
-4. Record the result and move to the next one
-5. STOP checking as soon as you have enough results for the task (e.g. 20 businesses without websites). Do NOT check every single result.
+### Phase 2 — Check each result for website (USE BATCH)
+Website info is ONLY visible in the detail panel, NOT in the list cards. Use BATCH to check each result in ONE step (click → evaluate → escape):
+{"type": "batch", "actions": [
+  {"type": "click", "selector": "REF_FROM_SNAPSHOT"},
+  {"type": "evaluate", "script": "JSON.stringify({website: document.querySelector('a[data-item-id=\\"authority\\"]')?.href || '', phone: document.querySelector('[data-item-id^=\\"phone\\"]')?.textContent || ''})"},
+  {"type": "pressKey", "key": "Escape"}
+]}
+Each batch checks ONE business in ONE step. Move through the list one by one.
+STOP checking as soon as you have enough results for the task. Do NOT check every single result if you already have what you need.
 
 ### Phase 3 — Create the output
 Once you have enough data, IMMEDIATELY navigate to create the spreadsheet/document. Do NOT keep collecting.
 
 ### CRITICAL RULES:
-- NEVER use async evaluate that clicks elements and navigates — it will CRASH. One click per step.
+- NEVER use async evaluate that clicks elements and navigates — it will CRASH.
 - NEVER repeat the same evaluate. If you already extracted the list, do NOT extract again.
 - NEVER re-search if you still have results visible.
 - Keep a running count of collected data. The moment you hit the target number, move to Phase 3.
