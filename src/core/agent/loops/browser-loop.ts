@@ -170,6 +170,17 @@ async function autoDelegateForSocialPost(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Pre-defined evaluate script aliases — the model outputs a short key, we expand it. */
+const EVAL_ALIASES: Record<string, string> = {
+  GMAPS_LIST: `JSON.stringify([...document.querySelectorAll('div.Nv2PK')].map((el,i)=>({i,name:el.querySelector('.qBF1Pd')?.textContent||'',rating:el.querySelector('.MW4etd')?.textContent||'',address:el.querySelector('.W4Efsd:last-child > span:last-child')?.textContent||''})))`,
+  GMAPS_SCROLL: `document.querySelector('div[role="feed"]')?.scrollBy(0,2000);'scrolled'`,
+  GMAPS_DETAIL: `JSON.stringify({website:document.querySelector('a[data-item-id="authority"]')?.href||'',phone:document.querySelector('[data-item-id^="phone"]')?.textContent||'',address:document.querySelector('[data-item-id="address"]')?.textContent||''})`,
+};
+
+function resolveEvalScript(script: string): string {
+  return EVAL_ALIASES[script.trim()] ?? script;
+}
+
 /** Execute a browser-mode action on the engine. */
 export async function executeBrowserAction(
   engine: BrowserEngine,
@@ -217,7 +228,8 @@ export async function executeBrowserAction(
       await engine.pressKey((raw.key as string) || (raw.combo as string));
       return undefined;
     case 'evaluate': {
-      const result = await engine.evaluate(raw.script as string, frameId);
+      const script = resolveEvalScript(raw.script as string);
+      const result = await engine.evaluate(script, frameId);
       return result || undefined;
     }
     case 'upload_file': {

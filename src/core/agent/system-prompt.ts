@@ -972,7 +972,7 @@ export function buildBrowserSystemPrompt(isSubagent = false, compact = false, pa
 {"thought":"...", "action":{"type":"fail","reason":"..."}}
 
 ## SELECTORS: Prefer element-refs (e5, e12). Fallback: [data-testid="..."] > [aria-label="..."] > CSS.
-## GOOGLE MAPS: NEVER click map pins (canvas). Extract list with evaluate('div.Nv2PK') — names, ratings, addresses only. Website info is ONLY in detail panel. Use BATCH to check each: {"type":"batch","actions":[{"type":"click","selector":"REF"},{"type":"evaluate","script":"JSON.stringify({website:document.querySelector('a[data-item-id=\"authority\"]')?.href||'',phone:document.querySelector('[data-item-id^=\"phone\"]')?.textContent||''})"},{"type":"pressKey","key":"Escape"}]}. NEVER use async evaluate with navigation. Stop when you have enough. If user gives direct instruction, OBEY IMMEDIATELY.
+## GOOGLE MAPS: NEVER click map pins (canvas). Aliases: "GMAPS_LIST" extracts results, "GMAPS_SCROLL" scrolls feed, "GMAPS_DETAIL" reads website/phone from detail. Check each business with batch: {"type":"batch","actions":[{"type":"click","selector":"REF"},{"type":"evaluate","script":"GMAPS_DETAIL"},{"type":"pressKey","key":"Escape"}]}. Stop when enough. If user gives direct instruction, OBEY IMMEDIATELY.
 ${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
 ${tradingAuthBlock}
@@ -1071,33 +1071,35 @@ When asked to post on X/Twitter, Facebook, Instagram, Reddit, or any site:
 ## GOOGLE MAPS SCRAPING:
 When searching for businesses/places on Google Maps:
 
+### Evaluate aliases (short names that auto-expand to full scripts):
+- "GMAPS_LIST" → extracts all visible results (name, rating, address)
+- "GMAPS_SCROLL" → scrolls the results feed for more
+- "GMAPS_DETAIL" → reads website, phone, address from detail panel
+
 ### Phase 1 — Search & extract list
 1. Navigate to google.com/maps, type the search query, press Enter
 2. NEVER click map pins — the map is canvas/WebGL, clicks will fail
-3. Extract visible results from the sidebar list:
-   {"type": "evaluate", "script": "JSON.stringify([...document.querySelectorAll('div.Nv2PK')].map((el,i) => ({i, name: el.querySelector('.qBF1Pd')?.textContent || '', rating: el.querySelector('.MW4etd')?.textContent || '', address: el.querySelector('.W4Efsd:last-child > span:last-child')?.textContent || ''})))"}
-4. To scroll for more results: {"type": "evaluate", "script": "document.querySelector('div[role=\\"feed\\"]')?.scrollBy(0, 2000); 'scrolled'"}
-5. Extract again after scrolling. Do NOT extract more than twice — you should have 15-20 results.
+3. Extract visible results: {"type": "evaluate", "script": "GMAPS_LIST"}
+4. Scroll for more: {"type": "evaluate", "script": "GMAPS_SCROLL"}
+5. Extract again after scrolling. Do NOT extract more than twice.
 
 ### Phase 2 — Check each result for website (USE BATCH)
-Website info is ONLY visible in the detail panel, NOT in the list cards. Use BATCH to check each result in ONE step (click → evaluate → escape):
+Website info is ONLY in the detail panel. Use BATCH to check each in ONE step:
 {"type": "batch", "actions": [
   {"type": "click", "selector": "REF_FROM_SNAPSHOT"},
-  {"type": "evaluate", "script": "JSON.stringify({website: document.querySelector('a[data-item-id=\\"authority\\"]')?.href || '', phone: document.querySelector('[data-item-id^=\\"phone\\"]')?.textContent || ''})"},
+  {"type": "evaluate", "script": "GMAPS_DETAIL"},
   {"type": "pressKey", "key": "Escape"}
 ]}
-Each batch checks ONE business in ONE step. Move through the list one by one.
-STOP checking as soon as you have enough results for the task. Do NOT check every single result if you already have what you need.
+Each batch = ONE business in ONE step. STOP when you have enough results.
 
 ### Phase 3 — Create the output
-Once you have enough data, IMMEDIATELY navigate to create the spreadsheet/document. Do NOT keep collecting.
+Once you have enough data, IMMEDIATELY navigate to create the spreadsheet/document.
 
 ### CRITICAL RULES:
-- NEVER use async evaluate that clicks elements and navigates — it will CRASH.
-- NEVER repeat the same evaluate. If you already extracted the list, do NOT extract again.
-- NEVER re-search if you still have results visible.
-- Keep a running count of collected data. The moment you hit the target number, move to Phase 3.
-- If the user gives you a DIRECT INSTRUCTION (e.g. "go to Drive now"), OBEY IMMEDIATELY. Drop whatever you're doing and follow their order.
+- NEVER use async evaluate that clicks and navigates — it CRASHES.
+- NEVER repeat the same evaluate. If you got data, MOVE ON.
+- Keep a running count. Hit the target → Phase 3.
+- If the user gives a DIRECT INSTRUCTION, OBEY IMMEDIATELY.
 
 ## DOWNLOADING IMAGES FROM CHATGPT:
 After ChatGPT generates an image, to get it as a local file:
