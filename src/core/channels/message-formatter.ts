@@ -37,19 +37,16 @@ function linkify(text: string): string {
 
 // ── Public formatters ────────────────────────────────────────────────────────
 
+const STATUS_HEADERS: Record<string, string> = {
+  running: '\u{1f680} *Tarea en marcha*',
+  completed: '\u2705 *Tarea completada*',
+  failed: '\u26a0\ufe0f *Tarea fallida*',
+  cancelled: '\u26d4 *Tarea cancelada*',
+  monitoring: '\u{1f440} *Monitoreando*',
+};
+
 export function formatTaskSummary(task: Task): string {
-  const header =
-    task.status === 'running'
-      ? '\u{1f680} *Tarea en marcha*'
-      : task.status === 'completed'
-        ? '\u2705 *Tarea completada*'
-        : task.status === 'failed'
-          ? '\u26a0\ufe0f *Tarea fallida*'
-          : task.status === 'cancelled'
-            ? '\u26d4 *Tarea cancelada*'
-            : task.status === 'monitoring'
-              ? '\u{1f440} *Monitoreando*'
-              : '\u2139\ufe0f *Estado de tarea*';
+  const header = STATUS_HEADERS[task.status] ?? '\u2139\ufe0f *Estado de tarea*';
 
   const lines = [header, '', truncate(task.prompt, 150), `Estado: ${statusLabel(task.status)}`];
   if (task.summary) lines.push(linkify(task.summary));

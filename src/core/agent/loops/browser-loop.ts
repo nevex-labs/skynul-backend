@@ -2,22 +2,19 @@
  * Browser mode — setup, turn building, and action execution.
  */
 
-import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction, VisionMessage } from '../../../types';
 import type { BrowserEngine } from '../../browser/engine/browser-engine';
 import { acquireBrowserEngine } from '../../browser/engine/factory';
+import { buildBrowserSystemPrompt } from '../../prompts/browser';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,
-  executeGenerateImage,
+  executeImageAction,
   executeInterTaskAction,
   executeMemoryAction,
-  executeSetIdentity,
   resolveAttachments,
 } from '../action-executors';
-import { AppBridge } from '../app-bridge';
 import { buildActionLog } from '../history-manager';
-import { buildBrowserSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
 
@@ -118,7 +115,8 @@ export async function setupBrowserLoop(setup: BrowserLoopSetup): Promise<Browser
     isAborted: setup.isAborted,
   };
 
-  return { engine, release: release!, systemPrompt, systemPromptCompact, history, callbacks };
+  if (!release) throw new Error('Browser engine acquired without a release handle');
+  return { engine, release, systemPrompt, systemPromptCompact, history, callbacks };
 }
 
 async function autoDelegateForSocialPost(
@@ -168,6 +166,109 @@ async function autoDelegateForSocialPost(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const IMAGE_GEN_SITES = [
+  { keywords: ['pollinations'], domains: ['pollinations.ai'] },
+  { keywords: ['bing image', 'bing create'], domains: ['bing.com/images/create', 'bing.com/create'] },
+  { keywords: ['craiyon'], domains: ['craiyon.com'] },
+  { keywords: ['nightcafe'], domains: ['nightcafe.studio'] },
+  { keywords: ['leonardo'], domains: ['leonardo.ai'] },
+  { keywords: ['ideogram'], domains: ['ideogram.ai'] },
+  { keywords: ['firefly'], domains: ['adobe.com/firefly'] },
+  { keywords: ['dream.ai'], domains: ['dream.ai'] },
+];
+
+const BROWSER_INTER_TASK = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
+const BROWSER_FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
+const BROWSER_MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
+
+function unwrapRes(res: { ok: boolean; value?: string; error?: string }): string {
+  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
+}
+
+function resolveKeyCombo(raw: Record<string, unknown>): string {
+  return (raw.key as string) || (raw.combo as string);
+}
+
+function isBlockedImageSite(url: string, prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const matched = IMAGE_GEN_SITES.find((s) => s.domains.some((d) => url.includes(d)));
+  return !!(matched && !matched.keywords.some((k) => lower.includes(k)));
+}
+
+async function handleBrowserNavigate(
+  engine: BrowserEngine,
+  navUrl: string,
+  prompt: string
+): Promise<string | undefined> {
+  if (isBlockedImageSite(navUrl, prompt))
+    return '[BLOCKED] Do not navigate to image generation websites. Use the generate_image action instead.';
+  await engine.navigate(navUrl);
+  await sleep(1500);
+  return undefined;
+}
+
+async function handleBrowserUploadFile(
+  engine: BrowserEngine,
+  raw: Record<string, unknown>,
+  frameId: string | undefined
+): Promise<void> {
+  const selector = raw.selector as string;
+  const filePaths = raw.filePaths as string[];
+  if (!selector || !Array.isArray(filePaths) || filePaths.length === 0)
+    throw new Error('upload_file requires selector + filePaths[]');
+  await engine.uploadFile(selector, filePaths, frameId);
+}
+
+async function handleBrowserIdentity(action: TaskAction, ctx: ExecutorContext): Promise<string> {
+  const identity = action as Extract<TaskAction, { type: 'set_identity' }>;
+  ctx.task.agentName = identity.name;
+  if (identity.role) ctx.task.agentRole = identity.role;
+  ctx.task.updatedAt = Date.now();
+  ctx.pushUpdate();
+  return `Identity set: ${identity.name}${identity.role ? ` (${identity.role})` : ''}`;
+}
+
+async function handleBrowserSystemAction(
+  engine: BrowserEngine,
+  action: TaskAction,
+  ctx: ExecutorContext,
+  raw: Record<string, unknown>,
+  frameId: string | undefined,
+  type: string
+): Promise<string | undefined> {
+  if (type === 'screenshot') return '[BLOCKED] screenshot action is disabled.';
+  if (type === 'wait') return '[BLOCKED] wait is disabled.';
+  if (type === 'scroll') {
+    await engine.evaluate(`window.scrollBy(0, ${(raw.direction as string) === 'up' ? -400 : 400})`);
+    return undefined;
+  }
+  if (type === 'scrollIntoView') {
+    await engine.evaluate(
+      `document.querySelector('${(raw.selector as string).replace(/'/g, "\\'")}')?.scrollIntoView({block:'center',behavior:'instant'})`,
+      frameId
+    );
+    return undefined;
+  }
+  if (type === 'app_script') {
+    const result = await ctx.appBridge.run((action as any).app, (action as any).script);
+    return result.ok ? result.output : `[AppBridge error: ${result.error}]`;
+  }
+  return undefined;
+}
+
+async function handleBrowserAgentAction(action: TaskAction, ctx: ExecutorContext, type: string): Promise<string> {
+  if (BROWSER_INTER_TASK.has(type))
+    return unwrapRes(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
+  if (BROWSER_FACT_ACTIONS.has(type))
+    return unwrapRes(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
+  if (BROWSER_MEMORY_ACTIONS.has(type))
+    return unwrapRes(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
+  if (type === 'set_identity') return handleBrowserIdentity(action, ctx);
+  if (type === 'generate_image')
+    return unwrapRes(await executeImageAction(ctx, action as Parameters<typeof executeImageAction>[1]));
+  throw new Error(`Unknown action type: ${action.type}`);
+}
+
 /** Execute a browser-mode action on the engine. */
 export async function executeBrowserAction(
   engine: BrowserEngine,
@@ -177,100 +278,32 @@ export async function executeBrowserAction(
   const raw = action as Record<string, unknown>;
   const type = raw.type as string;
   const frameId = raw.frameId as string | undefined;
-
-  switch (type) {
-    case 'navigate': {
-      const navUrl = String(raw.url ?? '');
-      const IMAGE_GEN_SITES = [
-        { keywords: ['pollinations'], domains: ['pollinations.ai'] },
-        { keywords: ['bing image', 'bing create'], domains: ['bing.com/images/create', 'bing.com/create'] },
-        { keywords: ['craiyon'], domains: ['craiyon.com'] },
-        { keywords: ['nightcafe'], domains: ['nightcafe.studio'] },
-        { keywords: ['leonardo'], domains: ['leonardo.ai'] },
-        { keywords: ['ideogram'], domains: ['ideogram.ai'] },
-        { keywords: ['firefly'], domains: ['adobe.com/firefly'] },
-        { keywords: ['dream.ai'], domains: ['dream.ai'] },
-      ];
-      const promptLower = ctx.task.prompt.toLowerCase();
-      const matchedSite = IMAGE_GEN_SITES.find((s) => s.domains.some((d) => navUrl.includes(d)));
-      if (matchedSite) {
-        if (!matchedSite.keywords.some((k) => promptLower.includes(k))) {
-          return `[BLOCKED] Do not navigate to image generation websites. Use the generate_image action instead.`;
-        }
-      }
-      await engine.navigate(navUrl);
-      await sleep(1500);
-      return undefined;
-    }
-    case 'click':
-      await engine.click(raw.selector as string, frameId);
-      return undefined;
-    case 'type':
-      await engine.type(raw.selector as string, raw.text as string, frameId);
-      return undefined;
-    case 'pressKey':
-      await engine.pressKey(raw.key as string);
-      return undefined;
-    case 'key':
-      await engine.pressKey((raw.key as string) || (raw.combo as string));
-      return undefined;
-    case 'evaluate': {
-      const result = await engine.evaluate(raw.script as string, frameId);
-      return result || undefined;
-    }
-    case 'upload_file': {
-      const selector = raw.selector as string;
-      const filePaths = raw.filePaths as string[];
-      if (!selector || !Array.isArray(filePaths) || filePaths.length === 0) {
-        throw new Error('upload_file requires selector + filePaths[]');
-      }
-      await engine.uploadFile(selector, filePaths, frameId);
-      return undefined;
-    }
-    case 'screenshot':
-      return `[BLOCKED] screenshot action is disabled.`;
-    case 'wait':
-      return `[BLOCKED] wait is disabled.`;
-    case 'scroll':
-      await engine.evaluate(`window.scrollBy(0, ${(raw.direction as string) === 'up' ? -400 : 400})`);
-      return undefined;
-    case 'scrollIntoView':
-      await engine.evaluate(
-        `document.querySelector('${(raw.selector as string).replace(/'/g, "\\'")}')?.scrollIntoView({block:'center',behavior:'instant'})`,
-        frameId
-      );
-      return undefined;
-    case 'app_script': {
-      const result = await ctx.appBridge.run((action as any).app, (action as any).script);
-      return result.ok ? result.output : `[AppBridge error: ${result.error}]`;
-    }
-    case 'task_list_peers':
-    case 'task_send':
-    case 'task_read':
-    case 'task_message': {
-      const res = await executeInterTaskAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'remember_fact':
-    case 'forget_fact': {
-      const res = executeFactAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'memory_save':
-    case 'memory_search':
-    case 'memory_context': {
-      const res = executeMemoryAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'set_identity': {
-      const res = executeSetIdentity(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'generate_image': {
-      const res = await executeGenerateImage(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    default:
-      throw new Error(`Unknown action type: ${action.type}`);
+  if (type === 'navigate') return handleBrowserNavigate(engine, String(raw.url ?? ''), ctx.task.prompt);
+  if (type === 'click') {
+    await engine.click(raw.selector as string, frameId);
+    return undefined;
   }
+  if (type === 'type') {
+    await engine.type(raw.selector as string, raw.text as string, frameId);
+    return undefined;
+  }
+  if (type === 'pressKey') {
+    await engine.pressKey(raw.key as string);
+    return undefined;
+  }
+  if (type === 'key') {
+    await engine.pressKey(resolveKeyCombo(raw));
+    return undefined;
+  }
+  if (type === 'evaluate') {
+    const result = await engine.evaluate(raw.script as string, frameId);
+    return result || undefined;
+  }
+  if (type === 'upload_file') {
+    await handleBrowserUploadFile(engine, raw, frameId);
+    return undefined;
+  }
+  const sys = await handleBrowserSystemAction(engine, action, ctx, raw, frameId, type);
+  if (sys !== undefined) return sys;
+  return handleBrowserAgentAction(action, ctx, type);
 }

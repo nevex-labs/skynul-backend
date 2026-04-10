@@ -5,7 +5,7 @@ export default defineConfig({
   format: ['esm'],
   splitting: false,
   platform: 'node',
-  external: ['better-sqlite3', 'playwright-core'],
+  external: ['playwright-core'],
   outDir: 'dist',
   banner: {
     js: "console.log('[boot] loading modules...');",

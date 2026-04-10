@@ -14,15 +14,17 @@
  * };
  */
 
+import { getSecret } from '../../services/secrets';
 import type { VisionMessage } from '../../types';
-import { getSupabaseToken } from '../ipc-stub';
-import { getSecret } from '../stores/secret-store';
 
 export type VisionProviderConfig = {
   name: string;
   maxRetries?: number;
   messageSlice?: number;
-  buildRequest: (opts: { systemPrompt: string; messages: VisionMessage[] }) =>
+  buildRequest: (opts: {
+    systemPrompt: string;
+    messages: VisionMessage[];
+  }) =>
     | Promise<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }>
     | { url: string; headers: Record<string, string>; body: Record<string, unknown> };
   extractContent: (data: unknown) => string;
@@ -73,22 +75,6 @@ export function createVisionProvider(config: VisionProviderConfig) {
 
     const usage = extractUsage ? extractUsage(data) : undefined;
     return { text, usage };
-  };
-}
-
-export async function buildSupabaseVisionRequest(opts: {
-  systemPrompt: string;
-  messages: VisionMessage[];
-  edgeFunction: string;
-}) {
-  const token = getSupabaseToken();
-  if (!token) throw new Error('Not signed in. Sign in with Google from Settings.');
-  const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? process.env.VITE_SUPABASE_URL ?? '';
-  if (!SUPABASE_URL) throw new Error('Supabase is not configured');
-  return {
-    url: `${SUPABASE_URL}/functions/v1/${opts.edgeFunction}`,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: { messages: opts.messages, mode: 'vision', systemPrompt: opts.systemPrompt },
   };
 }
 

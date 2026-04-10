@@ -5,14 +5,12 @@
  * When usage crosses thresholds, signals which compression levels to apply.
  */
 
-import type { ProviderId } from '../../types';
-import type { VisionMessage } from '../../types';
+import type { ProviderId, VisionMessage } from '../../types';
 
 // ── Context window sizes by provider:model ────────────────────────────────────
-// Values are approximate. Override via policy.contextWindowOverride.
+// Values are approximate. Override via options/env where supported.
 
 const CONTEXT_WINDOWS: Record<string, number> = {
-  // ChatGPT / OpenAI
   'chatgpt:gpt-4.1': 1_047_576,
   'chatgpt:gpt-4.1-mini': 1_047_576,
   'chatgpt:gpt-4.1-nano': 1_047_576,
@@ -20,28 +18,10 @@ const CONTEXT_WINDOWS: Record<string, number> = {
   'chatgpt:gpt-4o-mini': 128_000,
   'chatgpt:o3': 200_000,
   'chatgpt:o4-mini': 200_000,
-  // Claude
   'claude:claude-opus-4-6': 200_000,
   'claude:claude-sonnet-4-6': 200_000,
   'claude:claude-haiku-4-5': 200_000,
-  // Deepseek
-  'deepseek:deepseek-chat': 64_000,
-  'deepseek:deepseek-reasoner': 64_000,
-  // Gemini
-  'gemini:gemini-2.5-pro': 1_048_576,
-  'gemini:gemini-2.5-flash': 1_048_576,
-  'gemini:gemini-2.0-flash': 1_048_576,
-  // Kimi
-  'kimi:moonshot-v1-128k': 128_000,
-  'kimi:moonshot-v1-32k': 32_000,
-  // GLM
-  'glm:glm-4v-plus': 8_000,
-  'glm:glm-4v': 8_000,
-  // MiniMax
-  'minimax:MiniMax-VL-01': 204_800,
-  // OpenRouter (generic fallback)
   'openrouter:default': 128_000,
-  // Ollama (conservative default)
   'ollama:default': 32_000,
 };
 
@@ -49,11 +29,6 @@ const CONTEXT_WINDOWS: Record<string, number> = {
 const PROVIDER_DEFAULTS: Record<ProviderId, number> = {
   chatgpt: 128_000,
   claude: 200_000,
-  deepseek: 64_000,
-  gemini: 1_048_576,
-  kimi: 128_000,
-  glm: 8_000,
-  minimax: 204_800,
   openrouter: 128_000,
   ollama: 32_000,
 };
@@ -87,7 +62,7 @@ export function estimatePayloadTokens(systemPrompt: string, messages: VisionMess
       if ('text' in part) {
         tokens += estimateTokens(part.text);
       } else if (part.type === 'input_image') {
-        tokens += estimateImageTokens(part.detail ?? 'auto');
+        tokens += estimateImageTokens('auto');
       }
     }
   }

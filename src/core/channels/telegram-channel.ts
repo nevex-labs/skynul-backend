@@ -1,13 +1,14 @@
 import { randomBytes } from 'crypto';
 import { createWriteStream } from 'fs';
-import { basename, dirname, join } from 'path';
-import { mkdir, readFile, stat, writeFile } from 'fs/promises';
+import { mkdir, stat } from 'fs/promises';
 import { Bot, InputFile } from 'grammy';
+import os from 'os';
+import { basename, join } from 'path';
 import { pipeline } from 'stream/promises';
+import { readChannelConfigState, writeChannelConfigState } from '../../services/channel-config-runtime';
+import { getSecret, setSecret } from '../../services/secrets';
 import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
-import { getDataDir } from '../config';
-import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
 import { handleCommand } from './command-router';
 
@@ -261,47 +262,8 @@ export class TelegramChannel extends Channel {
       }
     });
 
-    this.bot.command('send', async (ctx) => {
-      if (!this.isPaired(ctx.chat.id)) return;
-      const filePath = ctx.match?.trim();
-      if (!filePath) {
-        await ctx.reply('Uso: /send <ruta del archivo>');
-        return;
-      }
-      try {
-        const info = await stat(filePath);
-        if (!info.isFile()) {
-          await ctx.reply('No es un archivo.');
-          return;
-        }
-        if (info.size > 50 * 1024 * 1024) {
-          await ctx.reply('El archivo supera 50MB (límite de Telegram).');
-          return;
-        }
-        await ctx.replyWithDocument(new InputFile(filePath, basename(filePath)));
-      } catch (e) {
-        await ctx.reply(`Error: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    });
-
-    this.bot.on('message:document', async (ctx) => {
-      if (!this.isPaired(ctx.chat.id)) return;
-      try {
-        const doc = ctx.message.document;
-        const file = await ctx.api.getFile(doc.file_id);
-        const url = `https://api.telegram.org/file/bot${this.bot!.token}/${file.file_path}`;
-        const destDir = join(getDataDir(), 'received');
-        await mkdir(destDir, { recursive: true });
-        const destPath = join(destDir, doc.file_name ?? `file_${Date.now()}`);
-        const res = await fetch(url);
-        if (!res.ok || !res.body) throw new Error(`Download failed: ${res.status}`);
-        const ws = createWriteStream(destPath);
-        await pipeline(res.body, ws);
-        await ctx.reply(`\u2705 Guardado en: ${destPath}`);
-      } catch (e) {
-        await ctx.reply(`Error al guardar: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    });
+    this.bot.command('send', (ctx) => this.handleSendCommand(ctx));
+    this.bot.on('message:document', (ctx) => this.handleDocumentMessage(ctx));
 
     this.bot.on('message:text', async (ctx) => {
       if (!this.isPaired(ctx.chat.id)) {
@@ -328,39 +290,72 @@ export class TelegramChannel extends Channel {
     return this.taskManager.get(input);
   }
 
+  private async handleSendCommand(ctx: {
+    chat: { id: number };
+    match?: string;
+    reply: (text: string) => Promise<unknown>;
+    replyWithDocument: (doc: InputFile) => Promise<unknown>;
+  }): Promise<void> {
+    if (!this.isPaired(ctx.chat.id)) return;
+    const filePath = ctx.match?.trim();
+    if (!filePath) {
+      await ctx.reply('Uso: /send <ruta del archivo>');
+      return;
+    }
+    try {
+      const info = await stat(filePath);
+      if (!info.isFile()) {
+        await ctx.reply('No es un archivo.');
+        return;
+      }
+      if (info.size > 50 * 1024 * 1024) {
+        await ctx.reply('El archivo supera 50MB (límite de Telegram).');
+        return;
+      }
+      await ctx.replyWithDocument(new InputFile(filePath, basename(filePath)));
+    } catch (e) {
+      await ctx.reply(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private async handleDocumentMessage(ctx: {
+    chat: { id: number };
+    message: { document: { file_id: string; file_name?: string } };
+    api: { getFile: (id: string) => Promise<{ file_path?: string }> };
+    reply: (text: string) => Promise<unknown>;
+  }): Promise<void> {
+    if (!this.isPaired(ctx.chat.id)) return;
+    try {
+      const doc = ctx.message.document;
+      const file = await ctx.api.getFile(doc.file_id);
+      const url = `https://api.telegram.org/file/bot${this.bot?.token}/${file.file_path}`;
+      const destDir = join(os.tmpdir(), 'skynul-received');
+      await mkdir(destDir, { recursive: true });
+      const destPath = join(destDir, doc.file_name ?? `file_${Date.now()}`);
+      const res = await fetch(url);
+      if (!res.ok || !res.body) throw new Error(`Download failed: ${res.status}`);
+      await pipeline(res.body, createWriteStream(destPath));
+      await ctx.reply(`\u2705 Guardado en: ${destPath}`);
+    } catch (e) {
+      await ctx.reply(`Error al guardar: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   private isPaired(chatId: number): boolean {
     return this.state.pairedChatId === chatId;
   }
 
-  private settingsPath(): string {
-    return join(getDataDir(), 'channels', 'telegram.json');
-  }
-
   private async loadState(): Promise<TelegramState> {
     try {
-      const raw = await readFile(this.settingsPath(), 'utf8');
-      return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    } catch {
-      // Try migrating from old location
-      try {
-        const oldPath = join(getDataDir(), 'telegram.json');
-        const raw = await readFile(oldPath, 'utf8');
-        const migrated = { ...DEFAULT_STATE, ...JSON.parse(raw) };
-        await this.saveStateData(migrated);
-        return migrated;
-      } catch {
-        return { ...DEFAULT_STATE };
+      const raw = await readChannelConfigState(this.id);
+      if (raw !== null) {
+        return { ...DEFAULT_STATE, ...(raw as Partial<TelegramState>) };
       }
-    }
+    } catch {}
+    return { ...DEFAULT_STATE };
   }
 
   private async saveState(): Promise<void> {
-    await this.saveStateData(this.state);
-  }
-
-  private async saveStateData(data: TelegramState): Promise<void> {
-    const file = this.settingsPath();
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(data, null, 2), 'utf8');
+    await writeChannelConfigState(this.id, { ...this.state });
   }
 }

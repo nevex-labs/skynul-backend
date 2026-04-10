@@ -52,56 +52,44 @@ export abstract class Channel {
     });
   }
 
+  private toWslPath(fp: string): string {
+    return fp.match(/^[A-Z]:\\/i) ? '/mnt/' + fp[0].toLowerCase() + fp.slice(2).replace(/\\/g, '/') : fp;
+  }
+
+  private async attachSummaryFiles(summary: string): Promise<void> {
+    for (const fp of extractFilePaths(summary)) {
+      try {
+        const wslPath = this.toWslPath(fp);
+        const info = await stat(wslPath);
+        if (info.isFile() && info.size <= 50 * 1024 * 1024) await this.sendFile(wslPath);
+      } catch {
+        /* file not found or unreadable — skip */
+      }
+    }
+  }
+
   private async handleTaskUpdate(task: Task): Promise<void> {
     console.log(`[${this.id}] taskUpdate: id=${task.id} status=${task.status} source=${task.source}`);
-
-    // Only notify for tasks originated from THIS channel
     if (task.source !== this.id) return;
-
     try {
       if (task.status === 'completed') {
         console.log(`[${this.id}] Sending completion message for task ${task.id}`);
         await this.sendMessage(formatTaskComplete(task));
-
-        // Auto-attach files found in summary
-        if (task.summary) {
-          for (const fp of extractFilePaths(task.summary)) {
-            try {
-              // Convert Windows path to WSL if needed
-              const wslPath = fp.match(/^[A-Z]:\\/i)
-                ? '/mnt/' + fp[0].toLowerCase() + fp.slice(2).replace(/\\/g, '/')
-                : fp;
-              const info = await stat(wslPath);
-              if (info.isFile() && info.size <= 50 * 1024 * 1024) {
-                await this.sendFile(wslPath);
-              }
-            } catch {
-              // File doesn't exist or can't be read — skip silently
-            }
-          }
-        }
+        if (task.summary) await this.attachSummaryFiles(task.summary);
         return;
       }
-
-      if (task.status === 'monitoring') {
-        const m = task.monitor;
-        if (m) {
-          const interval = Math.round(m.intervalMs / 60000);
-          await this.sendMessage(
-            `Posición abierta, la estoy monitoreando cada ${interval} min. ` +
-            `TP: $${m.takeProfitPrice}, SL: $${m.stopLossPrice}. Te aviso cuando cierre.`
-          );
-        }
+      if (task.status === 'monitoring' && task.monitor) {
+        const interval = Math.round(task.monitor.intervalMs / 60000);
+        await this.sendMessage(
+          `Posición abierta, la estoy monitoreando cada ${interval} min. ` +
+            `TP: $${task.monitor.takeProfitPrice}, SL: $${task.monitor.stopLossPrice}. Te aviso cuando cierre.`
+        );
         return;
       }
-
       if (task.status === 'failed' || task.status === 'cancelled') {
         console.log(`[${this.id}] Sending failure message for task ${task.id}`);
         await this.sendMessage(formatTaskFailed(task));
-        return;
       }
-
-      // No step-by-step updates — only final results
     } catch (e) {
       console.warn(`[${this.id}] Failed to send update:`, e);
     }

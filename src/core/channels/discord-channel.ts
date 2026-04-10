@@ -1,12 +1,10 @@
 import { randomBytes } from 'crypto';
-import { dirname, join } from 'path';
 import type { Message as DiscordMessage } from 'discord.js';
 import { Client, Events, GatewayIntentBits } from 'discord.js';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { readChannelConfigState, writeChannelConfigState } from '../../services/channel-config-runtime';
+import { getSecret, setSecret } from '../../services/secrets';
 import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
-import { getDataDir } from '../config';
-import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
 import { handleCommand } from './command-router';
 
@@ -146,47 +144,56 @@ export class DiscordChannel extends Channel {
     }
   }
 
+  private async handlePairCode(
+    code: string,
+    userId: string,
+    channelId: string,
+    reply: (msg: string) => Promise<unknown>
+  ): Promise<void> {
+    if (!this.state.pairingCode) {
+      await reply('No hay código de vinculación activo. Generá uno desde los ajustes de Skynul.');
+      return;
+    }
+    if (code !== this.state.pairingCode) {
+      await reply('Código inválido.');
+      return;
+    }
+    this.state.paired = true;
+    this.state.pairedUserId = userId;
+    this.state.pairedChannelId = channelId;
+    this.state.pairingCode = null;
+    await this.saveState();
+    await reply('\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
+  }
+
+  private async dispatchCommandResult(
+    result: { handled: boolean; text: string },
+    reply: (t: string) => Promise<unknown>
+  ): Promise<boolean> {
+    if (!result.handled) return false;
+    if (result.text === '__UNPAIR__') {
+      await this.unpair();
+      await reply('Desvinculado.');
+    } else {
+      await reply(result.text);
+    }
+    return true;
+  }
+
   private async handleIncoming(msg: DiscordMessage): Promise<void> {
     if (msg.author.bot) return;
     const content = msg.content?.trim();
     if (!content) return;
-
-    // Pairing: /pair <code>
     if (content.startsWith('/pair ')) {
-      const code = content.slice(6).trim();
-      if (!this.state.pairingCode) {
-        await msg.reply('No hay código de vinculación activo. Generá uno desde los ajustes de Skynul.');
-        return;
-      }
-      if (code !== this.state.pairingCode) {
-        await msg.reply('Código inválido.');
-        return;
-      }
-      this.state.paired = true;
-      this.state.pairedUserId = msg.author.id;
-      this.state.pairedChannelId = msg.channelId;
-      this.state.pairingCode = null;
-      await this.saveState();
-      await msg.reply('\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
+      await this.handlePairCode(content.slice(6).trim(), msg.author.id, msg.channelId, (t) => msg.reply(t));
       return;
     }
-
-    // Only respond to paired user in paired channel
     if (!this.state.paired || msg.author.id !== this.state.pairedUserId || msg.channelId !== this.state.pairedChannelId)
       return;
 
     const result = await handleCommand(content, this.taskManager);
-    if (result.handled) {
-      if (result.text === '__UNPAIR__') {
-        await this.unpair();
-        await msg.reply('Desvinculado.');
-      } else {
-        await msg.reply(result.text);
-      }
-      return;
-    }
+    if (await this.dispatchCommandResult(result, (t) => msg.reply(t))) return;
 
-    // Any other text = create task
     try {
       await this.createTaskFromMessage(content);
     } catch (e) {
@@ -194,22 +201,17 @@ export class DiscordChannel extends Channel {
     }
   }
 
-  private settingsPath(): string {
-    return join(getDataDir(), 'channels', 'discord.json');
-  }
-
   private async loadState(): Promise<DiscordState> {
     try {
-      const raw = await readFile(this.settingsPath(), 'utf8');
-      return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULT_STATE };
-    }
+      const raw = await readChannelConfigState(this.id);
+      if (raw !== null) {
+        return { ...DEFAULT_STATE, ...(raw as Partial<DiscordState>) };
+      }
+    } catch {}
+    return { ...DEFAULT_STATE };
   }
 
   private async saveState(): Promise<void> {
-    const file = this.settingsPath();
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(this.state, null, 2), 'utf8');
+    await writeChannelConfigState(this.id, { ...this.state });
   }
 }

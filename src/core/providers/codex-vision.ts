@@ -83,6 +83,26 @@ function convertMessages(messages: VisionMessage[]): InputItem[] {
   });
 }
 
+const SSE_DONE_TYPES = new Set(['response.done', 'response.completed']);
+const SSE_ERROR_TYPES = new Set(['response.failed', 'error']);
+
+function codexStreamError(evt: Record<string, unknown>): Error {
+  const msg = (evt.message as string) ?? (evt.code as string) ?? 'Unknown error';
+  return new Error(`ChatGPT stream error: ${msg}`);
+}
+
+async function processCodexVisionSSE(res: Response): Promise<string> {
+  if (!res.body) throw new Error('ChatGPT returned no response body');
+  let accumulated = '';
+  for await (const evt of parseSSE(res)) {
+    if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') accumulated += evt.delta;
+    if (SSE_DONE_TYPES.has(evt.type as string)) break;
+    if (SSE_ERROR_TYPES.has(evt.type as string)) throw codexStreamError(evt);
+  }
+  if (!accumulated.trim()) throw new Error('ChatGPT vision returned an empty response');
+  return accumulated;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 export async function codexVisionRespond(opts: {
@@ -92,7 +112,7 @@ export async function codexVisionRespond(opts: {
   model?: string;
 }): Promise<string> {
   let tokens = await loadTokens();
-  if (!tokens || !tokens.access) {
+  if (!tokens?.access) {
     throw new Error('ChatGPT: not connected. Sign in from Settings.');
   }
 
@@ -144,25 +164,5 @@ export async function codexVisionRespond(opts: {
     throw new Error(`ChatGPT Codex vision error: ${res.status} ${res.statusText}${txt ? ` - ${txt}` : ''}`);
   }
 
-  if (!res.body) throw new Error('ChatGPT returned no response body');
-
-  let accumulated = '';
-
-  for await (const evt of parseSSE(res)) {
-    // Clawdbot listens for these events:
-    if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') {
-      accumulated += evt.delta;
-    }
-    if (evt.type === 'response.done' || evt.type === 'response.completed') {
-      // Stream finished
-      break;
-    }
-    if (evt.type === 'response.failed' || evt.type === 'error') {
-      const msg = (evt.message as string) ?? (evt.code as string) ?? 'Unknown error';
-      throw new Error(`ChatGPT stream error: ${msg}`);
-    }
-  }
-
-  if (!accumulated.trim()) throw new Error('ChatGPT vision returned an empty response');
-  return accumulated;
+  return processCodexVisionSSE(res);
 }

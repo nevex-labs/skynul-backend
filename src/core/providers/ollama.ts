@@ -4,8 +4,8 @@
  * No auth required; baseUrl and model come from secrets or defaults.
  */
 
+import { getSecret } from '../../services/secrets';
 import type { ChatMessage } from '../../types';
-import { getSecret } from '../stores/secret-store';
 import { createChatProvider } from './base-chat';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';

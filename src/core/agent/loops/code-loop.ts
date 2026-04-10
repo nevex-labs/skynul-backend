@@ -2,29 +2,40 @@
  * Code mode — file/shell execution, no browser.
  */
 
-import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import { createExcelFromTsv } from '../../../capabilities/files/excel-writer';
+import { scrapeUrl } from '../../../capabilities/scraping/web-scraper';
+import type { Task, TaskAction, TaskStep, VisionMessage } from '../../../types';
+import { buildCodeSystemPrompt } from '../../prompts/code';
 import type { ExecutorContext } from '../action-executors';
 import {
   executeFactAction,
   executeFileEdit,
   executeFileList,
   executeFileRead,
-  executeFileSearch,
   executeFileWrite,
-  executeGenerateImage,
+  executeImageAction,
   executeInterTaskAction,
   executeMemoryAction,
-  executePolymarketAction,
-  executeSetIdentity,
   executeShell,
 } from '../action-executors';
-import { AppBridge } from '../app-bridge';
-import { createExcelFromTsv } from '../excel-writer';
-import { buildCodeSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
-import { scrapeUrl } from '../web-scraper';
 import type { LoopCallbacks } from './agent-loop';
+
+function describeCodeStep(s: TaskStep, resultLimit: number): string {
+  const a = s.action as Record<string, unknown>;
+  const ACTION_DESCRIPTIONS: Record<string, () => string> = {
+    shell: () => `shell "${((a.command as string) ?? '').slice(0, 80)}"`,
+    file_read: () => `file_read ${a.path}`,
+    file_write: () => `file_write ${a.path}`,
+    file_edit: () => `file_edit ${a.path}`,
+    file_list: () => `file_list "${a.pattern}"`,
+    file_search: () => `file_search "${a.pattern}"`,
+  };
+  const desc = ACTION_DESCRIPTIONS[a.type as string]?.() ?? (a.type as string);
+  const resultSuffix = s.result ? ` → ${s.result.slice(0, resultLimit)}` : '';
+  const errorSuffix = s.error ? ` [ERROR: ${s.error.slice(0, 100)}]` : '';
+  return `Step ${s.index + 1}: ${desc}${resultSuffix}${errorSuffix}`;
+}
 
 export type CodeLoopSetup = {
   deps: {
@@ -61,32 +72,15 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
     content: [{ type: 'input_text', text: initialText }],
   });
 
-  const blockedInCodeMode = new Set(['click', 'double_click', 'scroll', 'move']);
-
   const callbacks: LoopCallbacks = {
     taskManager,
     buildTurnMessage(stepIndex, budget) {
-      if (stepIndex === 0) {
-        return { text: initialText };
-      }
-      // Level 1: reduce action log size when context pressure is high
+      if (stepIndex === 0) return { text: initialText };
       const compact = budget?.applyLevel1;
-      const recentSteps = task.steps.slice(compact ? -4 : -8);
       const resultLimit = compact ? 150 : 300;
-      const actionLog = recentSteps
-        .map((s) => {
-          const a = s.action as Record<string, unknown>;
-          let desc: string = a.type as string;
-          if (a.type === 'shell') desc = `shell "${((a.command as string) ?? '').slice(0, 80)}"`;
-          else if (a.type === 'file_read') desc = `file_read ${a.path}`;
-          else if (a.type === 'file_write') desc = `file_write ${a.path}`;
-          else if (a.type === 'file_edit') desc = `file_edit ${a.path}`;
-          else if (a.type === 'file_list') desc = `file_list "${a.pattern}"`;
-          else if (a.type === 'file_search') desc = `file_search "${a.pattern}"`;
-          const resultSuffix = s.result ? ` → ${s.result.slice(0, resultLimit)}` : '';
-          const errorSuffix = s.error ? ` [ERROR: ${s.error.slice(0, 100)}]` : '';
-          return `Step ${s.index + 1}: ${desc}${resultSuffix}${errorSuffix}`;
-        })
+      const actionLog = task.steps
+        .slice(compact ? -4 : -8)
+        .map((s) => describeCodeStep(s, resultLimit))
         .join('\n');
       return { text: `Step ${stepIndex + 1}.\n\nRecent actions:\n${actionLog}\n\nContinue with the next step.` };
     },
@@ -106,6 +100,130 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function unwrap(res: { ok: boolean; value?: string; error?: string }): string {
+  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
+}
+
+const CODE_INTER_TASK_ACTIONS = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
+const CODE_FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
+const CODE_MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
+const CODE_TRADING_DISABLED = new Set([
+  'polymarket_get_account_summary',
+  'polymarket_get_trader_leaderboard',
+  'polymarket_search_markets',
+  'polymarket_place_order',
+  'polymarket_close_position',
+]);
+
+async function execFileAction(action: TaskAction, raw: Record<string, unknown>): Promise<string | undefined> {
+  if (action.type === 'file_read')
+    return unwrap(
+      await executeFileRead(
+        raw.path as string,
+        raw.cwd as string | undefined,
+        raw.offset as number | undefined,
+        raw.limit as number | undefined
+      )
+    );
+  if (action.type === 'file_write')
+    return unwrap(await executeFileWrite(raw.path as string, raw.content as string, raw.cwd as string | undefined));
+  if (action.type === 'file_edit')
+    return unwrap(
+      await executeFileEdit(
+        raw.path as string,
+        raw.old_string as string,
+        raw.new_string as string,
+        raw.cwd as string | undefined
+      )
+    );
+  if (action.type === 'file_list')
+    return unwrap(await executeFileList(raw.pattern as string, raw.cwd as string | undefined));
+  return undefined;
+}
+
+async function execExcelAction(raw: Record<string, unknown>, state: { lastScrapeData: string }): Promise<string> {
+  if (!state.lastScrapeData) return '[Error: no data available. Use web_scrape first.]';
+  try {
+    const filePath = await createExcelFromTsv(
+      state.lastScrapeData,
+      raw.filename as string,
+      raw.filter as string | undefined
+    );
+    return `Excel saved: ${filePath}`;
+  } catch (e) {
+    return `[Error creating Excel: ${e instanceof Error ? e.message : String(e)}]`;
+  }
+}
+
+const CODE_FILE_ACTIONS = new Set(['file_read', 'file_write', 'file_edit', 'file_list']);
+
+async function handleCodeSetIdentity(action: TaskAction, ctx: ExecutorContext): Promise<string> {
+  const a = action as any;
+  ctx.task.agentName = a.name;
+  if (a.role) ctx.task.agentRole = a.role;
+  ctx.task.updatedAt = Date.now();
+  ctx.pushUpdate();
+  return `Identity set: ${a.name}${a.role ? ` (${a.role})` : ''}`;
+}
+
+function buildFileSearchCmd(a: any): string {
+  const glob = a.glob ? `--glob '${a.glob}'` : '';
+  const searchPath = a.path ?? '.';
+  return `rg -l ${glob} '${a.pattern}' ${searchPath}`;
+}
+
+async function handleCodeComputeAction(
+  action: TaskAction,
+  _ctx: ExecutorContext,
+  state: { lastScrapeData: string },
+  raw: Record<string, unknown>
+): Promise<string | undefined> {
+  if (action.type === 'shell')
+    return unwrap(
+      await executeShell(raw.command as string, raw.cwd as string | undefined, raw.timeout as number | undefined)
+    );
+  if (action.type === 'wait') {
+    await sleep(raw.ms as number);
+    return undefined;
+  }
+  if (action.type === 'web_scrape') {
+    const data = await scrapeUrl(raw.url as string, raw.instruction as string);
+    state.lastScrapeData = [state.lastScrapeData, data].filter(Boolean).join('\n');
+    return data;
+  }
+  if (action.type === 'save_to_excel') return execExcelAction(raw, state);
+  return undefined;
+}
+
+async function handleCodeSystemAction(
+  action: TaskAction,
+  ctx: ExecutorContext,
+  raw: Record<string, unknown>
+): Promise<string | undefined> {
+  if (action.type === 'launch')
+    return unwrap(await executeShell(`powershell.exe -NoProfile -Command "Start-Process '${raw.app}'"`));
+  if (action.type === 'file_search')
+    return unwrap(await executeShell(buildFileSearchCmd(action as any), (action as any).cwd, 30_000));
+  if (action.type === 'app_script') {
+    const result = await ctx.appBridge.run(raw.app as string, raw.script as string);
+    return result.ok ? result.output : `[AppBridge error: ${result.error}]`;
+  }
+  if (action.type === 'set_identity') return handleCodeSetIdentity(action, ctx);
+  if (action.type === 'generate_image') return unwrap(await executeImageAction(ctx, action));
+  return undefined;
+}
+
+async function handleCodeMiscAction(
+  action: TaskAction,
+  ctx: ExecutorContext,
+  state: { lastScrapeData: string },
+  raw: Record<string, unknown>
+): Promise<string | undefined> {
+  const compute = await handleCodeComputeAction(action, ctx, state, raw);
+  if (compute !== undefined) return compute;
+  return handleCodeSystemAction(action, ctx, raw);
+}
+
 /** Execute a code-mode action. */
 export async function executeCodeAction(
   action: TaskAction,
@@ -113,115 +231,15 @@ export async function executeCodeAction(
   state: { lastScrapeData: string }
 ): Promise<string | undefined> {
   const raw = action as Record<string, unknown>;
-
-  switch (action.type) {
-    case 'shell': {
-      const res = await executeShell(
-        raw.command as string,
-        raw.cwd as string | undefined,
-        raw.timeout as number | undefined
-      );
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'wait':
-      await sleep(raw.ms as number);
-      return undefined;
-    case 'web_scrape': {
-      const data = await scrapeUrl(raw.url as string, raw.instruction as string);
-      state.lastScrapeData += (state.lastScrapeData ? '\n' : '') + data;
-      return data;
-    }
-    case 'save_to_excel': {
-      if (!state.lastScrapeData) return '[Error: no data available. Use web_scrape first.]';
-      try {
-        const filePath = await createExcelFromTsv(
-          state.lastScrapeData,
-          raw.filename as string,
-          raw.filter as string | undefined
-        );
-        return `Excel saved: ${filePath}`;
-      } catch (e) {
-        return `[Error creating Excel: ${e instanceof Error ? e.message : String(e)}]`;
-      }
-    }
-    case 'launch': {
-      const res = await executeShell(`powershell.exe -NoProfile -Command "Start-Process '${raw.app}'"`);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'file_read': {
-      const res = await executeFileRead(
-        raw.path as string,
-        raw.cwd as string | undefined,
-        raw.offset as number | undefined,
-        raw.limit as number | undefined
-      );
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'file_write': {
-      const res = await executeFileWrite(raw.path as string, raw.content as string, raw.cwd as string | undefined);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'file_edit': {
-      const res = await executeFileEdit(
-        raw.path as string,
-        raw.old_string as string,
-        raw.new_string as string,
-        raw.cwd as string | undefined
-      );
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'file_list': {
-      const res = await executeFileList(raw.pattern as string, raw.cwd as string | undefined);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'file_search': {
-      const res = await executeFileSearch(
-        raw.pattern as string,
-        raw.path as string | undefined,
-        raw.glob as string | undefined,
-        raw.cwd as string | undefined
-      );
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'app_script': {
-      const result = await ctx.appBridge.run(raw.app as string, raw.script as string);
-      return result.ok ? result.output : `[AppBridge error: ${result.error}]`;
-    }
-    case 'task_list_peers':
-    case 'task_send':
-    case 'task_read':
-    case 'task_message': {
-      const res = await executeInterTaskAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'remember_fact':
-    case 'forget_fact': {
-      const res = executeFactAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'memory_save':
-    case 'memory_search':
-    case 'memory_context': {
-      const res = executeMemoryAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'set_identity': {
-      const res = executeSetIdentity(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'generate_image': {
-      const res = await executeGenerateImage(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'polymarket_get_account_summary':
-    case 'polymarket_get_trader_leaderboard':
-    case 'polymarket_search_markets':
-    case 'polymarket_place_order':
-    case 'polymarket_close_position': {
-      const res = await executePolymarketAction(ctx, action);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    default:
-      return `[Action "${action.type}" not supported in code mode]`;
-  }
+  if (CODE_TRADING_DISABLED.has(action.type)) return '[Trading disabled]';
+  if (CODE_INTER_TASK_ACTIONS.has(action.type))
+    return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
+  if (CODE_FACT_ACTIONS.has(action.type))
+    return unwrap(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
+  if (CODE_MEMORY_ACTIONS.has(action.type))
+    return unwrap(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
+  if (CODE_FILE_ACTIONS.has(action.type)) return execFileAction(action, raw);
+  const misc = await handleCodeMiscAction(action, ctx, state, raw);
+  if (misc !== undefined) return misc;
+  return `[Action "${action.type}" not supported in code mode]`;
 }

@@ -3,9 +3,7 @@
  * Handles message compression, action logging, and inbox draining.
  */
 
-import type { TaskStep, VisionContentPart } from '../../types';
-import type { VisionMessage } from '../../types';
-import type { ProviderId } from '../../types';
+import type { ProviderId, TaskStep, VisionContentPart, VisionMessage } from '../../types';
 import type { TaskManager } from './task-manager';
 
 /** Extract action type from an assistant message text. */
@@ -38,39 +36,45 @@ export function truncateHistory(history: VisionMessage[], keepCount = 19): void 
   history.splice(1, history.length - keepCount);
 }
 
+function collectFailedSelectors(steps: TaskStep[]): Set<string> {
+  const selectors = new Set<string>();
+  for (const s of steps) {
+    if (s.error) {
+      const selector = (s.action as Record<string, unknown>).selector;
+      if (selector) selectors.add(String(selector));
+    }
+  }
+  return selectors;
+}
+
+function formatStep(s: TaskStep, truncateResult: number, truncateError: number): string {
+  const res = s.result ? ` → ${s.result.slice(0, truncateResult)}` : '';
+  const err = s.error ? ` [ERROR: ${s.error.slice(0, truncateError)}]` : '';
+  const truncNote = s.thought?.includes('truncated')
+    ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]'
+    : '';
+  return `Step ${s.index + 1}: ${s.action.type}${res}${err}${truncNote}`;
+}
+
 /** Build a human-readable action log string from recent steps. */
 export function buildActionLog(
   steps: TaskStep[],
   maxRecent = 8,
   opts?: { includeFailedSelectors?: boolean; truncateResult?: number; truncateError?: number }
 ): string {
-  const recent = steps.slice(-maxRecent);
-  const failedSelectors = new Set<string>();
-
-  if (opts?.includeFailedSelectors) {
-    for (const s of steps) {
-      if (s.error) {
-        const raw = s.action as Record<string, unknown>;
-        if (raw.selector) failedSelectors.add(String(raw.selector));
-      }
-    }
-  }
-
-  const lines = recent.map((s) => {
-    const res = s.result ? ` → ${s.result.slice(0, opts?.truncateResult ?? 200)}` : '';
-    const err = s.error ? ` [ERROR: ${s.error.slice(0, opts?.truncateError ?? 100)}]` : '';
-    const truncNote = s.thought?.includes('truncated')
-      ? ' [YOUR RESPONSE WAS TRUNCATED — keep thought under 30 words]'
-      : '';
-    return `Step ${s.index + 1}: ${s.action.type}${res}${err}${truncNote}`;
-  });
+  const truncateResult = opts?.truncateResult ?? 200;
+  const truncateError = opts?.truncateError ?? 100;
+  const lines = steps.slice(-maxRecent).map((s) => formatStep(s, truncateResult, truncateError));
 
   let log = '\n\nRecent actions:\n' + lines.join('\n') + '\n\nDo NOT repeat actions that already succeeded.';
 
-  if (opts?.includeFailedSelectors && failedSelectors.size > 0) {
-    log +=
-      '\n\n⚠ FAILED SELECTORS (do NOT use these again, try a completely different approach):\n' +
-      [...failedSelectors].map((s) => `- ${s}`).join('\n');
+  if (opts?.includeFailedSelectors) {
+    const failedSelectors = collectFailedSelectors(steps);
+    if (failedSelectors.size > 0) {
+      log +=
+        '\n\n⚠ FAILED SELECTORS (do NOT use these again, try a completely different approach):\n' +
+        [...failedSelectors].map((s) => `- ${s}`).join('\n');
+    }
   }
 
   return log;
@@ -78,16 +82,13 @@ export function buildActionLog(
 
 /** Map provider to its cheapest/fastest model for summarization. */
 export function getSummarizationModel(provider: ProviderId): string {
-  const map: Partial<Record<ProviderId, string>> = {
+  const map: Record<ProviderId, string> = {
     chatgpt: 'gpt-4.1-nano',
     claude: 'claude-haiku-4-5-20251001',
-    gemini: 'gemini-2.0-flash',
-    deepseek: 'deepseek-chat',
-    glm: 'glm-4-flash',
-    minimax: 'MiniMax-Text-01',
-    kimi: 'moonshot-v1-8k',
+    openrouter: 'openai/gpt-4.1-nano',
+    ollama: provider,
   };
-  return map[provider] ?? provider;
+  return map[provider];
 }
 
 /**
@@ -123,7 +124,7 @@ export async function summarizeHistory(
     .join('\n');
 
   // Lazy import to avoid loading vision stack for loops that never hit L3
-  const { callVision } = await import('./vision-dispatch');
+  const { callVision } = await import('../providers/vision-dispatch');
 
   const prompt =
     'Summarize this agent conversation history concisely. ' +

@@ -52,144 +52,118 @@ function stripTrailingNoise(text: string): string {
  * Parse the model response into a thought + action.
  * Throws if the response cannot be parsed.
  */
+function tryParse(text: string, s: ParserState): ModelResponse | null {
+  try {
+    return validateResponse(JSON.parse(text), s);
+  } catch {
+    return null;
+  }
+}
+
+function tryFenceExtract(trimmed: string, s: ParserState): ModelResponse | null {
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (!fenceMatch) return null;
+  return tryParse(fenceMatch[1].trim(), s);
+}
+
+function tryBraceExtract(trimmed: string, s: ParserState): ModelResponse | null {
+  const firstJson = extractFirstJson(trimmed);
+  if (!firstJson) return null;
+  return tryParse(firstJson, s);
+}
+
+function tryThoughtActionFallback(trimmed: string, s: ParserState): ModelResponse | null {
+  if (!/^\s*\{\s*"thought"\s*:/.test(trimmed) || !trimmed.includes('"action"')) return null;
+  const thoughtMatch = trimmed.match(/"thought"\s*:\s*"(.*?)",\s*"action"/s);
+  if (!thoughtMatch) return null;
+  const rawThought = thoughtMatch[1];
+  const actionKeyIndex = trimmed.indexOf('"action"');
+  if (actionKeyIndex === -1) return null;
+  const braceStart = trimmed.indexOf('{', actionKeyIndex);
+  if (braceStart === -1) return null;
+  const actionJson = extractFirstJson(trimmed.slice(braceStart));
+  if (!actionJson) return null;
+  return tryParse(JSON.stringify({ thought: rawThought, action: JSON.parse(actionJson) }), s);
+}
+
+function handleTruncation(trimmed: string, s: ParserState): ModelResponse {
+  s.consecutiveTruncations++;
+  if (s.consecutiveTruncations > MAX_TRUNCATION_RETRIES) {
+    s.consecutiveTruncations = 0;
+    return {
+      thought: 'Model keeps generating truncated responses — aborting task',
+      action: {
+        type: 'fail',
+        reason: 'Model output repeatedly truncated. Try a simpler task or shorter prompt.',
+      } as unknown as TaskAction,
+    };
+  }
+  console.warn(
+    `[action-parser] Truncated response (${s.consecutiveTruncations}/${MAX_TRUNCATION_RETRIES}) — injecting wait`
+  );
+  const partialThought = trimmed.match(/"thought"\s*:\s*"([\s\S]{0,200})/)?.[1] ?? '';
+  const waitMsMatch = trimmed.match(/"ms"\s*:\s*(\d+)/);
+  const recoveredMs = waitMsMatch ? Math.min(Number(waitMsMatch[1]), 3_600_000) : 500;
+  return {
+    thought: `(response truncated — thought was: "${partialThought}...") YOUR RESPONSE WAS CUT OFF. Keep thought under 30 words and respond with a COMPLETE JSON object.`,
+    action: { type: 'wait', ms: recoveredMs } as unknown as TaskAction,
+  };
+}
+
 export function parseModelResponse(raw: string, state?: ParserState): ModelResponse {
   const s = state ?? { consecutiveTruncations: 0 };
   let trimmed = raw.trim();
   trimmed = stripEmbeddedNoise(trimmed);
   trimmed = stripTrailingNoise(trimmed);
 
-  // Try direct JSON parse first (single clean object)
-  try {
-    return validateResponse(JSON.parse(trimmed), s);
-  } catch {
-    // continue
-  }
+  const result =
+    tryParse(trimmed, s) ??
+    tryFenceExtract(trimmed, s) ??
+    tryBraceExtract(trimmed, s) ??
+    tryThoughtActionFallback(trimmed, s);
+  if (result) return result;
 
-  // Try extracting JSON from markdown code fences
-  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch) {
-    try {
-      return validateResponse(JSON.parse(fenceMatch[1].trim()), s);
-    } catch {
-      // continue
-    }
-  }
-
-  // Extract the FIRST complete JSON object using brace balancing.
-  // This handles cases where the model returns multiple JSONs concatenated.
-  const firstJson = extractFirstJson(trimmed);
-  if (firstJson) {
-    try {
-      return validateResponse(JSON.parse(firstJson), s);
-    } catch {
-      // continue
-    }
-  }
-
-  // Fallback: tolerate invalid JSON in "thought" as long as "action" is well-formed.
-  // This handles cases where the model's thought includes unescaped quotes or where
-  // UI status logs were concatenated into the thought string, breaking JSON.parse.
-  if (/^\s*\{\s*"thought"\s*:/.test(trimmed) && trimmed.includes('"action"')) {
-    const thoughtMatch = trimmed.match(/"thought"\s*:\s*"(.*?)",\s*"action"/s);
-    if (thoughtMatch) {
-      const rawThought = thoughtMatch[1];
-      const actionKeyIndex = trimmed.indexOf('"action"');
-      if (actionKeyIndex !== -1) {
-        const braceStart = trimmed.indexOf('{', actionKeyIndex);
-        if (braceStart !== -1) {
-          const actionJson = extractFirstJson(trimmed.slice(braceStart));
-          if (actionJson) {
-            try {
-              const actionObj = JSON.parse(actionJson);
-              return validateResponse(
-                {
-                  thought: rawThought,
-                  action: actionObj,
-                },
-                s
-              );
-            } catch {
-              // fall through to error below
-            }
-          }
-        }
-      }
-    }
-  }
-
-  const preview = trimmed.slice(0, 200);
-
-  // Truncated or malformed response: model generated a long thought and ran out
-  // of tokens before producing the action. Recover with wait (up to MAX retries),
-  // then fail cleanly to avoid infinite loops.
-  if (/^\s*\{\s*"thought"\s*:/.test(trimmed)) {
-    s.consecutiveTruncations++;
-    if (s.consecutiveTruncations > MAX_TRUNCATION_RETRIES) {
-      s.consecutiveTruncations = 0;
-      return {
-        thought: 'Model keeps generating truncated responses — aborting task',
-        action: {
-          type: 'fail',
-          reason: 'Model output repeatedly truncated. Try a simpler task or shorter prompt.',
-        } as unknown as TaskAction,
-      };
-    }
-    console.warn(
-      `[action-parser] Truncated response (${s.consecutiveTruncations}/${MAX_TRUNCATION_RETRIES}) — injecting wait`
-    );
-    // Extract partial thought to feed back to the model as context
-    const partialThought = trimmed.match(/"thought"\s*:\s*"([\s\S]{0,200})/)?.[1] ?? '';
-    // If the truncated response was trying to do a wait, recover the ms value
-    const waitMsMatch = trimmed.match(/"ms"\s*:\s*(\d+)/);
-    const recoveredMs = waitMsMatch ? Math.min(Number(waitMsMatch[1]), 3_600_000) : 500;
-    return {
-      thought: `(response truncated — thought was: "${partialThought}...") YOUR RESPONSE WAS CUT OFF. Keep thought under 30 words and respond with a COMPLETE JSON object.`,
-      action: { type: 'wait', ms: recoveredMs } as unknown as TaskAction,
-    };
-  }
-
-  throw new Error(`Could not parse model response as JSON action: ${preview}`);
+  if (/^\s*\{\s*"thought"\s*:/.test(trimmed)) return handleTruncation(trimmed, s);
+  throw new Error(`Could not parse model response as JSON action: ${trimmed.slice(0, 200)}`);
 }
 
 /**
  * Extract the first complete JSON object from a string using brace balancing.
  * Handles strings and escaped characters correctly.
  */
+type CharState = { depth: number; inString: boolean; escape: boolean };
+
+function processChar(ch: string, st: CharState): 'done' | undefined {
+  if (st.escape) {
+    st.escape = false;
+    return;
+  }
+  if (ch === '\\' && st.inString) {
+    st.escape = true;
+    return;
+  }
+  if (ch === '"') {
+    st.inString = !st.inString;
+    return;
+  }
+  if (st.inString) return;
+  if (ch === '{') {
+    st.depth++;
+    return;
+  }
+  if (ch === '}') {
+    st.depth--;
+    if (st.depth === 0) return 'done';
+  }
+}
+
 function extractFirstJson(text: string): string | null {
   const start = text.indexOf('{');
   if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
+  const st: CharState = { depth: 0, inString: false, escape: false };
   for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-
-    if (escape) {
-      escape = false;
-      continue;
-    }
-
-    if (ch === '\\' && inString) {
-      escape = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
+    if (processChar(text[i], st) === 'done') return text.slice(start, i + 1);
   }
-
   return null;
 }
 
@@ -262,47 +236,25 @@ const VALID_ACTION_TYPES = new Set([
   'generate_image',
 ]);
 
-function validateResponse(obj: unknown, state: ParserState): ModelResponse {
-  if (!obj || typeof obj !== 'object') {
-    throw new Error('Response is not an object');
-  }
-
-  const rec = obj as Record<string, unknown>;
-  let action = rec.action as Record<string, unknown> | undefined;
-  const thought = typeof rec.thought === 'string' ? rec.thought : undefined;
-
-  // Normalize alternative formats from local models (e.g. llama3)
-  // Format: { "step": { "actions": [{ "type": "navigate", ... }] } }
-  if (!action && rec.step && typeof rec.step === 'object') {
+function resolveAction(rec: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = rec.action as Record<string, unknown> | undefined;
+  if (direct) return direct;
+  if (rec.step && typeof rec.step === 'object') {
     const step = rec.step as Record<string, unknown>;
-    if (Array.isArray(step.actions) && step.actions.length > 0) {
-      action = step.actions[0] as Record<string, unknown>;
-    }
+    if (Array.isArray(step.actions) && step.actions.length > 0) return step.actions[0] as Record<string, unknown>;
   }
+  if (Array.isArray(rec.actions) && rec.actions.length > 0) return rec.actions[0] as Record<string, unknown>;
+  if (typeof rec.type === 'string' && VALID_ACTION_TYPES.has(rec.type)) return rec;
+  return undefined;
+}
 
-  // Format: { "actions": [{ "type": "navigate", ... }] }
-  if (!action && Array.isArray(rec.actions) && rec.actions.length > 0) {
-    action = rec.actions[0] as Record<string, unknown>;
-  }
-
-  // Format: { "type": "navigate", ... } (action at root level, no wrapper)
-  if (!action && typeof rec.type === 'string' && VALID_ACTION_TYPES.has(rec.type)) {
-    action = rec as Record<string, unknown>;
-  }
-
-  if (!action || typeof action !== 'object' || !action.type) {
-    throw new Error('Response missing action.type');
-  }
-
-  if (!VALID_ACTION_TYPES.has(action.type as string)) {
-    throw new Error(`Unknown action type: ${action.type}`);
-  }
-
-  // Reset truncation counter only on a fully successful parse
+function validateResponse(obj: unknown, state: ParserState): ModelResponse {
+  if (!obj || typeof obj !== 'object') throw new Error('Response is not an object');
+  const rec = obj as Record<string, unknown>;
+  const thought = typeof rec.thought === 'string' ? rec.thought : undefined;
+  const action = resolveAction(rec);
+  if (!action || typeof action !== 'object' || !action.type) throw new Error('Response missing action.type');
+  if (!VALID_ACTION_TYPES.has(action.type as string)) throw new Error(`Unknown action type: ${action.type}`);
   state.consecutiveTruncations = 0;
-
-  return {
-    thought,
-    action: action as unknown as TaskAction,
-  };
+  return { thought, action: action as unknown as TaskAction };
 }

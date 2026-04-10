@@ -1,0 +1,21 @@
+export type { AgentFact, NewAgentFact } from './agent-facts';
+export { agentFactsTable } from './agent-facts';
+export type { AgentObservation, NewAgentObservation } from './agent-observations';
+export { agentObservationsTable } from './agent-observations';
+export type { ChannelConfig, NewChannelConfig } from './channel-configs';
+export { channelConfigsTable } from './channel-configs';
+export type { NewSecret, Secret } from './secrets';
+export { secretsTable } from './secrets';
+export type { NewSkill, Skill } from './skills';
+export { skillsTable } from './skills';
+export type { NewTaskMemory, TaskMemory } from './task-memories';
+export { taskMemoriesTable } from './task-memories';
+export type { NewTaskMonitor, TaskMonitor } from './task-monitors';
+export { taskMonitorsTable } from './task-monitors';
+export type { NewTaskStep, TaskStep } from './task-steps';
+export { taskStepsTable } from './task-steps';
+export type { NewTask, OrchestratorPlan, Task, TaskCapability, TaskMode, TaskStatus } from './tasks';
+// Nuevas tablas
+export { tasksTable } from './tasks';
+export type { NewUser, User } from './users';
+export { usersTable } from './users';

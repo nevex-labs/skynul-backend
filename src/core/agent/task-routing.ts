@@ -1,18 +1,15 @@
-import type { Task, TaskCapabilityId, TaskMode, TaskRunnerId } from '../../types';
+import type { TaskCapabilityId, TaskMode, TaskRunnerId } from '../../types';
 
-export function deriveRunner(mode: TaskMode, capabilities: TaskCapabilityId[], orchestrate?: boolean): TaskRunnerId {
-  if (orchestrate) return 'orchestrator';
-  if (mode === 'code') return 'code';
-  if (capabilities.includes('polymarket.trading')) return 'cdp';
-  if (capabilities.includes('onchain.trading')) return 'cdp';
-  if (capabilities.includes('cex.trading')) return 'cdp';
-  return 'browser';
-}
+export function deriveRunner(
+  mode: TaskMode,
+  capabilities: TaskCapabilityId[],
+  orchestrate?: string | boolean
+): TaskRunnerId {
+  if (orchestrate === 'sequential' || orchestrate === 'parallel' || orchestrate === 'conditional')
+    return 'orchestrator';
 
-export function backfillRunner(task: Task): Task {
-  if ((task as any).runner) return task;
-  const mode = (task.mode ?? 'browser') as TaskMode;
-  const caps = (task.capabilities ?? []) as TaskCapabilityId[];
-  (task as any).runner = deriveRunner(mode, caps);
-  return task;
+  if (capabilities.some((c) => c.endsWith('.trading'))) return 'cdp';
+
+  if (mode === 'sandbox') return 'sandbox';
+  return 'web';
 }

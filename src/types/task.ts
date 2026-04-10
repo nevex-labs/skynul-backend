@@ -169,7 +169,7 @@ export type TaskAction =
   | { type: 'app_script'; app: string; script: string }
   // Long-term memory (facts)
   | { type: 'remember_fact'; fact: string }
-  | { type: 'forget_fact'; factId: number }
+  | { type: 'forget_fact'; factId: string }
   // Knowledge memory (structured observations)
   | {
       type: 'memory_save';
@@ -243,11 +243,11 @@ export type TaskStep = {
 
 export type TaskSource = 'desktop' | 'telegram' | 'discord' | 'slack' | 'whatsapp' | 'signal';
 
-export type TaskMode = 'browser' | 'code';
+export type TaskMode = 'web' | 'sandbox';
 
 // The concrete execution loop selected by the backend.
 // This is derived from { mode, capabilities }.
-export type TaskRunnerId = 'browser' | 'code' | 'cdp' | 'orchestrator';
+// Runner deriva de: mode (web/sandbox) + orchestrate (single/sequential/parallel/conditional)
 
 export type Task = {
   id: string;
@@ -262,8 +262,8 @@ export type Task = {
   attachments?: string[];
   status: TaskStatus;
   mode: TaskMode;
-  /** The backend-selected execution loop. */
-  runner: TaskRunnerId;
+  /** Si puede crear subtasks (derivado de orchestrate). */
+  orchestrate: 'single' | 'sequential' | 'parallel' | 'conditional';
   capabilities: TaskCapabilityId[];
   steps: TaskStep[];
   /** Best-effort token usage (only available for some providers). */
@@ -284,10 +284,12 @@ export type Task = {
   plan?: OrchestratorPlan;
   /** IDs of child tasks spawned by this orchestrator. */
   childTaskIds?: string[];
-  /** Per-task model override within the active provider. Falls back to policy model if not set. */
+  /** Per-task model override within the active provider. */
   model?: string;
   /** If true, skip memory/facts injection (set for orchestrator children that already have context). */
   skipMemory?: boolean;
+  /** Cached runner derived from { mode, capabilities, orchestrate }. */
+  runner?: TaskRunnerId;
   /** Active position monitor config. Set when agent delegates to system-level monitoring. */
   monitor?: {
     venue: 'polymarket' | 'cex' | 'onchain';
@@ -325,7 +327,7 @@ export type TaskCreateRequest = {
   agentName?: string;
   agentRole?: string;
   /** If true, uses the orchestrator runner to plan and delegate to sub-agents. */
-  orchestrate?: boolean;
+  orchestrate?: 'single' | 'sequential' | 'parallel' | 'conditional';
   /** Override the model for this task within the active provider. */
   model?: string;
   /** If true, skip memory/facts injection (used for orchestrator children that already have context). */
@@ -369,3 +371,30 @@ export type TaskListResponse = {
 export type TaskUpdateEvent = {
   task: Task;
 };
+
+// ── Chat Message ───────────────────────────────────────────────────────────
+
+export type ChatMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+};
+
+// ── Runner ID (legacy - derivation en runtime) ───────────────────────────
+
+export type TaskRunnerId = 'web' | 'sandbox' | 'cdp' | 'orchestrator';
+
+// ── Vision Messages ───────────────────────────────────────────────────────
+
+export type VisionContentPart =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail?: 'auto' | 'low' | 'high' }
+  | { type: 'output_text'; text: string };
+
+export type VisionMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: VisionContentPart[];
+};
+
+// ── Provider ID ────────────────────────────────────────────────────────────
+
+export type ProviderId = 'chatgpt' | 'claude' | 'ollama' | 'openrouter';

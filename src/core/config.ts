@@ -1,19 +1,13 @@
-import { mkdirSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-
-/**
- * Resolve the data directory for persistent storage.
- *
- * Priority:
- *   1. SKYNUL_DATA_DIR env var (explicit override)
- *   2. ~/.skynul (default for standalone server)
- *
- * In Electron context, the desktop shell passes SKYNUL_DATA_DIR=app.getPath('userData')
- * so both environments share the same data files.
- */
-export function getDataDir(): string {
-  const dir = process.env.SKYNUL_DATA_DIR ?? join(homedir(), '.skynul');
-  mkdirSync(dir, { recursive: true });
-  return dir;
+function requireEnv(key: string): string {
+  const v = process.env[key];
+  if (!v) throw new Error(`Missing required env: ${key}`);
+  return v;
 }
+
+export const config = {
+  port: Number(process.env.PORT ?? '3141'),
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+  databaseUrl: requireEnv('DATABASE_URL'),
+  masterKey: requireEnv('MASTER_KEY'),
+  allowedOrigins: (process.env.SKYNUL_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+} as const;

@@ -1,4 +1,4 @@
-import { deleteSecret, getSecret, setSecret } from '../stores/secret-store';
+import { deleteSecret, getSecret, setSecret } from '../../services/secrets';
 
 export const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 export const CHATGPT_OAUTH_ISSUER = 'https://auth.openai.com';

@@ -1,8 +1,6 @@
-import { dirname, join } from 'path';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { readChannelConfigState, writeChannelConfigState } from '../../services/channel-config-runtime';
 import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
-import { getDataDir } from '../config';
 import { Channel } from './channel';
 import { handleCommand } from './command-router';
 
@@ -205,22 +203,17 @@ export class SignalChannel extends Channel {
     }
   }
 
-  private settingsPath(): string {
-    return join(getDataDir(), 'channels', 'signal.json');
-  }
-
   private async loadState(): Promise<SignalState> {
     try {
-      const raw = await readFile(this.settingsPath(), 'utf8');
-      return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULT_STATE };
-    }
+      const raw = await readChannelConfigState(this.id);
+      if (raw !== null) {
+        return { ...DEFAULT_STATE, ...(raw as Partial<SignalState>) };
+      }
+    } catch {}
+    return { ...DEFAULT_STATE };
   }
 
   private async saveState(): Promise<void> {
-    const file = this.settingsPath();
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(this.state, null, 2), 'utf8');
+    await writeChannelConfigState(this.id, { ...this.state });
   }
 }

@@ -1,28 +1,30 @@
-import type { Frame, Page } from 'playwright-core';
+import type { ElementHandle, Frame, Locator, Page } from 'playwright-core';
 
 /** Strip unnamed structural lines whose children have no [ref=] markers. */
+function hasUsefulMarkers(line: string): boolean {
+  return line.includes('[ref=') || line.includes('"');
+}
+
+function hasUsefulDescendant(lines: string[], start: number, indent: number): boolean {
+  for (let j = start + 1; j < lines.length; j++) {
+    const childIndent = lines[j].search(/\S/);
+    if (childIndent <= indent) return false;
+    if (hasUsefulMarkers(lines[j])) return true;
+  }
+  return false;
+}
+
 function compactSnapshot(snap: string): string {
   const lines = snap.split('\n');
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Keep lines that have a ref or visible text content (quoted names)
-    if (line.includes('[ref=') || line.includes('"')) {
+    if (hasUsefulMarkers(line)) {
       out.push(line);
       continue;
     }
-    // Keep structural lines only if a descendant has [ref=]
     const indent = line.search(/\S/);
-    let hasUsefulChild = false;
-    for (let j = i + 1; j < lines.length; j++) {
-      const childIndent = lines[j].search(/\S/);
-      if (childIndent <= indent) break;
-      if (lines[j].includes('[ref=') || lines[j].includes('"')) {
-        hasUsefulChild = true;
-        break;
-      }
-    }
-    if (hasUsefulChild) out.push(line);
+    if (hasUsefulDescendant(lines, i, indent)) out.push(line);
   }
   return out.join('\n');
 }
@@ -36,11 +38,157 @@ function headTail(text: string, limit: number): string {
   return `${text.slice(0, head)}\n\n[... ${omitted} chars omitted ...]\n\n${text.slice(text.length - tail)}`;
 }
 
+function isRecoverableInteractionError(message: string): boolean {
+  return (
+    message.includes('outside of the viewport') ||
+    message.includes('not visible') ||
+    message.includes('intercepts pointer events')
+  );
+}
+
+async function focusElementHandle(handle: ElementHandle, placeCursorAtEnd: boolean): Promise<void> {
+  await handle.evaluate((el, needsCaret) => {
+    (el as HTMLElement).scrollIntoView({
+      block: 'center',
+      behavior: 'instant',
+    });
+    (el as HTMLElement).focus();
+    if (!needsCaret) return;
+    if ((el as HTMLElement).getAttribute('contenteditable') !== 'true') return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, placeCursorAtEnd);
+}
+
+async function focusLocatorWithFallback(loc: Locator, placeCursorAtEnd: boolean): Promise<boolean> {
+  try {
+    await loc.click({ timeout: 5_000 });
+    return true;
+  } catch (clickErr) {
+    const message = clickErr instanceof Error ? clickErr.message : '';
+    if (!isRecoverableInteractionError(message)) throw clickErr;
+  }
+
+  try {
+    await loc.scrollIntoViewIfNeeded({ timeout: 3_000 }).catch(() => {});
+    await loc.click({ timeout: 5_000, force: true });
+    return true;
+  } catch {}
+
+  const handle = await loc.elementHandle({ timeout: 3_000 }).catch(() => null);
+  if (!handle) return false;
+  await focusElementHandle(handle, placeCursorAtEnd);
+  await handle.dispose();
+  return true;
+}
+
+async function clickLocatorWithFallback(loc: Locator): Promise<void> {
+  try {
+    await loc.click({ timeout: 8_000 });
+    return;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '';
+    if (!isRecoverableInteractionError(msg)) throw e;
+  }
+
+  const focused = await focusLocatorWithFallback(loc, false);
+  if (!focused) throw new Error('Could not click target element');
+  await loc.click({ timeout: 5_000, force: true }).catch(() => {});
+}
+
+function domSnapshotFromDocument(): string {
+  const lines: string[] = [];
+  const interactiveTags = new Set(['button', 'a', 'input', 'textarea', 'select']);
+  const root = document.body;
+  if (!root) return '';
+  if (processSnapshotNode(root, 0, lines, interactiveTags)) {
+    walkSnapshotChildren(root, 0, lines, interactiveTags);
+  }
+  return lines.join('\n');
+}
+
+function getElementLabel(el: Element): string {
+  return el.getAttribute('aria-label') || el.getAttribute('data-testid') || el.getAttribute('placeholder') || '';
+}
+
+function isInteractiveElement(tag: string, role: string, el: Element, interactiveTags: Set<string>): boolean {
+  return (
+    interactiveTags.has(tag) ||
+    role === 'button' ||
+    role === 'link' ||
+    role === 'textbox' ||
+    el.getAttribute('contenteditable') === 'true'
+  );
+}
+
+function appendSnapshotLine(
+  lines: string[],
+  depth: number,
+  tag: string,
+  role: string,
+  label: string,
+  innerText: string
+): void {
+  const indent = '  '.repeat(depth);
+  const desc = [tag, role && `role=${role}`, label && `"${label}"`].filter(Boolean).join(' ');
+  const textPart = innerText && !label.includes(innerText) ? `: ${innerText}` : '';
+  lines.push(`${indent}${desc}${textPart}`);
+}
+
+function shouldIncludeSnapshotNode(isInteractive: boolean, innerText: string, depth: number): boolean {
+  if (isInteractive) return true;
+  return Boolean(innerText && depth < 4);
+}
+
+function processSnapshotNode(el: Element, depth: number, lines: string[], interactiveTags: Set<string>): boolean {
+  const tag = el.tagName?.toLowerCase() || '';
+  const role = el.getAttribute('role') || '';
+  const label = getElementLabel(el);
+  const innerText = (el as HTMLElement).innerText?.trim()?.slice(0, 80) || '';
+  const isInteractive = isInteractiveElement(tag, role, el, interactiveTags);
+  if (shouldIncludeSnapshotNode(isInteractive, innerText, depth)) {
+    appendSnapshotLine(lines, depth, tag, role, label, innerText);
+  }
+  return lines.length < 200;
+}
+
+function walkSnapshotChildren(el: Element, depth: number, lines: string[], interactiveTags: Set<string>): void {
+  for (const child of el.children) {
+    if (!processSnapshotNode(child, depth + 1, lines, interactiveTags)) break;
+    walkSnapshotChildren(child, depth + 1, lines, interactiveTags);
+  }
+}
+
+function selectorForElement(el: Element): string {
+  const node = el as HTMLElement;
+  const tag = node.tagName?.toLowerCase() || 'el';
+  const testId = node.getAttribute?.('data-testid');
+  if (testId) return `[data-testid="${testId}"]`;
+  if (node.id) return `#${node.id}`;
+  const aria = node.getAttribute?.('aria-label');
+  if (aria) return `${tag}[aria-label="${aria}"]`;
+  return tag;
+}
+
+function collectInteractiveElementsFromDocument(): PageInfo['elements'] {
+  const els: PageInfo['elements'] = [];
+  const nodes = document.querySelectorAll('button, a, input, textarea, [role="button"], [contenteditable="true"]');
+  for (const el of nodes) {
+    if (els.length >= 30) break;
+    const node = el as HTMLElement;
+    const tag = node.tagName?.toLowerCase() || 'el';
+    const text = node.innerText?.trim()?.slice(0, 60) || undefined;
+    els.push({ tag, selector: selectorForElement(el), text, interactive: true });
+  }
+  return els;
+}
+
 type PageWithSnapshot = Page & {
-  _snapshotForAI?: (opts?: {
-    timeout?: number;
-    track?: string;
-  }) => Promise<{ full?: string }>;
+  _snapshotForAI?: (opts?: { timeout?: number; track?: string }) => Promise<{ full?: string }>;
 };
 
 export type PageInfo = {
@@ -133,42 +281,8 @@ export class PlaywrightBridge {
     // This avoids "Target page, context or browser has been closed" errors
     // when sites close the opener after opening a new tab.
     const popupPromise = this.page.waitForEvent('popup', { timeout: 1_500 }).catch(() => null);
-
     const loc = this.resolveLocator(selector, frameId);
-    try {
-      await loc.click({ timeout: 8_000 });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '';
-      if (
-        msg.includes('outside of the viewport') ||
-        msg.includes('not visible') ||
-        msg.includes('intercepts pointer events')
-      ) {
-        // Strategy 1: scroll into view + force click
-        try {
-          await loc.scrollIntoViewIfNeeded({ timeout: 3_000 }).catch(() => {});
-          await loc.click({ timeout: 5_000, force: true });
-        } catch {
-          // Strategy 2: JS-based focus + click via element handle (works for iframe elements)
-          const handle = await loc.elementHandle({ timeout: 3_000 }).catch(() => null);
-          if (handle) {
-            await handle.evaluate((el) => {
-              (el as HTMLElement).scrollIntoView({
-                block: 'center',
-                behavior: 'instant',
-              });
-              (el as HTMLElement).focus();
-              (el as HTMLElement).click();
-            });
-            handle.dispose();
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        throw e;
-      }
-    }
+    await clickLocatorWithFallback(loc);
 
     const popup = await popupPromise;
     if (popup && !popup.isClosed()) {
@@ -185,51 +299,8 @@ export class PlaywrightBridge {
     try {
       await loc.fill(text, { timeout: 8_000 });
     } catch {
-      // Fallback for contenteditable / non-input elements
-      // First try to focus the element so keyboard.type() lands in the right place
-      let focused = false;
-      try {
-        await loc.click({ timeout: 5_000 });
-        focused = true;
-      } catch (clickErr) {
-        const msg = clickErr instanceof Error ? clickErr.message : '';
-        if (
-          msg.includes('outside of the viewport') ||
-          msg.includes('not visible') ||
-          msg.includes('intercepts pointer events')
-        ) {
-          // Try scroll + force click
-          try {
-            await loc.scrollIntoViewIfNeeded({ timeout: 3_000 }).catch(() => {});
-            await loc.click({ timeout: 5_000, force: true });
-            focused = true;
-          } catch {
-            // JS-based focus via element handle (reliable for iframe contenteditable)
-            const handle = await loc.elementHandle({ timeout: 3_000 }).catch(() => null);
-            if (handle) {
-              await handle.evaluate((el) => {
-                (el as HTMLElement).scrollIntoView({
-                  block: 'center',
-                  behavior: 'instant',
-                });
-                (el as HTMLElement).focus();
-                // Place cursor at end for contenteditable
-                if ((el as HTMLElement).getAttribute('contenteditable') === 'true') {
-                  const range = document.createRange();
-                  range.selectNodeContents(el);
-                  range.collapse(false);
-                  const sel = window.getSelection();
-                  sel?.removeAllRanges();
-                  sel?.addRange(range);
-                }
-              });
-              handle.dispose();
-              focused = true;
-            }
-          }
-        }
-        if (!focused) throw clickErr;
-      }
+      const focused = await focusLocatorWithFallback(loc, true);
+      if (!focused) throw new Error('Could not focus target element for typing');
       await this.page.keyboard.type(text, { delay: 5 });
     }
   }
@@ -244,7 +315,7 @@ export class PlaywrightBridge {
     const expr = /^\s*return\s/m.test(script) ? `(function(){${script}})()` : script;
     const val = await frame.evaluate((code) => {
       // eslint-disable-next-line no-eval
-      return (0, eval)(code);
+      return eval(code);
     }, expr);
     return typeof val === 'string' ? val : JSON.stringify(val);
   }
@@ -300,35 +371,7 @@ export class PlaywrightBridge {
     }
 
     // Last resort: DOM text snapshot
-    const text = await this.page
-      .evaluate(() => {
-        const lines: string[] = [];
-        const walk = (el: Element, depth: number): void => {
-          const tag = el.tagName?.toLowerCase() || '';
-          const role = el.getAttribute('role') || '';
-          const label =
-            el.getAttribute('aria-label') || el.getAttribute('data-testid') || el.getAttribute('placeholder') || '';
-          const innerText = (el as HTMLElement).innerText?.trim()?.slice(0, 80) || '';
-          const isInteractive =
-            /^(button|a|input|textarea|select)$/.test(tag) ||
-            role === 'button' ||
-            role === 'link' ||
-            role === 'textbox' ||
-            el.getAttribute('contenteditable') === 'true';
-          if (isInteractive || (innerText && depth < 4)) {
-            const indent = '  '.repeat(depth);
-            const desc = [tag, role && `role=${role}`, label && `"${label}"`].filter(Boolean).join(' ');
-            const textPart = innerText && !label.includes(innerText) ? `: ${innerText}` : '';
-            lines.push(`${indent}${desc}${textPart}`);
-          }
-          if (lines.length < 200) {
-            for (const child of el.children) walk(child, depth + 1);
-          }
-        };
-        if (document.body) walk(document.body, 0);
-        return lines.join('\n');
-      })
-      .catch(() => '');
+    const text = await this.page.evaluate(domSnapshotFromDocument).catch(() => '');
 
     return { url, title, snapshot: headTail(text, 8_000) };
   }
@@ -337,41 +380,7 @@ export class PlaywrightBridge {
     const url = this.page.url();
     const title = await this.page.title().catch(() => '');
     const text = (await this.page.evaluate(() => document.body?.innerText?.slice(0, 4000) ?? '').catch(() => '')) || '';
-    const elements =
-      (await this.page
-        .evaluate(() => {
-          const els: Array<{
-            tag: string;
-            selector: string;
-            text?: string;
-            type?: string;
-            interactive?: boolean;
-          }> = [];
-          const push = (el: Element): void => {
-            const tag = (el as HTMLElement).tagName?.toLowerCase() || 'el';
-            const t = (el as HTMLElement).innerText?.trim()?.slice(0, 60);
-            let selector = tag;
-            const dt = (el as HTMLElement).getAttribute?.('data-testid');
-            if (dt) selector = `[data-testid="${dt}"]`;
-            else if ((el as HTMLElement).id) selector = `#${(el as HTMLElement).id}`;
-            else if ((el as HTMLElement).getAttribute?.('aria-label'))
-              selector = `${tag}[aria-label="${(el as HTMLElement).getAttribute('aria-label')}"]`;
-            els.push({
-              tag,
-              selector,
-              text: t || undefined,
-              interactive: true,
-            });
-          };
-          document
-            .querySelectorAll('button, a, input, textarea, [role="button"], [contenteditable="true"]')
-            .forEach((el) => {
-              if (els.length >= 30) return;
-              push(el);
-            });
-          return els;
-        })
-        .catch(() => [])) || [];
+    const elements = (await this.page.evaluate(collectInteractiveElementsFromDocument).catch(() => [])) || [];
     return { url, title, text, elements };
   }
 }

@@ -2,22 +2,16 @@
  * CDP / Polymarket mode — API-only, no browser.
  */
 
-import type { Task, TaskAction } from '../../../types';
-import type { VisionMessage } from '../../../types';
+import type { Task, TaskAction, VisionMessage } from '../../../types';
+import { buildCdpSystemPrompt } from '../../prompts/cdp';
 import type { ExecutorContext } from '../action-executors';
 import {
-  executeCexAction,
-  executeChainAction,
   executeFactAction,
-  executeGenerateImage,
+  executeImageAction,
   executeInterTaskAction,
   executeMemoryAction,
-  executePolymarketAction,
-  executeSetIdentity,
 } from '../action-executors';
-import { startPositionMonitor } from '../position-monitor';
 import { buildActionLog, drainInbox } from '../history-manager';
-import { buildCdpSystemPrompt } from '../system-prompt';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
 
@@ -70,27 +64,28 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
     ],
   });
 
+  function buildCdpFirstTurnText(): string {
+    const CAPABILITY_MODES: Array<[string, string]> = [
+      ['polymarket.trading', 'polymarket_* actions'],
+      ['onchain.trading', 'chain_* actions'],
+      ['cex.trading', 'cex_* actions'],
+    ];
+    const caps = task.capabilities as string[];
+    const activeModes = CAPABILITY_MODES.filter(([cap]) => caps.includes(cap)).map(([, label]) => label);
+    const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
+    return `Task: ${task.prompt}\n\nYou are in API-only mode with ${modeStr} available. Do NOT use shell, navigate, or evaluate.\n\nIMPORTANT: Before taking ANY action, you MUST first reason about the task. Analyze the user's goal, evaluate if the target is realistic, and outline your strategy (entry logic, risk management, exit plan). Only AFTER reasoning should you start executing actions.`;
+  }
+
   const callbacks: LoopCallbacks = {
     taskManager,
     buildTurnMessage(stepIndex, budget) {
-      if (stepIndex === 0) {
-        const activeModes: string[] = [];
-        if (task.capabilities.includes('polymarket.trading')) activeModes.push('polymarket_* actions');
-        if (task.capabilities.includes('onchain.trading')) activeModes.push('chain_* actions');
-        if (task.capabilities.includes('cex.trading')) activeModes.push('cex_* actions');
-        const modeStr = activeModes.length > 0 ? activeModes.join(', ') : 'API actions';
-        return {
-          text: `Task: ${task.prompt}\n\nYou are in API-only mode with ${modeStr} available. Do NOT use shell, navigate, or evaluate.\n\nIMPORTANT: Before taking ANY action, you MUST first reason about the task. Analyze the user's goal, evaluate if the target is realistic, and outline your strategy (entry logic, risk management, exit plan). Only AFTER reasoning should you start executing actions.`,
-        };
-      }
-      // Level 1: reduce action log when context pressure is high
+      if (stepIndex === 0) return { text: buildCdpFirstTurnText() };
       const compact = budget?.applyLevel1;
       const actionLog = buildActionLog(task.steps, compact ? 4 : 8, {
         truncateResult: compact ? 100 : 200,
         truncateError: 100,
       });
-      const inbox = drainInbox(taskManager, task.id);
-      return { text: `Step ${stepIndex + 1}.${actionLog}${inbox}` };
+      return { text: `Step ${stepIndex + 1}.${actionLog}${drainInbox(taskManager, task.id)}` };
     },
     recordStep() {
       task.updatedAt = Date.now();
@@ -106,83 +101,83 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Execute an API-only action (Polymarket, inter-task, etc). */
+function unwrap(res: { ok: boolean; value?: string; error?: string }): string {
+  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
+}
+
+const TRADING_DISABLED_ACTIONS = new Set([
+  'polymarket_get_account_summary',
+  'polymarket_get_trader_leaderboard',
+  'polymarket_search_markets',
+  'polymarket_place_order',
+  'polymarket_close_position',
+  'chain_get_balance',
+  'chain_get_token_balance',
+  'chain_send_token',
+  'chain_swap',
+  'chain_get_tx_status',
+  'cex_get_balance',
+  'cex_get_ticker',
+  'cex_place_order',
+  'cex_cancel_order',
+  'cex_get_positions',
+  'cex_withdraw',
+]);
+
+const INTER_TASK_ACTIONS = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
+const FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
+const MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
+
+async function executeIdentityAction(
+  action: Extract<TaskAction, { type: 'set_identity' }>,
+  ctx: ExecutorContext
+): Promise<string> {
+  ctx.task.agentName = action.name;
+  if (action.role) ctx.task.agentRole = action.role;
+  ctx.task.updatedAt = Date.now();
+  ctx.pushUpdate();
+  return `Identity set: ${action.name}${action.role ? ` (${action.role})` : ''}`;
+}
+
+async function executeMonitorPosition(
+  action: Extract<TaskAction, { type: 'monitor_position' }>,
+  ctx: ExecutorContext
+): Promise<string> {
+  if (!ctx.taskManager) return '[Error: task manager not available for monitoring]';
+  ctx.task.monitor = {
+    venue: action.venue,
+    tokenId: action.tokenId,
+    entryPrice: action.entryPrice,
+    size: action.size,
+    takeProfitPrice: action.takeProfitPrice,
+    stopLossPrice: action.stopLossPrice,
+    intervalMs: action.intervalMs ?? 300_000,
+    maxDurationMs: action.maxDurationMs ?? 7 * 24 * 60 * 60 * 1000,
+    side: action.side,
+    startedAt: Date.now(),
+  };
+  ctx.task.status = 'monitoring';
+  ctx.task.updatedAt = Date.now();
+  return '[Monitoring disabled - trading removed]';
+}
+
 export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorContext): Promise<string | undefined> {
   const raw = action as Record<string, unknown>;
-  switch (action.type) {
-    case 'task_list_peers':
-    case 'task_send':
-    case 'task_read':
-    case 'task_message': {
-      const res = await executeInterTaskAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'remember_fact':
-    case 'forget_fact': {
-      const res = executeFactAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'memory_save':
-    case 'memory_search':
-    case 'memory_context': {
-      const res = executeMemoryAction(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'set_identity': {
-      const res = executeSetIdentity(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'generate_image': {
-      const res = await executeGenerateImage(ctx, action as any);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'polymarket_get_account_summary':
-    case 'polymarket_get_trader_leaderboard':
-    case 'polymarket_search_markets':
-    case 'polymarket_place_order':
-    case 'polymarket_close_position': {
-      const res = await executePolymarketAction(ctx, action);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'chain_get_balance':
-    case 'chain_get_token_balance':
-    case 'chain_send_token':
-    case 'chain_swap':
-    case 'chain_get_tx_status': {
-      const res = await executeChainAction(ctx, action);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'cex_get_balance':
-    case 'cex_get_ticker':
-    case 'cex_place_order':
-    case 'cex_cancel_order':
-    case 'cex_get_positions':
-    case 'cex_withdraw': {
-      const res = await executeCexAction(ctx, action);
-      return res.ok ? res.value : `[Error: ${res.error}]`;
-    }
-    case 'wait':
-      await sleep((raw.ms as number) ?? 1000);
-      return undefined;
-    case 'monitor_position': {
-      const a = action as Extract<TaskAction, { type: 'monitor_position' }>;
-      if (!ctx.taskManager) return '[Error: task manager not available for monitoring]';
-      ctx.task.monitor = {
-        venue: a.venue,
-        tokenId: a.tokenId,
-        entryPrice: a.entryPrice,
-        size: a.size,
-        takeProfitPrice: a.takeProfitPrice,
-        stopLossPrice: a.stopLossPrice,
-        intervalMs: a.intervalMs ?? 300_000,
-        maxDurationMs: a.maxDurationMs ?? 7 * 24 * 60 * 60 * 1000,
-        side: a.side,
-        startedAt: Date.now(),
-      };
-      ctx.task.status = 'monitoring';
-      ctx.task.updatedAt = Date.now();
-      return startPositionMonitor(ctx.task, ctx.taskManager, !!ctx.paperMode);
-    }
-    default:
-      return `[Error: "${action.type}" is not available in API-only mode.]`;
+
+  if (TRADING_DISABLED_ACTIONS.has(action.type)) return '[Trading disabled]';
+
+  if (INTER_TASK_ACTIONS.has(action.type))
+    return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
+  if (FACT_ACTIONS.has(action.type))
+    return unwrap(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
+  if (MEMORY_ACTIONS.has(action.type))
+    return unwrap(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
+  if (action.type === 'set_identity') return executeIdentityAction(action, ctx);
+  if (action.type === 'generate_image') return unwrap(await executeImageAction(ctx, action));
+  if (action.type === 'monitor_position') return executeMonitorPosition(action, ctx);
+  if (action.type === 'wait') {
+    await sleep((raw.ms as number) ?? 1000);
+    return undefined;
   }
+  return `[Error: "${action.type}" is not available in API-only mode.]`;
 }

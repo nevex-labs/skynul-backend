@@ -1,14 +1,14 @@
 import type { ChatMessage } from '../../types';
 import {
-  CHATGPT_CODEX_API_ENDPOINT,
-  type StoredTokens,
   buildAuthorizeUrl,
+  CHATGPT_CODEX_API_ENDPOINT,
   clearTokens,
   exchangeCodeForTokens,
   generatePKCE,
   generateState,
   loadTokens,
   refreshIfNeeded,
+  type StoredTokens,
   saveTokens,
 } from './chatgpt-oauth';
 import { parseSSE } from './sse';
@@ -20,9 +20,21 @@ export {
   generatePKCE,
   generateState,
   loadTokens,
-  saveTokens,
   type StoredTokens,
+  saveTokens,
 };
+
+function accumulateSSEEvent(evt: Record<string, unknown>, accumulated: string): string {
+  if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') {
+    return accumulated + evt.delta;
+  }
+  if (evt.type === 'response.output_item.done' && !accumulated) {
+    const item = evt.item as { content?: Array<{ type: string; text?: string }> } | undefined;
+    const textPart = item?.content?.find((c) => c.type === 'output_text' && typeof c.text === 'string');
+    if (textPart?.text) return textPart.text;
+  }
+  return accumulated;
+}
 
 export async function codexRespond(opts: { messages: ChatMessage[] }): Promise<string> {
   let tokens = await loadTokens();
@@ -63,17 +75,7 @@ export async function codexRespond(opts: { messages: ChatMessage[] }): Promise<s
 
   let accumulated = '';
   for await (const evt of parseSSE(res)) {
-    if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') {
-      accumulated += evt.delta;
-    }
-    if (evt.type === 'response.output_item.done') {
-      const item = evt.item as { content?: Array<{ type: string; text?: string }> } | undefined;
-      if (item?.content) {
-        for (const c of item.content) {
-          if (c.type === 'output_text' && typeof c.text === 'string' && !accumulated) accumulated += c.text;
-        }
-      }
-    }
+    accumulated = accumulateSSEEvent(evt, accumulated);
     if (evt.type === 'response.done' || evt.type === 'response.completed') break;
   }
 

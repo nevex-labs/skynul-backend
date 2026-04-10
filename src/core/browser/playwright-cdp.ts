@@ -1,15 +1,14 @@
 import { type ChildProcessWithoutNullStreams, execFile, execSync, spawn } from 'child_process';
 import { constants as fsConstants } from 'fs';
+import { access, cp, mkdir, readFile, readlink, stat, unlink, writeFile } from 'fs/promises';
 import http from 'http';
 import net from 'net';
 import os from 'os';
 import { dirname, join } from 'path';
-import { access, cp, mkdir, readFile, readlink, stat, unlink, writeFile } from 'fs/promises';
-import { type Browser, type BrowserContext, type Page, chromium } from 'playwright-core';
-import { getDataDir } from '../config';
+import { type Browser, type BrowserContext, chromium, type Page } from 'playwright-core';
 import { parseBrowserSessionMode } from './session-mode';
 
-const app = { getPath: (_: string) => getDataDir() };
+const CHROME_USER_DATA_DIR = '/tmp/skynul-chrome';
 
 type LaunchResult = {
   proc: ChildProcessWithoutNullStreams | null;
@@ -25,7 +24,7 @@ let shared: LaunchResult | null = null;
 
 async function readPreferredUserDataDir(): Promise<string | null> {
   try {
-    const p = join(app.getPath('userData'), 'browser', 'chrome-user-data-selected.txt');
+    const p = join(CHROME_USER_DATA_DIR, 'browser', 'chrome-user-data-selected.txt');
     const raw = (await readFile(p, 'utf8')).trim();
     return raw || null;
   } catch {
@@ -35,8 +34,8 @@ async function readPreferredUserDataDir(): Promise<string | null> {
 
 async function writePreferredUserDataDir(dir: string): Promise<void> {
   try {
-    const p = join(app.getPath('userData'), 'browser', 'chrome-user-data-selected.txt');
-    await mkdir(join(app.getPath('userData'), 'browser'), { recursive: true });
+    const p = join(CHROME_USER_DATA_DIR, 'browser', 'chrome-user-data-selected.txt');
+    await mkdir(join(CHROME_USER_DATA_DIR, 'browser'), { recursive: true });
     await writeFile(p, `${dir}\n`, 'utf8');
   } catch {
     // ignore
@@ -146,73 +145,86 @@ function isWsl(): boolean {
 }
 
 async function resolveChromeExecutable(): Promise<string> {
-  const fromEnvRaw = process.env.SKYNUL_CHROME_PATH;
-  const fromEnv = fromEnvRaw?.trim();
-  if (fromEnv) {
-    // Support either absolute path or a command in PATH.
-    if (fromEnv.includes('/') || fromEnv.includes('\\') || fromEnv.endsWith('.exe')) {
-      if (await isExecutable(fromEnv)) return fromEnv;
-      // Don't hard-fail on a bad env var; fallback to auto-detection.
-      // This avoids breaking the app when a placeholder value is present.
-      // eslint-disable-next-line no-console
-      console.warn(`SKYNUL_CHROME_PATH points to a missing executable: ${fromEnv} (falling back to auto-detection)`);
-    }
-    const resolved = await whichExecutable(fromEnv);
-    if (resolved) return resolved;
-    // eslint-disable-next-line no-console
-    console.warn(`SKYNUL_CHROME_PATH was set but not found in PATH: ${fromEnv} (falling back to auto-detection)`);
-  }
-
+  const fromEnv = await resolveExecutableFromEnv();
+  if (fromEnv) return fromEnv;
+  const absoluteCandidates = getAbsoluteChromeCandidates(process.platform, process.env.HOME);
+  const absolute = await findExecutablePath(absoluteCandidates);
+  if (absolute) return absolute;
+  const commandCandidates = getChromeCommandCandidates();
+  const command = await findExecutableCommand(commandCandidates);
+  if (command) return command;
   const platform = process.platform;
+  const tried = [...absoluteCandidates, ...commandCandidates].join(', ');
+  const envPath = process.env.PATH ?? '';
+  throw new Error(
+    `Could not find a Chrome/Chromium executable (platform=${platform}). ` +
+      `Install Chrome/Chromium (or Edge/Brave/Vivaldi) or set SKYNUL_CHROME_PATH to an absolute path. ` +
+      `Tried: ${tried}. PATH=${envPath}`
+  );
+}
 
-  const home = process.env.HOME;
-
-  const absoluteCandidates: string[] = [];
-  if (platform === 'linux') {
-    absoluteCandidates.push(
-      '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-      '/opt/google/chrome/chrome',
-      '/usr/bin/microsoft-edge',
-      '/usr/bin/microsoft-edge-stable',
-      '/usr/bin/brave-browser',
-      '/usr/bin/vivaldi',
-      '/usr/bin/vivaldi-stable'
-    );
-
-    // Skynul-managed user-space Chrome install (no sudo needed):
-    // extracted from the official .deb to $HOME/.local/skynul-chrome.
-    if (home) {
-      absoluteCandidates.push(join(home, '.local', 'skynul-chrome', 'opt', 'google', 'chrome', 'google-chrome'));
-      absoluteCandidates.push(join(home, '.local', 'skynul-chrome', 'opt', 'google', 'chrome', 'chrome'));
-    }
-
-    // Chromium variants (note: on Ubuntu these may be snap-wrapped).
-    absoluteCandidates.push(
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser',
-      '/snap/bin/chromium',
-      '/var/lib/snapd/snap/bin/chromium'
-    );
-  } else if (platform === 'darwin') {
-    absoluteCandidates.push(
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium'
-    );
-  } else if (platform === 'win32') {
-    const pf = process.env.PROGRAMFILES;
-    const pf86 = process.env['PROGRAMFILES(X86)'];
-    const lad = process.env.LOCALAPPDATA;
-    if (pf) absoluteCandidates.push(join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    if (pf86) absoluteCandidates.push(join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    if (lad) absoluteCandidates.push(join(lad, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+async function resolveExecutableFromEnv(): Promise<string | null> {
+  const fromEnv = process.env.SKYNUL_CHROME_PATH?.trim();
+  if (!fromEnv) return null;
+  if (fromEnv.includes('/') || fromEnv.includes('\\') || fromEnv.endsWith('.exe')) {
+    if (await isExecutable(fromEnv)) return fromEnv;
+    console.warn(`SKYNUL_CHROME_PATH points to a missing executable: ${fromEnv} (falling back to auto-detection)`);
   }
+  const resolved = await whichExecutable(fromEnv);
+  if (resolved) return resolved;
+  console.warn(`SKYNUL_CHROME_PATH was set but not found in PATH: ${fromEnv} (falling back to auto-detection)`);
+  return null;
+}
 
-  for (const p of absoluteCandidates) {
-    if (await isExecutable(p)) return p;
+function getAbsoluteChromeCandidates(platform: string, home?: string): string[] {
+  if (platform === 'linux') return getLinuxChromeCandidates(home);
+  if (platform === 'darwin') return getMacChromeCandidates();
+  if (platform === 'win32') return getWindowsChromeCandidates();
+  return [];
+}
+
+function getLinuxChromeCandidates(home?: string): string[] {
+  const out = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/opt/google/chrome/chrome',
+    '/usr/bin/microsoft-edge',
+    '/usr/bin/microsoft-edge-stable',
+    '/usr/bin/brave-browser',
+    '/usr/bin/vivaldi',
+    '/usr/bin/vivaldi-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    '/var/lib/snapd/snap/bin/chromium',
+  ];
+  if (home) {
+    out.push(join(home, '.local', 'skynul-chrome', 'opt', 'google', 'chrome', 'google-chrome'));
+    out.push(join(home, '.local', 'skynul-chrome', 'opt', 'google', 'chrome', 'chrome'));
   }
+  return out;
+}
 
-  const commandCandidates = [
+function getMacChromeCandidates(): string[] {
+  return [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ];
+}
+
+function getWindowsChromeCandidates(): string[] {
+  const out: string[] = [];
+  const pf = process.env.PROGRAMFILES;
+  const pf86 = process.env['PROGRAMFILES(X86)'];
+  const lad = process.env.LOCALAPPDATA;
+  if (pf) out.push(join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  if (pf86) out.push(join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  if (lad) out.push(join(lad, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  return out;
+}
+
+function getChromeCommandCandidates(): string[] {
+  return [
     'google-chrome',
     'google-chrome-stable',
     'chromium',
@@ -224,18 +236,21 @@ async function resolveChromeExecutable(): Promise<string> {
     'vivaldi-stable',
     'chrome',
   ];
-  for (const c of commandCandidates) {
+}
+
+async function findExecutablePath(candidates: string[]): Promise<string | null> {
+  for (const p of candidates) {
+    if (await isExecutable(p)) return p;
+  }
+  return null;
+}
+
+async function findExecutableCommand(candidates: string[]): Promise<string | null> {
+  for (const c of candidates) {
     const resolved = await whichExecutable(c);
     if (resolved) return resolved;
   }
-
-  const tried = [...absoluteCandidates, ...commandCandidates].join(', ');
-  const envPath = process.env.PATH ?? '';
-  throw new Error(
-    `Could not find a Chrome/Chromium executable (platform=${platform}). ` +
-      `Install Chrome/Chromium (or Edge/Brave/Vivaldi) or set SKYNUL_CHROME_PATH to an absolute path. ` +
-      `Tried: ${tried}. PATH=${envPath}`
-  );
+  return null;
 }
 
 async function readTextFile(p: string, maxBytes = 64 * 1024): Promise<string> {
@@ -283,13 +298,7 @@ async function tryImportExistingChromeProfile(destUserDataDir: string): Promise<
   ];
 
   const destProfileDir = join(destUserDataDir, profileDirectory);
-  const srcRoot = await (async () => {
-    for (const root of sourceRoots) {
-      const p = join(root, profileDirectory);
-      if (await pathExists(p)) return root;
-    }
-    return null;
-  })();
+  const srcRoot = await findExistingSourceRoot(sourceRoots, profileDirectory);
   if (!srcRoot) return;
 
   const srcProfileDir = join(srcRoot, profileDirectory);
@@ -300,13 +309,7 @@ async function tryImportExistingChromeProfile(destUserDataDir: string): Promise<
   // Without it, copied cookie DBs look like an empty session (logged out).
   const srcLocalState = join(srcRoot, 'Local State');
   const destLocalState = join(destUserDataDir, 'Local State');
-  try {
-    if ((await pathExists(srcLocalState)) && !(await pathExists(destLocalState))) {
-      await cp(srcLocalState, destLocalState);
-    }
-  } catch {
-    // ignore
-  }
+  await copyIfMissing(srcLocalState, destLocalState);
 
   const copyPaths = [
     'Network/Cookies',
@@ -322,59 +325,100 @@ async function tryImportExistingChromeProfile(destUserDataDir: string): Promise<
   for (const rel of copyPaths) {
     const from = join(srcProfileDir, rel);
     const to = join(destProfileDir, rel);
-    try {
-      if (!(await pathExists(from))) continue;
-      await mkdir(dirname(to), { recursive: true });
-      // Do not overwrite existing session files; only fill gaps.
-      await cp(from, to, { recursive: true, force: false });
-    } catch {
-      // ignore; profile may be locked or missing
-    }
+    await copyPathBestEffort(from, to);
   }
 }
 
-export async function launchPlaywrightChromeCdp(): Promise<LaunchResult> {
-  const chrome = await resolveChromeExecutable();
+async function findExistingSourceRoot(sourceRoots: string[], profileDirectory: string): Promise<string | null> {
+  for (const root of sourceRoots) {
+    const p = join(root, profileDirectory);
+    if (await pathExists(p)) return root;
+  }
+  return null;
+}
 
+async function copyIfMissing(from: string, to: string): Promise<void> {
+  try {
+    if ((await pathExists(from)) && !(await pathExists(to))) await cp(from, to);
+  } catch {}
+}
+
+async function copyPathBestEffort(from: string, to: string): Promise<void> {
+  try {
+    if (!(await pathExists(from))) return;
+    await mkdir(dirname(to), { recursive: true });
+    await cp(from, to, { recursive: true, force: false });
+  } catch {}
+}
+
+type LaunchSetup = {
+  userDataDirFromEnv: boolean;
+  profileDirectory: string;
+  isSnapChromium: boolean;
+  cdpTimeoutMs: number;
+  baseArgs: string[];
+  attemptDirs: string[];
+  fallbackDir: string;
+};
+
+type LaunchAttemptIo = {
+  stdoutTail: string;
+  stderrTail: string;
+};
+
+type PreparedAttempt = {
+  proc: ChildProcessWithoutNullStreams;
+  io: LaunchAttemptIo;
+  port: number;
+  exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+};
+
+type AttemptErrorResolution = {
+  action: 'retry_same' | 'retry_next' | 'throw';
+  nextExistingSessionRetried: boolean;
+  error?: Error;
+};
+
+type LaunchAttemptOutcome =
+  | { kind: 'success'; result: LaunchResult; nextExistingSessionRetried: boolean }
+  | { kind: 'retry_same'; nextExistingSessionRetried: boolean }
+  | { kind: 'retry_next'; nextExistingSessionRetried: boolean }
+  | { kind: 'throw'; error: Error; nextExistingSessionRetried: boolean };
+
+function assertSupportedWslExecutable(chrome: string): void {
   const isWindowsExeOnWsl = isWsl() && chrome.toLowerCase().endsWith('.exe');
+  if (!isWindowsExeOnWsl) return;
+  throw new Error(
+    'WSL detected but SKYNUL is using a Windows browser binary (chrome.exe). ' +
+      'Playwright-only automation requires a Linux Chrome/Chromium installed inside WSL. ' +
+      'Install chromium/google-chrome in WSL and set SKYNUL_CHROME_PATH to its Linux path (e.g. /usr/bin/chromium).'
+  );
+}
 
-  // Playwright's pipe transport (used by launchPersistentContext / --remote-debugging-pipe)
-  // does NOT work reliably when launching a Windows browser binary from inside WSL.
-  // If the user wants Playwright-only automation, they must install a Linux Chromium-based
-  // browser in WSL and point Skynul to it.
-  if (isWindowsExeOnWsl) {
-    throw new Error(
-      'WSL detected but SKYNUL is using a Windows browser binary (chrome.exe). ' +
-        'Playwright-only automation requires a Linux Chrome/Chromium installed inside WSL. ' +
-        'Install chromium/google-chrome in WSL and set SKYNUL_CHROME_PATH to its Linux path (e.g. /usr/bin/chromium).'
-    );
-  }
+function resolveUserDataDir(): { userDataDir: string; userDataDirFromEnv: boolean } {
+  const fromEnvProfile = process.env.SKYNUL_CHROME_USER_DATA_DIR?.trim();
+  const userDataDirFromEnv = Boolean(fromEnvProfile);
+  let userDataDir = fromEnvProfile || join(CHROME_USER_DATA_DIR, 'browser', 'chrome-user-data');
+  if (fromEnvProfile && !userDataDir.startsWith('/')) userDataDir = join(CHROME_USER_DATA_DIR, fromEnvProfile);
+  return { userDataDir, userDataDirFromEnv };
+}
 
-  const fromEnvProfileRaw = process.env.SKYNUL_CHROME_USER_DATA_DIR;
-  const fromEnvProfile = fromEnvProfileRaw?.trim();
-  const userDataDirFromEnv = !!fromEnvProfile;
-  let userDataDir = fromEnvProfile || join(app.getPath('userData'), 'browser', 'chrome-user-data');
-  if (fromEnvProfile && !userDataDir.startsWith('/')) {
-    // Avoid surprising relative paths; keep profiles deterministic.
-    userDataDir = join(app.getPath('userData'), fromEnvProfile);
-  }
-
+function resolveProfileDirectory(): string {
   const profileDirectoryRaw = process.env.SKYNUL_CHROME_PROFILE_DIRECTORY;
-  const profileDirectory = (profileDirectoryRaw?.trim() || 'Default').replace(/[\\/]/g, '');
+  return (profileDirectoryRaw?.trim() || 'Default').replace(/[\\/]/g, '');
+}
 
-  const isSnapChromium = process.platform === 'linux' ? await isSnapWrappedChromium(chrome) : false;
-
+function resolveCdpTimeoutMs(): number {
   const cdpTimeoutFromEnv = Number(process.env.SKYNUL_CHROME_CDP_TIMEOUT_MS || '');
-  const cdpTimeoutMs =
-    Number.isFinite(cdpTimeoutFromEnv) && cdpTimeoutFromEnv > 0
-      ? Math.min(Math.max(1000, cdpTimeoutFromEnv), 180_000)
-      : process.platform === 'linux'
-        ? 45_000
-        : 15_000;
+  if (Number.isFinite(cdpTimeoutFromEnv) && cdpTimeoutFromEnv > 0) {
+    return Math.min(Math.max(1000, cdpTimeoutFromEnv), 180_000);
+  }
+  return process.platform === 'linux' ? 45_000 : 15_000;
+}
 
+function resolveBaseArgs(profileDirectory: string, isSnapChromium: boolean): string[] {
   const noSandbox = process.env.SKYNUL_CHROME_NO_SANDBOX === '1' || (process.platform === 'linux' && isSnapChromium);
-
-  const baseArgs = [
+  return [
     `--profile-directory=${profileDirectory}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -382,227 +426,384 @@ export async function launchPlaywrightChromeCdp(): Promise<LaunchResult> {
     '--new-window',
     ...(noSandbox ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
   ];
+}
 
-  // Pick a stable profile directory for best UX.
-  // Problem we avoid: if the first run had to fallback (profile lock), the user logs in there,
-  // but later runs go back to the primary dir and look "logged out".
+async function buildAttemptDirs(
+  userDataDir: string,
+  userDataDirFromEnv: boolean,
+  profileDirectory: string
+): Promise<{ attemptDirs: string[]; fallbackDir: string }> {
   const preferred = !userDataDirFromEnv ? await readPreferredUserDataDir() : null;
   const fallbackDir = `${userDataDir}-fallback`;
-
-  // Sometimes a previous Chrome instance gets orphaned and keeps the profile lock.
-  // If we're using Skynul's default profile dir, fallback to a deterministic secondary dir first.
-  // If the user explicitly set SKYNUL_CHROME_USER_DATA_DIR, do NOT silently fallback.
   const attemptDirs: string[] = [];
 
-  if (!userDataDirFromEnv && preferred && (await pathExists(preferred))) {
-    attemptDirs.push(preferred);
-  }
-
+  if (!userDataDirFromEnv && preferred && (await pathExists(preferred))) attemptDirs.push(preferred);
   if (!userDataDirFromEnv && (await looksLikeChromeProfileDir(fallbackDir, profileDirectory))) {
     if (!attemptDirs.includes(fallbackDir)) attemptDirs.push(fallbackDir);
   }
-
   if (!attemptDirs.includes(userDataDir)) attemptDirs.push(userDataDir);
+  if (!userDataDirFromEnv) attemptDirs.push(`${fallbackDir}-${Date.now().toString(36)}`);
+  return { attemptDirs, fallbackDir };
+}
 
-  if (!userDataDirFromEnv) {
-    // Last resort: unique dir if both are locked.
-    attemptDirs.push(`${fallbackDir}-${Date.now().toString(36)}`);
+async function buildLaunchSetup(chrome: string): Promise<LaunchSetup> {
+  const { userDataDir, userDataDirFromEnv } = resolveUserDataDir();
+  const profileDirectory = resolveProfileDirectory();
+  const isSnapChromium = process.platform === 'linux' ? await isSnapWrappedChromium(chrome) : false;
+  const cdpTimeoutMs = resolveCdpTimeoutMs();
+  const baseArgs = resolveBaseArgs(profileDirectory, isSnapChromium);
+  const { attemptDirs, fallbackDir } = await buildAttemptDirs(userDataDir, userDataDirFromEnv, profileDirectory);
+  return { userDataDirFromEnv, profileDirectory, isSnapChromium, cdpTimeoutMs, baseArgs, attemptDirs, fallbackDir };
+}
+
+async function cleanupStaleSingletonLock(attemptUserDataDir: string): Promise<void> {
+  try {
+    const lockPath = join(attemptUserDataDir, 'SingletonLock');
+    const target = await readlink(lockPath);
+    const pidStr = target.split('-').pop();
+    const pid = pidStr ? Number(pidStr) : Number.NaN;
+    if (Number.isNaN(pid)) return;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      await unlink(lockPath).catch(() => {});
+      console.warn(`Removed stale Chrome SingletonLock (dead PID ${pid})`);
+    }
+  } catch {}
+}
+
+function attachProcessTails(proc: ChildProcessWithoutNullStreams): LaunchAttemptIo {
+  const io: LaunchAttemptIo = { stdoutTail: '', stderrTail: '' };
+  const appendTail = (prev: string, chunk: Buffer): string => (prev + chunk.toString('utf8')).slice(-24_000);
+  proc.stdout?.on('data', (c) => {
+    if (Buffer.isBuffer(c)) io.stdoutTail = appendTail(io.stdoutTail, c);
+  });
+  proc.stderr?.on('data', (c) => {
+    if (Buffer.isBuffer(c)) io.stderrTail = appendTail(io.stderrTail, c);
+  });
+  return io;
+}
+
+async function killProcessSafe(proc: ChildProcessWithoutNullStreams): Promise<void> {
+  try {
+    proc.kill('SIGTERM');
+  } catch {}
+}
+
+function buildLaunchResult(
+  proc: ChildProcessWithoutNullStreams,
+  port: number,
+  browser: Browser,
+  context: BrowserContext,
+  attemptUserDataDir: string,
+  chrome: string
+): LaunchResult {
+  return {
+    proc,
+    port,
+    browser,
+    context,
+    userDataDir: attemptUserDataDir,
+    chromeExecutable: chrome,
+    close: async () => {
+      try {
+        await browser.close();
+      } catch {}
+      try {
+        proc.kill('SIGTERM');
+      } catch {}
+    },
+  };
+}
+
+function getAttemptErrorMeta(
+  msg: string,
+  isSnapChromium: boolean,
+  io: LaunchAttemptIo
+): {
+  looksLikeProfileLock: boolean;
+  looksLikeCdpTimeout: boolean;
+  tails: string;
+  snapHint: string;
+} {
+  const looksLikeProfileLock = /user data directory is already in use|profile error|profile in use/i.test(msg);
+  const looksLikeCdpTimeout = /Timed out waiting for Chrome remote debugging endpoint/i.test(msg);
+  const snapHint =
+    isSnapChromium && looksLikeCdpTimeout
+      ? 'Detected snap-wrapped Chromium. On Ubuntu this often breaks spawning CDP.\n' +
+        'Fix: install Google Chrome (.deb) and set SKYNUL_CHROME_PATH=/usr/bin/google-chrome-stable.'
+      : '';
+  const tails =
+    io.stdoutTail.trim() || io.stderrTail.trim()
+      ? `\n\n[chrome stdout tail]\n${io.stdoutTail.trim() || '(empty)'}\n\n[chrome stderr tail]\n${io.stderrTail.trim() || '(empty)'}`
+      : '';
+  return { looksLikeProfileLock, looksLikeCdpTimeout, tails, snapHint };
+}
+
+async function tryKillExistingSessionByUserDataDir(attemptUserDataDir: string): Promise<void> {
+  try {
+    const psList = execSync(
+      `ps aux | grep -- '--user-data-dir=${attemptUserDataDir}' | grep -v grep | awk '{print $2}'`,
+      { timeout: 3000 }
+    )
+      .toString()
+      .trim();
+    for (const pidStr of psList.split('\n').filter(Boolean)) {
+      try {
+        process.kill(Number(pidStr), 'SIGTERM');
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  } catch {}
+}
+
+async function prepareAttempt(
+  chrome: string,
+  attemptUserDataDir: string,
+  baseArgs: string[]
+): Promise<PreparedAttempt> {
+  await mkdir(attemptUserDataDir, { recursive: true });
+  await cleanupStaleSingletonLock(attemptUserDataDir);
+  await tryImportExistingChromeProfile(attemptUserDataDir);
+
+  const port = await pickFreePort();
+  const args = [
+    '--remote-debugging-address=127.0.0.1',
+    `--remote-debugging-port=${port}`,
+    '--remote-allow-origins=*',
+    `--user-data-dir=${attemptUserDataDir}`,
+    ...baseArgs,
+    'about:blank',
+  ];
+  const proc = spawn(chrome, args, { stdio: 'pipe' });
+  const io = attachProcessTails(proc);
+  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    proc.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  const spawnErr = await Promise.race([
+    new Promise<Error | null>((resolve) => proc.once('error', (e) => resolve(e as Error))),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 200)),
+  ]);
+  if (spawnErr) {
+    throw new Error(
+      `Failed to launch Chrome (${chrome}). Set SKYNUL_CHROME_PATH if needed. Error: ${spawnErr.message}`
+    );
   }
+  return { proc, io, port, exitPromise };
+}
+
+async function connectAttempt(
+  prepared: PreparedAttempt,
+  cdpTimeoutMs: number,
+  attemptUserDataDir: string,
+  chrome: string
+): Promise<LaunchResult> {
+  const { proc, io, port, exitPromise } = prepared;
+  await Promise.race([
+    waitForJsonVersion('127.0.0.1', port, cdpTimeoutMs),
+    exitPromise.then(({ code, signal }) => {
+      if (code === 0 && io.stdoutTail.includes('Opening in existing browser session')) {
+        throw new Error('EXISTING_SESSION');
+      }
+      throw new Error(`Chrome exited before CDP was ready (code=${code ?? 'null'}, signal=${signal ?? 'null'}).`);
+    }),
+  ]);
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const context = browser.contexts()[0] ?? (await browser.newContext());
+  return buildLaunchResult(proc, port, browser, context, attemptUserDataDir, chrome);
+}
+
+async function resolveAttemptError(
+  msg: string,
+  isSnapChromium: boolean,
+  io: LaunchAttemptIo,
+  attemptUserDataDir: string,
+  userDataDirFromEnv: boolean,
+  hasNextAttempt: boolean,
+  existingSessionRetried: boolean,
+  proc: ChildProcessWithoutNullStreams
+): Promise<AttemptErrorResolution> {
+  const { looksLikeProfileLock, looksLikeCdpTimeout, tails, snapHint } = getAttemptErrorMeta(msg, isSnapChromium, io);
+  const existingResolution = await resolveExistingSessionError(msg, attemptUserDataDir, existingSessionRetried);
+  if (existingResolution) return existingResolution;
+
+  const profileResolution = await resolveProfileLockError(
+    looksLikeProfileLock,
+    userDataDirFromEnv,
+    hasNextAttempt,
+    attemptUserDataDir,
+    existingSessionRetried,
+    proc
+  );
+  if (profileResolution) return profileResolution;
+
+  return await resolveGenericAttemptError(looksLikeCdpTimeout, msg, snapHint, tails, existingSessionRetried, proc);
+}
+
+async function resolveExistingSessionError(
+  msg: string,
+  attemptUserDataDir: string,
+  existingSessionRetried: boolean
+): Promise<AttemptErrorResolution | null> {
+  if (msg !== 'EXISTING_SESSION' || existingSessionRetried) return null;
+  const allowKill = ['1', 'true', 'yes'].includes(
+    (process.env.SKYNUL_CHROME_KILL_EXISTING_SESSION ?? '').trim().toLowerCase()
+  );
+  if (!allowKill) {
+    return {
+      action: 'throw',
+      nextExistingSessionRetried: existingSessionRetried,
+      error: new Error(
+        `Chrome is already running with this profile dir: ${attemptUserDataDir}. ` +
+          'Close the existing Chrome instance, or set SKYNUL_CHROME_KILL_EXISTING_SESSION=1 to allow Skynul to terminate it automatically.'
+      ),
+    };
+  }
+  console.warn('Chrome already running with this profile; killing existing instance and retrying...');
+  await tryKillExistingSessionByUserDataDir(attemptUserDataDir);
+  await unlink(join(attemptUserDataDir, 'SingletonLock')).catch(() => {});
+  return { action: 'retry_same', nextExistingSessionRetried: true };
+}
+
+async function resolveProfileLockError(
+  looksLikeProfileLock: boolean,
+  userDataDirFromEnv: boolean,
+  hasNextAttempt: boolean,
+  attemptUserDataDir: string,
+  existingSessionRetried: boolean,
+  proc: ChildProcessWithoutNullStreams
+): Promise<AttemptErrorResolution | null> {
+  if (!looksLikeProfileLock) return null;
+  if (userDataDirFromEnv) {
+    await killProcessSafe(proc);
+    return {
+      action: 'throw',
+      nextExistingSessionRetried: existingSessionRetried,
+      error: new Error(
+        `Chrome profile dir is locked/in use: ${attemptUserDataDir}. ` +
+          'Close other Chrome instances using that profile, or unset SKYNUL_CHROME_USER_DATA_DIR to let Skynul manage its own profile.'
+      ),
+    };
+  }
+  if (!hasNextAttempt) return null;
+  console.warn(`Chrome profile dir locked; retrying with fallback dir: ${attemptUserDataDir}`);
+  await killProcessSafe(proc);
+  return { action: 'retry_next', nextExistingSessionRetried: existingSessionRetried };
+}
+
+async function resolveGenericAttemptError(
+  looksLikeCdpTimeout: boolean,
+  msg: string,
+  snapHint: string,
+  tails: string,
+  existingSessionRetried: boolean,
+  proc: ChildProcessWithoutNullStreams
+): Promise<AttemptErrorResolution> {
+  await killProcessSafe(proc);
+  if (looksLikeCdpTimeout) {
+    return {
+      action: 'throw',
+      nextExistingSessionRetried: existingSessionRetried,
+      error: new Error(`${msg}${snapHint ? `\n\n${snapHint}` : ''}${tails}`),
+    };
+  }
+  return { action: 'throw', nextExistingSessionRetried: existingSessionRetried, error: new Error(`${msg}${tails}`) };
+}
+
+async function runLaunchAttempt(
+  chrome: string,
+  baseArgs: string[],
+  cdpTimeoutMs: number,
+  attemptUserDataDir: string,
+  isSnapChromium: boolean,
+  userDataDirFromEnv: boolean,
+  hasNextAttempt: boolean,
+  existingSessionRetried: boolean
+): Promise<LaunchAttemptOutcome> {
+  let prepared: PreparedAttempt | null = null;
+  try {
+    prepared = await prepareAttempt(chrome, attemptUserDataDir, baseArgs);
+    const result = await connectAttempt(prepared, cdpTimeoutMs, attemptUserDataDir, chrome);
+    return { kind: 'success', result, nextExistingSessionRetried: existingSessionRetried };
+  } catch (e) {
+    if (!prepared) throw e;
+    return await mapLaunchAttemptErrorToOutcome(
+      e,
+      prepared,
+      attemptUserDataDir,
+      isSnapChromium,
+      userDataDirFromEnv,
+      hasNextAttempt,
+      existingSessionRetried
+    );
+  }
+}
+
+async function mapLaunchAttemptErrorToOutcome(
+  err: unknown,
+  prepared: PreparedAttempt,
+  attemptUserDataDir: string,
+  isSnapChromium: boolean,
+  userDataDirFromEnv: boolean,
+  hasNextAttempt: boolean,
+  existingSessionRetried: boolean
+): Promise<LaunchAttemptOutcome> {
+  const msg = err instanceof Error ? err.message : String(err);
+  const resolved = await resolveAttemptError(
+    msg,
+    isSnapChromium,
+    prepared.io,
+    attemptUserDataDir,
+    userDataDirFromEnv,
+    hasNextAttempt,
+    existingSessionRetried,
+    prepared.proc
+  );
+  if (resolved.action === 'retry_same') {
+    return { kind: 'retry_same', nextExistingSessionRetried: resolved.nextExistingSessionRetried };
+  }
+  if (resolved.action === 'retry_next') {
+    return { kind: 'retry_next', nextExistingSessionRetried: resolved.nextExistingSessionRetried };
+  }
+  return {
+    kind: 'throw',
+    error: resolved.error ?? (err instanceof Error ? err : new Error(msg)),
+    nextExistingSessionRetried: resolved.nextExistingSessionRetried,
+  };
+}
+
+export async function launchPlaywrightChromeCdp(): Promise<LaunchResult> {
+  const chrome = await resolveChromeExecutable();
+  assertSupportedWslExecutable(chrome);
+  const setup = await buildLaunchSetup(chrome);
+  const { attemptDirs, fallbackDir, baseArgs, cdpTimeoutMs, isSnapChromium, userDataDirFromEnv } = setup;
 
   let existingSessionRetried = false;
   for (let attempt = 0; attempt < attemptDirs.length; attempt++) {
-    const attemptUserDataDir = attemptDirs[attempt]!;
+    const attemptUserDataDir = attemptDirs[attempt] ?? `${fallbackDir}-${attempt}`;
 
-    await mkdir(attemptUserDataDir, { recursive: true });
+    const outcome = await runLaunchAttempt(
+      chrome,
+      baseArgs,
+      cdpTimeoutMs,
+      attemptUserDataDir,
+      isSnapChromium,
+      userDataDirFromEnv,
+      attempt < attemptDirs.length - 1,
+      existingSessionRetried
+    );
+    existingSessionRetried = outcome.nextExistingSessionRetried;
 
-    // Clean stale SingletonLock — the symlink target encodes hostname-PID.
-    // If that PID is not running, the lock is orphaned from a previous crash.
-    try {
-      const lockPath = join(attemptUserDataDir, 'SingletonLock');
-      const target = await readlink(lockPath);
-      const pidStr = target.split('-').pop();
-      const pid = pidStr ? Number(pidStr) : Number.NaN;
-      if (!Number.isNaN(pid)) {
-        try {
-          process.kill(pid, 0); // throws if PID doesn't exist
-        } catch {
-          await unlink(lockPath).catch(() => {});
-          console.warn(`Removed stale Chrome SingletonLock (dead PID ${pid})`);
-        }
-      }
-    } catch {
-      // no lock file or not a symlink — fine
+    if (outcome.kind === 'retry_same') {
+      attempt--;
+      continue;
     }
-
-    await tryImportExistingChromeProfile(attemptUserDataDir);
-
-    const port = await pickFreePort();
-    const args = [
-      `--remote-debugging-address=127.0.0.1`,
-      `--remote-debugging-port=${port}`,
-      '--remote-allow-origins=*',
-      `--user-data-dir=${attemptUserDataDir}`,
-      ...baseArgs,
-      'about:blank',
-    ];
-
-    const proc = spawn(chrome, args, { stdio: 'pipe' });
-
-    let stdoutTail = '';
-    let stderrTail = '';
-    const appendTail = (prev: string, chunk: Buffer): string => {
-      const next = (prev + chunk.toString('utf8')).slice(-24_000);
-      return next;
-    };
-    proc.stdout?.on('data', (c) => {
-      if (Buffer.isBuffer(c)) stdoutTail = appendTail(stdoutTail, c);
-    });
-    proc.stderr?.on('data', (c) => {
-      if (Buffer.isBuffer(c)) stderrTail = appendTail(stderrTail, c);
-    });
-
-    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-      proc.once('exit', (code, signal) => resolve({ code, signal }));
-    });
-
-    const spawnErr = await Promise.race([
-      new Promise<Error | null>((resolve) => proc.once('error', (e) => resolve(e as Error))),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 200)),
-    ]);
-    if (spawnErr) {
-      throw new Error(
-        `Failed to launch Chrome (${chrome}). Set SKYNUL_CHROME_PATH if needed. Error: ${spawnErr.message}`
-      );
+    if (outcome.kind === 'retry_next') continue;
+    if (outcome.kind === 'throw') throw outcome.error;
+    if (!userDataDirFromEnv) {
+      void writePreferredUserDataDir(attemptUserDataDir);
     }
-
-    try {
-      // Wait for CDP endpoint; also fail fast if Chrome exits.
-      await Promise.race([
-        waitForJsonVersion('127.0.0.1', port, cdpTimeoutMs),
-        exitPromise.then(({ code, signal }) => {
-          // Chrome found an existing session with the same profile and delegated to it.
-          // Kill that session so we can relaunch with our debugging port.
-          if (code === 0 && stdoutTail.includes('Opening in existing browser session')) {
-            throw new Error('EXISTING_SESSION');
-          }
-          throw new Error(`Chrome exited before CDP was ready (code=${code ?? 'null'}, signal=${signal ?? 'null'}).`);
-        }),
-      ]);
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-      const context = browser.contexts()[0] ?? (await browser.newContext());
-      const out: LaunchResult = {
-        proc,
-        port,
-        browser,
-        context,
-        userDataDir: attemptUserDataDir,
-        chromeExecutable: chrome,
-        close: async () => {
-          try {
-            await browser.close();
-          } catch {
-            // ignore
-          }
-          try {
-            proc.kill('SIGTERM');
-          } catch {
-            // ignore
-          }
-        },
-      };
-
-      if (!userDataDirFromEnv) {
-        // Persist the chosen dir so future launches reuse the same signed-in session.
-        void writePreferredUserDataDir(attemptUserDataDir);
-      }
-
-      return out;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const looksLikeProfileLock = /user data directory is already in use|profile error|profile in use/i.test(msg);
-      const looksLikeCdpTimeout = /Timed out waiting for Chrome remote debugging endpoint/i.test(msg);
-      const snapHint =
-        isSnapChromium && looksLikeCdpTimeout
-          ? 'Detected snap-wrapped Chromium. On Ubuntu this often breaks spawning CDP.\n' +
-            'Fix: install Google Chrome (.deb) and set SKYNUL_CHROME_PATH=/usr/bin/google-chrome-stable.'
-          : '';
-
-      const tails =
-        stdoutTail.trim() || stderrTail.trim()
-          ? `\n\n[chrome stdout tail]\n${stdoutTail.trim() || '(empty)'}\n\n[chrome stderr tail]\n${stderrTail.trim() || '(empty)'}`
-          : '';
-      // Chrome delegated to an already-running instance — kill it and retry this same dir (once)
-      if (msg === 'EXISTING_SESSION' && !existingSessionRetried) {
-        const allowKill = ['1', 'true', 'yes'].includes(
-          (process.env.SKYNUL_CHROME_KILL_EXISTING_SESSION ?? '').trim().toLowerCase()
-        );
-        if (!allowKill) {
-          throw new Error(
-            `Chrome is already running with this profile dir: ${attemptUserDataDir}. ` +
-              `Close the existing Chrome instance, or set SKYNUL_CHROME_KILL_EXISTING_SESSION=1 to allow Skynul to terminate it automatically.`
-          );
-        }
-        existingSessionRetried = true;
-        console.warn('Chrome already running with this profile; killing existing instance and retrying...');
-        try {
-          const psList = execSync(
-            `ps aux | grep -- '--user-data-dir=${attemptUserDataDir}' | grep -v grep | awk '{print $2}'`,
-            { timeout: 3000 }
-          )
-            .toString()
-            .trim();
-          for (const pidStr of psList.split('\n').filter(Boolean)) {
-            try {
-              process.kill(Number(pidStr), 'SIGTERM');
-            } catch {
-              /* already dead */
-            }
-          }
-          await new Promise((r) => setTimeout(r, 1500));
-        } catch {
-          /* ignore */
-        }
-        await unlink(join(attemptUserDataDir, 'SingletonLock')).catch(() => {});
-        attempt--;
-        continue;
-      }
-
-      if (looksLikeProfileLock) {
-        // If the user opted into an explicit profile dir, failing fast is clearer.
-        if (userDataDirFromEnv) {
-          try {
-            proc.kill('SIGTERM');
-          } catch {
-            // ignore
-          }
-          throw new Error(
-            `Chrome profile dir is locked/in use: ${attemptUserDataDir}. ` +
-              `Close other Chrome instances using that profile, or unset SKYNUL_CHROME_USER_DATA_DIR to let Skynul manage its own profile.`
-          );
-        }
-
-        if (attempt < attemptDirs.length - 1) {
-          // eslint-disable-next-line no-console
-          console.warn(`Chrome profile dir locked; retrying with fallback dir: ${attemptUserDataDir}`);
-          try {
-            proc.kill('SIGTERM');
-          } catch {
-            // ignore
-          }
-          continue;
-        }
-      }
-      try {
-        proc.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
-
-      if (looksLikeCdpTimeout) {
-        throw new Error(`${msg}${snapHint ? `\n\n${snapHint}` : ''}${tails}`);
-      }
-      throw new Error(`${msg}${tails}`);
-    }
+    return outcome.result;
   }
 
   throw new Error('Failed to launch browser via Playwright after retries');

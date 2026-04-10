@@ -22,40 +22,50 @@ export type HandleCommandOptions = {
   resolveTask?: (input: string) => Task | undefined;
 };
 
+const NOT_FOUND = '\u{1f50d} Tarea no encontrada.';
+
+function resolveTaskRef(raw: string, taskManager: TaskManager, opts?: HandleCommandOptions): Task | undefined {
+  return opts?.resolveTask ? opts.resolveTask(raw) : taskManager.get(raw);
+}
+
+function handleList(taskManager: TaskManager): { handled: boolean; text: string } {
+  return { handled: true, text: formatTaskList(taskManager.list()) };
+}
+
+function handleStatus(
+  text: string,
+  taskManager: TaskManager,
+  opts?: HandleCommandOptions
+): { handled: boolean; text: string } {
+  const task = resolveTaskRef(text.slice(8).trim(), taskManager, opts);
+  if (!task) return { handled: true, text: NOT_FOUND };
+  return { handled: true, text: formatTaskSummary(task) };
+}
+
+function handleCancel(
+  text: string,
+  taskManager: TaskManager,
+  opts?: HandleCommandOptions
+): { handled: boolean; text: string } {
+  const task = resolveTaskRef(text.slice(8).trim(), taskManager, opts);
+  if (!task) return { handled: true, text: NOT_FOUND };
+  try {
+    taskManager.cancel(task.id);
+    return { handled: true, text: '\u26d4 Tarea cancelada.' };
+  } catch (e) {
+    return { handled: true, text: `Error: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export async function handleCommand(
   body: string,
   taskManager: TaskManager,
   opts?: HandleCommandOptions
 ): Promise<{ handled: boolean; text: string }> {
   const text = body.trim();
-
-  if (text === '/list') {
-    const tasks = taskManager.list();
-    return { handled: true, text: formatTaskList(tasks) };
-  }
-
-  if (text.startsWith('/status ')) {
-    const raw = text.slice(8).trim();
-    const task = opts?.resolveTask ? opts.resolveTask(raw) : taskManager.get(raw);
-    if (!task) return { handled: true, text: '\u{1f50d} Tarea no encontrada.' };
-    return { handled: true, text: formatTaskSummary(task) };
-  }
-
-  if (text.startsWith('/cancel ')) {
-    const raw = text.slice(8).trim();
-    const task = opts?.resolveTask ? opts.resolveTask(raw) : taskManager.get(raw);
-    if (!task) return { handled: true, text: '\u{1f50d} Tarea no encontrada.' };
-    try {
-      taskManager.cancel(task.id);
-      return { handled: true, text: '\u26d4 Tarea cancelada.' };
-    } catch (e) {
-      return { handled: true, text: `Error: ${e instanceof Error ? e.message : String(e)}` };
-    }
-  }
-
-  if (text.startsWith('/unpair')) {
-    return { handled: true, text: '__UNPAIR__' };
-  }
-
+  if (text === '/list') return handleList(taskManager);
+  if (text.startsWith('/status ')) return handleStatus(text, taskManager, opts);
+  if (text.startsWith('/cancel ')) return handleCancel(text, taskManager, opts);
+  if (text.startsWith('/unpair')) return { handled: true, text: '__UNPAIR__' };
   return { handled: false, text: '' };
 }

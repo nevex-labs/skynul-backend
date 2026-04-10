@@ -312,7 +312,7 @@ pnpm test:run     # vitest single run
 | **Runtime** | Node.js 22+ |
 | **Framework** | [Hono](https://hono.dev) |
 | **Browser** | [Playwright](https://playwright.dev) |
-| **Database** | SQLite via better-sqlite3, JSON files |
+| **Database** | PostgreSQL (Drizzle), blobs en tabla `secrets` tipo `store` |
 | **Validation** | Zod |
 | **Linter** | Biome |
 | **Tests** | Vitest |

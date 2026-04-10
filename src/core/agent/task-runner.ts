@@ -5,10 +5,10 @@
  * iteration logic and action execution.
  */
 
+import { AppBridge } from '../../capabilities/desktop/app-bridge';
 import type { ProviderId, Task } from '../../types';
 import type { BrowserEngine } from '../browser/engine/browser-engine';
 import type { ExecutorContext } from './action-executors';
-import { AppBridge } from './app-bridge';
 import { runAgentLoop } from './loops/agent-loop';
 import { executeBrowserAction, setupBrowserLoop } from './loops/browser-loop';
 import { executeApiOnlyAction, setupCdpLoop } from './loops/cdp-loop';
@@ -22,7 +22,7 @@ export type TaskRunnerCallbacks = {
 
 export type TaskRunnerOpts = {
   provider: ProviderId;
-  openaiModel: string;
+  model: string;
   memoryContext?: string;
   taskManager?: import('./task-manager').TaskManager | null;
   taskId?: string;
@@ -59,10 +59,9 @@ export class TaskRunner {
   async run(): Promise<Task> {
     this.timeoutHandle = setTimeout(() => this.abort('Task timed out'), this.task.timeoutMs);
 
-    // runner is persisted, but we derive as a safety net.
     const runner = this.task.runner ?? deriveRunner(this.task.mode, this.task.capabilities);
     if (runner === 'orchestrator') return this.runOrchestrator();
-    if (runner === 'code') return this.runCode();
+    if (runner === 'sandbox') return this.runCode();
     if (runner === 'cdp') return this.runCdp();
     return this.runBrowser();
   }
@@ -91,11 +90,16 @@ export class TaskRunner {
       this.task.maxSteps,
       this.task,
       this.opts.provider,
-      this.opts.openaiModel,
+      this.opts.model,
       callbacks,
       undefined,
       systemPromptCompact
     );
+  }
+
+  private async cleanupBrowserRelease(release: (() => Promise<void>) | null): Promise<void> {
+    if (release) await release().catch(() => {});
+    if (this.activeRelease === release) this.activeRelease = null;
   }
 
   private async runBrowser(): Promise<Task> {
@@ -130,27 +134,28 @@ export class TaskRunner {
       release = r;
       this.activeRelease = release;
 
-      callbacks.executeAction = (action) => executeBrowserAction(engine!, action, this.executorCtx);
+      callbacks.executeAction = (action) => {
+        if (!engine) throw new Error('Browser engine not initialized');
+        return executeBrowserAction(engine, action, this.executorCtx);
+      };
       loopResult = await runAgentLoop(
         systemPrompt,
         history,
         this.task.maxSteps,
         this.task,
         this.opts.provider,
-        this.opts.openaiModel,
+        this.opts.model,
         callbacks,
         undefined,
         systemPromptCompact
       );
     } catch (e) {
-      if (release) await release().catch(() => {});
-      if (this.activeRelease === release) this.activeRelease = null;
+      await this.cleanupBrowserRelease(release);
       if ((e as any)?.__cancelled || this.aborted) return this.finish('cancelled', this.task.error);
       return this.finish('failed', `Browser loop error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    if (release) await release().catch(() => {});
-    if (this.activeRelease === release) this.activeRelease = null;
+    await this.cleanupBrowserRelease(release);
     return loopResult;
   }
 
@@ -179,7 +184,7 @@ export class TaskRunner {
       this.task.maxSteps,
       this.task,
       this.opts.provider,
-      this.opts.openaiModel,
+      this.opts.model,
       callbacks,
       undefined,
       systemPromptCompact
@@ -211,7 +216,7 @@ export class TaskRunner {
       this.task.maxSteps,
       this.task,
       this.opts.provider,
-      this.opts.openaiModel,
+      this.opts.model,
       callbacks,
       undefined,
       systemPromptCompact

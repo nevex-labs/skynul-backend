@@ -5,6 +5,5 @@ packages:
 # Whitelist the deps that must run install scripts (native/binary).
 onlyBuiltDependencies:
   - '@biomejs/biome'
-  - better-sqlite3
   - esbuild
   - puppeteer

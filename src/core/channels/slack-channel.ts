@@ -1,11 +1,9 @@
-import { randomBytes } from 'crypto';
-import { dirname, join } from 'path';
 import { App as SlackApp } from '@slack/bolt';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { randomBytes } from 'crypto';
+import { readChannelConfigState, writeChannelConfigState } from '../../services/channel-config-runtime';
+import { getSecret, setSecret } from '../../services/secrets';
 import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
-import { getDataDir } from '../config';
-import { getSecret, setSecret } from '../stores/secret-store';
 import { Channel } from './channel';
 import { handleCommand } from './command-router';
 
@@ -144,33 +142,39 @@ export class SlackChannel extends Channel {
     }
   }
 
+  private async handlePairCode(
+    code: string,
+    userId: string,
+    channelId: string,
+    say: (text: string) => Promise<unknown>
+  ): Promise<void> {
+    if (!this.state.pairingCode) {
+      await say('No hay código de vinculación activo. Generá uno desde los ajustes de Skynul.');
+      return;
+    }
+    if (code !== this.state.pairingCode) {
+      await say('Código inválido.');
+      return;
+    }
+    this.state.paired = true;
+    this.state.pairedUserId = userId;
+    this.state.pairedChannelId = channelId;
+    this.state.pairingCode = null;
+    await this.saveState();
+    await say('\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
+  }
+
   private async handleIncoming(
     userId: string,
     content: string,
     channelId: string,
     say: (text: string) => Promise<unknown>
   ): Promise<void> {
-    // Pairing
     if (content.startsWith('/pair ')) {
-      const code = content.slice(6).trim();
-      if (!this.state.pairingCode) {
-        await say('No hay código de vinculación activo. Generá uno desde los ajustes de Skynul.');
-        return;
-      }
-      if (code !== this.state.pairingCode) {
-        await say('Código inválido.');
-        return;
-      }
-      this.state.paired = true;
-      this.state.pairedUserId = userId;
-      this.state.pairedChannelId = channelId;
-      this.state.pairingCode = null;
-      await this.saveState();
-      await say('\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
+      await this.handlePairCode(content.slice(6).trim(), userId, channelId, say);
       return;
     }
 
-    // Only respond to paired user
     if (!this.state.paired || userId !== this.state.pairedUserId) return;
 
     const result = await handleCommand(content, this.taskManager);
@@ -184,7 +188,6 @@ export class SlackChannel extends Channel {
       return;
     }
 
-    // Any other text = create task
     try {
       await this.createTaskFromMessage(content);
     } catch (e) {
@@ -192,22 +195,17 @@ export class SlackChannel extends Channel {
     }
   }
 
-  private settingsPath(): string {
-    return join(getDataDir(), 'channels', 'slack.json');
-  }
-
   private async loadState(): Promise<SlackState> {
     try {
-      const raw = await readFile(this.settingsPath(), 'utf8');
-      return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULT_STATE };
-    }
+      const raw = await readChannelConfigState(this.id);
+      if (raw !== null) {
+        return { ...DEFAULT_STATE, ...(raw as Partial<SlackState>) };
+      }
+    } catch {}
+    return { ...DEFAULT_STATE };
   }
 
   private async saveState(): Promise<void> {
-    const file = this.settingsPath();
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(this.state, null, 2), 'utf8');
+    await writeChannelConfigState(this.id, { ...this.state });
   }
 }

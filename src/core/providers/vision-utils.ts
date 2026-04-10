@@ -7,20 +7,21 @@ import type { VisionMessage } from '../../types';
 export type EdgeContentPart = { type: 'text'; text: string } | { type: 'image'; mediaType: string; base64: string };
 export type EdgeMessage = { role: 'user' | 'assistant'; content: string | EdgeContentPart[] };
 
+function toEdgePart(part: import('../../types').VisionContentPart): EdgeContentPart {
+  if (part.type === 'input_image') {
+    const dataUrl = part.image_url;
+    const commaIdx = dataUrl.indexOf(',');
+    const base64 = commaIdx !== -1 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+    const mediaType = dataUrl.startsWith('data:') ? dataUrl.slice(5, dataUrl.indexOf(';')) : 'image/png';
+    return { type: 'image', mediaType, base64 };
+  }
+  return { type: 'text', text: part.text };
+}
+
 export function convertToEdgeMessages(messages: VisionMessage[]): EdgeMessage[] {
-  return messages.map((msg) => {
-    const parts: EdgeContentPart[] = msg.content.map((part) => {
-      if (part.type === 'input_image') {
-        const dataUrl = part.image_url;
-        const commaIdx = dataUrl.indexOf(',');
-        const base64 = commaIdx !== -1 ? dataUrl.slice(commaIdx + 1) : dataUrl;
-        const mediaType = dataUrl.startsWith('data:') ? dataUrl.slice(5, dataUrl.indexOf(';')) : 'image/png';
-        return { type: 'image' as const, mediaType, base64 };
-      }
-      return { type: 'text' as const, text: part.text };
-    });
-    return { role: msg.role, content: parts };
-  });
+  return messages
+    .filter((msg): msg is VisionMessage & { role: 'user' | 'assistant' } => msg.role !== 'system')
+    .map((msg) => ({ role: msg.role, content: msg.content.map(toEdgePart) }));
 }
 
 export type OpenAIVisionPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
@@ -56,7 +57,7 @@ export function extractDataUrl(dataUrl: string): { mimeType: string; base64: str
   return { mimeType: 'image/png', base64: dataUrl };
 }
 
-export async function retryOn429<T>(fn: () => Promise<Response>, name: string): Promise<Response> {
+export async function retryOn429<_T>(fn: () => Promise<Response>, name: string): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const res = await fn();

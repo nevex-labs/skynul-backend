@@ -1,9 +1,7 @@
 import { cors } from 'hono/cors';
+import { config } from '../core/config';
 
-const ALLOWED_ORIGINS = (process.env.SKYNUL_ALLOWED_ORIGINS ?? '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
+const ALLOWED_ORIGINS = config.allowedOrigins.map((o) => o.trim()).filter(Boolean);
 
 export const corsMiddleware = cors({
   origin: (origin) => {

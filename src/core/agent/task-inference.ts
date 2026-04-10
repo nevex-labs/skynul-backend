@@ -1,5 +1,5 @@
-import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode, type TaskRunnerId } from '../../types';
 import type { ChatMessage } from '../../types';
+import { TASK_CAPABILITY_IDS, type TaskCapabilityId, type TaskMode, type TaskRunnerId } from '../../types';
 import { deriveRunner } from './task-routing';
 
 export type TaskInferenceInput = {
@@ -35,7 +35,7 @@ function isSimpleMathPrompt(prompt: string): boolean {
   // High-signal phrases for arithmetic questions
   const askMath =
     hasAny(p, ['cuanto es', 'cuanto da', 'decime cuanto', 'dime cuanto', 'calculate', 'calc', 'what is', "what's"]) ||
-    /\b(\d+\s*(\+|\-|\*|x|×|\/|÷)\s*\d+)\b/.test(p);
+    /\b(\d+\s*(\+|-|\*|x|×|\/|÷)\s*\d+)\b/.test(p);
 
   if (!askMath) return false;
 
@@ -43,7 +43,7 @@ function isSimpleMathPrompt(prompt: string): boolean {
   const nonTrivialSignals = [
     'http://',
     'https://',
-    'browser',
+    'web',
     'website',
     'webpage',
     'navigate',
@@ -109,7 +109,7 @@ function isInformationQuestion(prompt: string): boolean {
   const toolSignals = [
     'http://',
     'https://',
-    'browser',
+    'web',
     'website',
     'webpage',
     'navigate',
@@ -234,11 +234,11 @@ function inferCapabilitiesRules(prompt: string): TaskCapabilityId[] {
 function inferModeRules(prompt: string, capabilities: TaskCapabilityId[], attachments?: string[]): TaskMode {
   const p = normalizePrompt(prompt);
 
-  if (isSimpleMathPrompt(prompt)) return 'code';
-  if (isInformationQuestion(prompt)) return 'code';
+  if (isSimpleMathPrompt(prompt)) return 'sandbox';
+  if (isInformationQuestion(prompt)) return 'sandbox';
 
   // If it's explicitly a trading task, we treat it as browser-mode entrypoint (TaskRunner will route to CDP).
-  if (capabilities.some((c) => c.endsWith('.trading'))) return 'browser';
+  if (capabilities.some((c) => c.endsWith('.trading'))) return 'web';
 
   // Strong code signals
   const codeSignals = [
@@ -275,17 +275,17 @@ function inferModeRules(prompt: string, capabilities: TaskCapabilityId[], attach
     'sql',
     'migration',
   ];
-  if (hasAny(p, codeSignals)) return 'code';
+  if (hasAny(p, codeSignals)) return 'sandbox';
 
   // Attachments usually imply code-mode work.
   const att = attachments ?? [];
   if (att.some((a) => /\.(ts|tsx|js|jsx|py|go|java|rb|php|cs|sql|json|yml|yaml|md|toml|env)$/i.test(a))) {
-    return 'code';
+    return 'sandbox';
   }
 
   // If it needs browser, use browser. Otherwise default to code (chat-only/tool-less).
-  if (capabilities.includes('browser.cdp')) return 'browser';
-  return 'code';
+  if (capabilities.includes('browser.cdp')) return 'web';
+  return 'sandbox';
 }
 
 export function inferTaskSetupRules(input: TaskInferenceInput): TaskInferenceResult {
@@ -327,13 +327,13 @@ export async function inferTaskSetupLLM(opts: {
   const sys =
     'You are a task classifier for an autonomous agent backend. ' +
     'Return ONE JSON object ONLY with keys: mode, runner, capabilities, confidence. ' +
-    'mode: "browser" or "code". runner: "browser" | "code" | "cdp". ' +
+    'mode: "web" or "sandbox". runner: "web" | "sandbox" | "cdp" | "orchestrator". ' +
     'capabilities must be an array containing any of: ' +
     `${JSON.stringify([...TASK_CAPABILITY_IDS])}. ` +
     'Rules: ' +
-    '(1) If the user is asking a simple question (facts, explanations, math), use mode="code", capabilities=[]. ' +
+    '(1) If the user is asking a simple question (facts, explanations, math), use mode="sandbox", capabilities=[]. ' +
     '(2) Only include browser.cdp if the user explicitly wants web navigation/search/scraping/download/opening websites. ' +
-    '(3) For trading intents, include the specific *.trading capability and set runner="cdp" (mode can stay "browser"). ' +
+    '(3) For trading intents, include the specific *.trading capability and set runner="cdp" (mode can stay "web"). ' +
     '(4) confidence is a number 0..1.';
 
   const user =
@@ -353,7 +353,7 @@ export async function inferTaskSetupLLM(opts: {
   };
 
   const capabilities = normalizeCapabilities(Array.isArray(parsed.capabilities) ? parsed.capabilities : []);
-  const mode: TaskMode = parsed.mode === 'browser' ? 'browser' : 'code';
+  const mode: TaskMode = parsed.mode === 'web' ? 'web' : 'sandbox';
   const runner: TaskRunnerId = deriveRunner(mode, capabilities);
 
   const confidence =

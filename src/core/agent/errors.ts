@@ -59,52 +59,31 @@ const ERROR_MESSAGES: Record<ErrorCode, { userMessage: string; retryable: boolea
   },
 };
 
+type ErrorPattern = { patterns: string[]; and?: string[]; code: ErrorCode };
+
+const ERROR_PATTERNS: ErrorPattern[] = [
+  { patterns: ['429', 'rate limit', 'usage_limit', 'resets_at'], code: 'RATE_LIMIT' },
+  { patterns: ['401', '403', 'unauthorized', 'invalid api key', 'api key is not set'], code: 'AUTH_FAILURE' },
+  { patterns: ['etimedout', 'econnrefused', 'network', 'fetch failed'], code: 'NETWORK_ERROR' },
+  { patterns: ['timeout', 'timed out'], code: 'TIMEOUT' },
+  { patterns: ['chrome'], and: ['launch', 'cdp', 'executable'], code: 'BROWSER_LAUNCH_FAILED' },
+  { patterns: ['model call error', 'api error', 'completion'], code: 'MODEL_ERROR' },
+  { patterns: ['validation', 'invalid', 'zod'], code: 'VALIDATION_ERROR' },
+  { patterns: ['require is not defined', 'cannot find module'], code: 'TOOL_EXECUTION_FAILED' },
+];
+
+function matchesPattern(lower: string, p: ErrorPattern): boolean {
+  const base = p.patterns.some((t) => lower.includes(t));
+  if (!base) return false;
+  if (p.and) return p.and.some((t) => lower.includes(t));
+  return true;
+}
+
 function classifyError(error: string | Error): { code: ErrorCode; details?: string } {
   const msg = error instanceof Error ? error.message : error;
   const lower = msg.toLowerCase();
-
-  if (
-    lower.includes('429') ||
-    lower.includes('rate limit') ||
-    lower.includes('usage_limit') ||
-    lower.includes('resets_at')
-  ) {
-    return { code: 'RATE_LIMIT', details: msg };
-  }
-  if (
-    lower.includes('401') ||
-    lower.includes('403') ||
-    lower.includes('unauthorized') ||
-    lower.includes('invalid api key') ||
-    lower.includes('api key is not set')
-  ) {
-    return { code: 'AUTH_FAILURE', details: msg };
-  }
-  if (
-    lower.includes('etimedout') ||
-    lower.includes('econnrefused') ||
-    lower.includes('network') ||
-    lower.includes('fetch failed')
-  ) {
-    return { code: 'NETWORK_ERROR', details: msg };
-  }
-  if (lower.includes('timeout') || lower.includes('timed out')) {
-    return { code: 'TIMEOUT', details: msg };
-  }
-  if (lower.includes('chrome') && (lower.includes('launch') || lower.includes('cdp') || lower.includes('executable'))) {
-    return { code: 'BROWSER_LAUNCH_FAILED', details: msg };
-  }
-  if (lower.includes('model call error') || lower.includes('api error') || lower.includes('completion')) {
-    return { code: 'MODEL_ERROR', details: msg };
-  }
-  if (lower.includes('validation') || lower.includes('invalid') || lower.includes('zod')) {
-    return { code: 'VALIDATION_ERROR', details: msg };
-  }
-  if (lower.includes('require is not defined') || lower.includes('cannot find module')) {
-    return { code: 'TOOL_EXECUTION_FAILED', details: msg };
-  }
-
-  return { code: 'UNKNOWN', details: msg };
+  const match = ERROR_PATTERNS.find((p) => matchesPattern(lower, p));
+  return { code: match?.code ?? 'UNKNOWN', details: msg };
 }
 
 export function formatError(error: string | Error): FormattedError {

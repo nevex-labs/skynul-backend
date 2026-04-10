@@ -1,9 +1,9 @@
-import { dirname, join } from 'path';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir } from 'fs/promises';
+import { join } from 'path';
 import WAWebJS from 'whatsapp-web.js';
+import { readChannelConfigState, writeChannelConfigState } from '../../services/channel-config-runtime';
 import type { ChannelId, ChannelSettings } from '../../types';
 import type { TaskManager } from '../agent/task-manager';
-import { getDataDir } from '../config';
 import { Channel } from './channel';
 import { handleCommand } from './command-router';
 
@@ -38,7 +38,7 @@ export class WhatsAppChannel extends Channel {
     this.state = await this.loadState();
     if (!this.state.enabled) return;
 
-    const sessionPath = join(getDataDir(), 'channels', 'whatsapp-session');
+    const sessionPath = join('/tmp/skynul-whatsapp');
     await mkdir(sessionPath, { recursive: true });
 
     this.client = new Client({
@@ -158,62 +158,57 @@ export class WhatsAppChannel extends Channel {
     await this.client.sendMessage(this.state.pairedChatId, text);
   }
 
+  private async routeWhatsAppCommand(result: { handled: boolean; text: string }, chatId: string): Promise<boolean> {
+    if (!result.handled) return false;
+    if (result.text === '__UNPAIR__') {
+      await this.unpair();
+      await this.client?.sendMessage(chatId, 'Desvinculado.');
+    } else {
+      await this.client?.sendMessage(chatId, result.text);
+    }
+    return true;
+  }
+
   private async handleIncoming(msg: WAWebJS.Message): Promise<void> {
     if (msg.fromMe) return;
     const chatId = msg.from;
     const body = msg.body?.trim();
     if (!body) return;
 
-    // First message pairs the chat
     if (!this.state.pairedChatId) {
       this.state.pairedChatId = chatId;
       this.state.paired = true;
       await this.saveState();
-      await this.client!.sendMessage(chatId, '\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
+      await this.client?.sendMessage(chatId, '\u2705 Vinculado! Mandame un mensaje para crear una tarea.');
       return;
     }
 
-    // Only respond to paired chat
     if (chatId !== this.state.pairedChatId) return;
 
     const result = await handleCommand(body, this.taskManager);
-    if (result.handled) {
-      if (result.text === '__UNPAIR__') {
-        await this.unpair();
-        await this.client!.sendMessage(chatId, 'Desvinculado.');
-      } else {
-        await this.client!.sendMessage(chatId, result.text);
-      }
-      return;
-    }
+    if (await this.routeWhatsAppCommand(result, chatId)) return;
 
-    // Any other text = create task
     try {
       await this.createTaskFromMessage(body);
     } catch (e) {
-      await this.client!.sendMessage(
+      await this.client?.sendMessage(
         chatId,
         `No se pudo crear la tarea: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
 
-  private settingsPath(): string {
-    return join(getDataDir(), 'channels', 'whatsapp.json');
-  }
-
   private async loadState(): Promise<WhatsAppState> {
     try {
-      const raw = await readFile(this.settingsPath(), 'utf8');
-      return { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULT_STATE };
-    }
+      const raw = await readChannelConfigState(this.id);
+      if (raw !== null) {
+        return { ...DEFAULT_STATE, ...(raw as Partial<WhatsAppState>) };
+      }
+    } catch {}
+    return { ...DEFAULT_STATE };
   }
 
   private async saveState(): Promise<void> {
-    const file = this.settingsPath();
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(this.state, null, 2), 'utf8');
+    await writeChannelConfigState(this.id, { ...this.state });
   }
 }
