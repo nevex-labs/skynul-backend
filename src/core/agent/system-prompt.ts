@@ -967,11 +967,14 @@ export function buildBrowserSystemPrompt(isSubagent = false, compact = false, pa
 {"thought":"...", "action":{"type":"upload_file","selector":"input[type=\\"file\\"]","filePaths":["/tmp/img.png"]}}
 {"thought":"...", "action":{"type":"evaluate","script":"document.title"}}
 {"thought":"...", "action":{"type":"wait","ms":1500}}
+{"thought":"...", "action":{"type":"keyboard_type","text":"hello world"}}
+{"thought":"...", "action":{"type":"shell","command":"echo hello"}}
 {"thought":"...", "action":{"type":"batch","actions":[{"type":"click","selector":"e5"},{"type":"evaluate","script":"document.title"},{"type":"pressKey","key":"Escape"}]}}
 {"thought":"...", "action":{"type":"done","summary":"..."}}
 {"thought":"...", "action":{"type":"fail","reason":"..."}}
 
 ## SELECTORS: Prefer element-refs (e5, e12). Fallback: [data-testid="..."] > [aria-label="..."] > CSS.
+## GOOGLE SHEETS: Use keyboard_type (NOT type/evaluate) to enter cell data. Tab=next column, Enter=next row. Batch one row at a time.
 ## GOOGLE MAPS: NEVER click map pins (canvas). Aliases: "GMAPS_LIST" extracts results, "GMAPS_SCROLL" scrolls feed, "GMAPS_DETAIL" reads website/phone from detail. Check each business with batch: {"type":"batch","actions":[{"type":"click","selector":"REF"},{"type":"evaluate","script":"GMAPS_DETAIL"},{"type":"pressKey","key":"Escape"}]}. Stop when enough. If user gives direct instruction, OBEY IMMEDIATELY.
 ${getInterTaskBlockCompact()}
 Memory: {"type":"remember_fact","fact":"..."} / {"type":"forget_fact","factId":3}
@@ -1022,9 +1025,15 @@ The snapshot uses an accessibility-tree format. Interactive elements appear with
 ### Run JavaScript in the page:
 {"thought": "Get page text", "action": {"type": "evaluate", "script": "document.title"}}
 
+### Type into focused element (for canvas UIs like Google Sheets):
+{"thought": "Enter business name in cell", "action": {"type": "keyboard_type", "text": "PETROMARK"}}
+
+### Shell command:
+{"thought": "Save data to file", "action": {"type": "shell", "command": "echo 'hello' > /tmp/data.txt"}}
+
 ### Batch (run multiple browser actions in ONE step — max 10):
 {"thought": "Check this business for website", "action": {"type": "batch", "actions": [{"type": "click", "selector": "e5"}, {"type": "evaluate", "script": "document.title"}, {"type": "pressKey", "key": "Escape"}]}}
-Only browser primitives allowed inside batch: click, type, pressKey, evaluate, navigate, scroll.
+Only browser primitives allowed inside batch: click, type, pressKey, keyboard_type, evaluate, navigate, scroll.
 
 ### Done:
 {"thought": "Task complete", "action": {"type": "done", "summary": "Posted to X: https://x.com/user/status/123"}}
@@ -1053,10 +1062,29 @@ If the iframe is cross-origin (Google Docs, Sheets, Notion, Canva, etc.):
 If the iframe is same-origin:
 - evaluate, click, and type all work normally with frameId.
 
-## GOOGLE DOCS / SHEETS:
+## GOOGLE DOCS:
 1. Navigate to docs.google.com/document/create
 2. To rename: click the title input aria-ref, type the name, press Enter.
 3. To write content: press Tab to enter the editor body, then type with aria-ref.
+
+## GOOGLE SHEETS:
+Google Sheets uses a CANVAS grid — standard type() on cell selectors will NOT work. Use keyboard_type instead:
+1. Navigate to docs.google.com/spreadsheets/create
+2. To rename: click the title "Untitled spreadsheet" aria-ref, type the name, press Enter.
+3. Cell A1 is already focused. Use keyboard_type to enter text into the active cell:
+   {"type": "keyboard_type", "text": "Header1"}
+4. Press Tab to move to the next column, Enter to move to the next row.
+5. Fill one row per batch action:
+   {"type": "batch", "actions": [
+     {"type": "keyboard_type", "text": "Name"},
+     {"type": "pressKey", "key": "Tab"},
+     {"type": "keyboard_type", "text": "Phone"},
+     {"type": "pressKey", "key": "Tab"},
+     {"type": "keyboard_type", "text": "Address"},
+     {"type": "pressKey", "key": "Enter"}
+   ]}
+6. NEVER use evaluate to set cell values — it does NOT work in Sheets.
+7. After filling all data, include the sheet URL in your done summary.
 
 ## SOCIAL MEDIA POSTING:
 When asked to post on X/Twitter, Facebook, Instagram, Reddit, or any site:
@@ -1090,15 +1118,25 @@ Website info is ONLY in the detail panel. Use BATCH to check each in ONE step:
   {"type": "evaluate", "script": "GMAPS_DETAIL"},
   {"type": "pressKey", "key": "Escape"}
 ]}
-Each batch = ONE business in ONE step. STOP when you have enough results.
+Each batch = ONE business in ONE step.
+IMPORTANT: In your "thought", keep a running list like "Collected so far: 1.Name, 2.Name, 3.Name (3/10 needed)". This prevents re-checking businesses you already checked.
 
-### Phase 3 — Create the output
-Once you have enough data, IMMEDIATELY navigate to create the spreadsheet/document.
+### Phase 3 — Save data & create spreadsheet
+Once you have enough data:
+1. FIRST save collected data to a temp file so you don't lose it when navigating away from Maps:
+   {"type": "shell", "command": "cat > /tmp/gmaps_data.json << 'JSONEOF'\n[{\"name\":\"Business1\",\"phone\":\"123\",\"address\":\"addr1\"},{\"name\":\"Business2\",\"phone\":\"456\",\"address\":\"addr2\"}]\nJSONEOF"}
+2. THEN navigate to docs.google.com/spreadsheets/create
+3. Read the data back when filling the sheet: {"type": "shell", "command": "cat /tmp/gmaps_data.json"}
+- If GMAPS_LIST returns [] twice in a row, there are NO more results. Go to Phase 3 with what you have.
+- If you have checked 15+ businesses total, go to Phase 3 with what you have, even if short of the target.
 
 ### CRITICAL RULES:
 - NEVER use async evaluate that clicks and navigates — it CRASHES.
 - NEVER repeat the same evaluate. If you got data, MOVE ON.
-- Keep a running count. Hit the target → Phase 3.
+- To see more results, use GMAPS_SCROLL then GMAPS_LIST. NEVER type a new search query to re-search the same area.
+- STEP BUDGET: You have ~40 steps total. Extract list (5 steps), check results (1 step each via batch), create spreadsheet (10 steps). Plan accordingly — do NOT exceed budget.
+- "No website" means no PROPER website. Facebook, Instagram, and social media pages do NOT count as having a website. A business with only a Facebook page = NO website.
+- The moment you hit the target number of results, STOP checking and go to Phase 3 IMMEDIATELY.
 - If the user gives a DIRECT INSTRUCTION, OBEY IMMEDIATELY.
 
 ## DOWNLOADING IMAGES FROM CHATGPT:

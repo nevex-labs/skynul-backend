@@ -14,6 +14,7 @@ import {
   executeInterTaskAction,
   executeMemoryAction,
   executeSetIdentity,
+  executeShell,
   resolveAttachments,
 } from '../action-executors';
 import { AppBridge } from '../app-bridge';
@@ -280,6 +281,17 @@ export async function executeBrowserAction(
       const res = executeSetIdentity(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
     }
+    case 'shell': {
+      const res = await executeShell(raw.command as string, raw.cwd as string | undefined, raw.timeout as number | undefined);
+      return res.ok ? res.value : `[Error: ${res.error}]`;
+    }
+    case 'keyboard_type': {
+      // Type text into the currently focused element using keyboard (works for Google Sheets canvas)
+      const text = String(raw.text ?? '');
+      if (!text) return '[keyboard_type] No text provided';
+      await engine.keyboardType(text);
+      return undefined;
+    }
     case 'generate_image': {
       const res = await executeGenerateImage(ctx, action as any);
       return res.ok ? res.value : `[Error: ${res.error}]`;
@@ -298,7 +310,7 @@ export async function executeBrowserAction(
         const sub = batchActions[i];
         const subType = String(sub.type ?? '');
         // Only allow safe browser primitives inside batch
-        const ALLOWED = new Set(['click', 'type', 'pressKey', 'key', 'evaluate', 'navigate', 'scroll', 'scrollIntoView', 'upload_file']);
+        const ALLOWED = new Set(['click', 'type', 'pressKey', 'key', 'evaluate', 'navigate', 'scroll', 'scrollIntoView', 'upload_file', 'keyboard_type']);
         if (!ALLOWED.has(subType)) {
           results.push(`[${i}] Skipped: ${subType} not allowed in batch`);
           continue;

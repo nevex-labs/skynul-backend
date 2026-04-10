@@ -235,7 +235,18 @@ export class PlaywrightBridge {
   }
 
   async pressKey(key: string): Promise<void> {
-    await this.page.keyboard.press(key);
+    // Normalize common key aliases that Playwright doesn't accept
+    const normalized = key
+      .replace(/\bCtrl\b/g, 'Control')
+      .replace(/\bCmd\b/g, 'Meta')
+      .replace(/\bOpt\b/g, 'Alt')
+      .replace(/\bReturn\b/g, 'Enter')
+      .replace(/\bDel\b/g, 'Delete');
+    await this.page.keyboard.press(normalized);
+  }
+
+  async keyboardType(text: string): Promise<void> {
+    await this.page.keyboard.type(text, { delay: 10 });
   }
 
   async evaluate(script: string, frameId?: string): Promise<string> {

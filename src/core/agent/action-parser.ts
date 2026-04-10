@@ -260,6 +260,12 @@ const VALID_ACTION_TYPES = new Set([
   'set_identity',
   // Image generation
   'generate_image',
+  // Batch browser actions
+  'batch',
+  // Keyboard type (for canvas-based UIs like Google Sheets)
+  'keyboard_type',
+  // Shell (in browser mode)
+  'shell',
 ]);
 
 function validateResponse(obj: unknown, state: ParserState): ModelResponse {

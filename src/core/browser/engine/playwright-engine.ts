@@ -31,6 +31,10 @@ class PlaywrightBrowserEngine implements BrowserEngine {
     await this.bridge.pressKey(key);
   };
 
+  keyboardType = async (text: string): Promise<void> => {
+    await this.bridge.keyboardType(text);
+  };
+
   evaluate = async (script: string, frameId?: string): Promise<string> => {
     return this.bridge.evaluate(script, frameId);
   };
