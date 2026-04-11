@@ -296,7 +296,11 @@ export async function executeBrowserAction(
   }
   if (type === 'shell') {
     const { executeShell } = await import('../action-executors');
-    const res = await executeShell(raw.command as string, raw.cwd as string | undefined, raw.timeout as number | undefined);
+    const res = await executeShell(
+      raw.command as string,
+      raw.cwd as string | undefined,
+      raw.timeout as number | undefined
+    );
     return res.ok ? res.value : `[Error: ${res.error}]`;
   }
   if (type === 'keyboard_type') {
