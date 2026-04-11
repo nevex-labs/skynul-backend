@@ -17,7 +17,7 @@ import {
 import { buildActionLog } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
-import { FACT_ACTIONS, INTER_TASK_ACTIONS, MEMORY_ACTIONS, sleep, unwrap } from './shared';
+import { FACT_ACTIONS, INTER_TASK_ACTIONS, MEMORY_ACTIONS, unwrap } from './shared';
 
 export type BrowserLoopSetup = {
   deps: {
@@ -165,37 +165,8 @@ async function autoDelegateForSocialPost(
   });
 }
 
-const IMAGE_GEN_SITES = [
-  { keywords: ['pollinations'], domains: ['pollinations.ai'] },
-  { keywords: ['bing image', 'bing create'], domains: ['bing.com/images/create', 'bing.com/create'] },
-  { keywords: ['craiyon'], domains: ['craiyon.com'] },
-  { keywords: ['nightcafe'], domains: ['nightcafe.studio'] },
-  { keywords: ['leonardo'], domains: ['leonardo.ai'] },
-  { keywords: ['ideogram'], domains: ['ideogram.ai'] },
-  { keywords: ['firefly'], domains: ['adobe.com/firefly'] },
-  { keywords: ['dream.ai'], domains: ['dream.ai'] },
-];
-
 function resolveKeyCombo(raw: Record<string, unknown>): string {
   return (raw.key as string) || (raw.combo as string);
-}
-
-function isBlockedImageSite(url: string, prompt: string): boolean {
-  const lower = prompt.toLowerCase();
-  const matched = IMAGE_GEN_SITES.find((s) => s.domains.some((d) => url.includes(d)));
-  return !!(matched && !matched.keywords.some((k) => lower.includes(k)));
-}
-
-async function handleBrowserNavigate(
-  engine: BrowserEngine,
-  navUrl: string,
-  prompt: string
-): Promise<string | undefined> {
-  if (isBlockedImageSite(navUrl, prompt))
-    return '[BLOCKED] Do not navigate to image generation websites. Use the generate_image action instead.';
-  await engine.navigate(navUrl);
-  await sleep(1500);
-  return undefined;
 }
 
 async function handleBrowserUploadFile(
@@ -267,34 +238,55 @@ export async function executeBrowserAction(
   ctx: ExecutorContext
 ): Promise<string | undefined> {
   const raw = action as Record<string, unknown>;
-  const type = raw.type as string;
   const frameId = raw.frameId as string | undefined;
-  if (type === 'navigate') return handleBrowserNavigate(engine, String(raw.url ?? ''), ctx.task.prompt);
-  if (type === 'click') {
+
+  const handler = ACTION_HANDLERS[raw.type as string as keyof typeof ACTION_HANDLERS];
+  if (handler) return handler(engine, raw, frameId, action, ctx);
+
+  const sys = await handleBrowserSystemAction(engine, action, ctx, raw, frameId, raw.type as string);
+  if (sys !== undefined) return sys;
+  return handleBrowserAgentAction(action, ctx, raw.type as string);
+}
+
+type BrowserActionHandler = (
+  engine: BrowserEngine,
+  raw: Record<string, unknown>,
+  frameId: string | undefined,
+  action: TaskAction,
+  ctx: ExecutorContext
+) => Promise<string | undefined>;
+
+const ACTION_HANDLERS: Record<string, BrowserActionHandler> = {
+  navigate: async (engine, raw) => {
+    // caller handles navigate result
+    await engine.navigate(String(raw.url ?? ''));
+    return undefined;
+  },
+  click: async (engine, raw, frameId) => {
     await engine.click(raw.selector as string, frameId);
     return undefined;
-  }
-  if (type === 'type') {
+  },
+  type: async (engine, raw, frameId) => {
     await engine.type(raw.selector as string, raw.text as string, frameId);
     return undefined;
-  }
-  if (type === 'pressKey') {
+  },
+  pressKey: async (engine, raw) => {
     await engine.pressKey(raw.key as string);
     return undefined;
-  }
-  if (type === 'key') {
+  },
+  key: async (engine, raw) => {
     await engine.pressKey(resolveKeyCombo(raw));
     return undefined;
-  }
-  if (type === 'evaluate') {
+  },
+  evaluate: async (engine, raw, frameId) => {
     const result = await engine.evaluate(raw.script as string, frameId);
     return result || undefined;
-  }
-  if (type === 'upload_file') {
+  },
+  upload_file: async (engine, raw, frameId) => {
     await handleBrowserUploadFile(engine, raw, frameId);
     return undefined;
-  }
-  if (type === 'shell') {
+  },
+  shell: async (_engine, raw) => {
     const { executeShell } = await import('../action-executors');
     const res = await executeShell(
       raw.command as string,
@@ -302,18 +294,15 @@ export async function executeBrowserAction(
       raw.timeout as number | undefined
     );
     return res.ok ? res.value : `[Error: ${res.error}]`;
-  }
-  if (type === 'keyboard_type') {
+  },
+  keyboard_type: async (engine, raw) => {
     const text = String(raw.text ?? '');
     if (!text) return '[keyboard_type] No text provided';
     await engine.keyboardType(text);
     return undefined;
-  }
-  if (type === 'scrollIntoView') {
+  },
+  scrollIntoView: async (engine, raw, frameId) => {
     await engine.evaluate(`document.querySelector('${raw.selector}')?.scrollIntoView({behavior:'smooth'})`, frameId);
     return undefined;
-  }
-  const sys = await handleBrowserSystemAction(engine, action, ctx, raw, frameId, type);
-  if (sys !== undefined) return sys;
-  return handleBrowserAgentAction(action, ctx, type);
-}
+  },
+};
