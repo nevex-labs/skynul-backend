@@ -9,7 +9,7 @@ import type { ChatMessage } from '../../types';
 import { createChatProvider } from './base-chat';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
-const DEFAULT_MODEL = 'qwen3.5:27b';
+const DEFAULT_MODEL = 'qwen2.5:7b';
 
 export const ollamaRespond = createChatProvider({
   name: 'Ollama',

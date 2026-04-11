@@ -42,7 +42,8 @@ const ERROR_MESSAGES: Record<ErrorCode, { userMessage: string; retryable: boolea
     retryable: true,
   },
   TIMEOUT: {
-    userMessage: 'La operación tardó demasiado. Intentá de nuevo.',
+    userMessage:
+      'El modelo de IA tardó demasiado en responder. Si ollama está cargando el modelo, puede tardar ~30s en la primera consulta.',
     retryable: true,
   },
   BROWSER_LAUNCH_FAILED: {
@@ -65,11 +66,12 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   { patterns: ['429', 'rate limit', 'usage_limit', 'resets_at'], code: 'RATE_LIMIT' },
   { patterns: ['401', '403', 'unauthorized', 'invalid api key', 'api key is not set'], code: 'AUTH_FAILURE' },
   { patterns: ['etimedout', 'econnrefused', 'network', 'fetch failed'], code: 'NETWORK_ERROR' },
-  { patterns: ['timeout', 'timed out'], code: 'TIMEOUT' },
+  { patterns: ['request timed out', 'timed out', 'timeout'], code: 'TIMEOUT' },
   { patterns: ['chrome'], and: ['launch', 'cdp', 'executable'], code: 'BROWSER_LAUNCH_FAILED' },
   { patterns: ['model call error', 'api error', 'completion'], code: 'MODEL_ERROR' },
   { patterns: ['validation', 'invalid', 'zod'], code: 'VALIDATION_ERROR' },
   { patterns: ['require is not defined', 'cannot find module'], code: 'TOOL_EXECUTION_FAILED' },
+  { patterns: ['vision error', 'empty response', 'not found'], code: 'MODEL_ERROR' },
 ];
 
 function matchesPattern(lower: string, p: ErrorPattern): boolean {
@@ -97,6 +99,14 @@ export function formatError(error: string | Error): FormattedError {
     isRetryable: config.retryable,
     details,
   };
+}
+
+/** Format an error for display as "[CODE] userMessage — raw details". */
+export function formatErrorMessage(e: unknown): string {
+  const formatted = formatError(e instanceof Error ? e.message : String(e));
+  return formatted.details
+    ? `[${formatted.code}] ${formatted.userMessage} — ${formatted.details}`
+    : `[${formatted.code}] ${formatted.userMessage}`;
 }
 
 export function formatStepError(error: string | undefined): Pick<TaskStep, 'error'> {

@@ -311,12 +311,11 @@ export class PlaywrightBridge {
 
   async evaluate(script: string, frameId?: string): Promise<string> {
     const frame = this.resolveFrame(frameId);
-    // Wrap scripts containing `return` in an IIFE so they work with eval
+    // Playwright's evaluate() accepts a string expression and runs it in
+    // the page context via Function constructor (not eval). The scripts
+    // originate from the AI model — the trust boundary is the model itself.
     const expr = /^\s*return\s/m.test(script) ? `(function(){${script}})()` : script;
-    const val = await frame.evaluate((code) => {
-      // eslint-disable-next-line no-eval
-      return eval(code);
-    }, expr);
+    const val = await frame.evaluate(expr);
     return typeof val === 'string' ? val : JSON.stringify(val);
   }
 

@@ -13,6 +13,7 @@ import {
 } from '../action-executors';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
+import { FACT_ACTIONS, MEMORY_ACTIONS, unwrap } from './shared';
 
 export type OrchestratorLoopSetup = {
   deps: {
@@ -98,13 +99,7 @@ export function setupOrchestratorLoop(setup: OrchestratorLoopSetup): {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-function unwrap(res: { ok: boolean; value?: string; error?: string }): string {
-  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
-}
-
 const ORCH_INTER_TASK = new Set(['task_list_peers', 'task_read', 'task_message']);
-const ORCH_FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
-const ORCH_MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
 
 async function handleTaskSpawn(
   ctx: ExecutorContext,
@@ -145,9 +140,9 @@ export async function executeOrchestratorAction(ctx: ExecutorContext, action: Ta
   }
   if (ORCH_INTER_TASK.has(action.type))
     return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
-  if (ORCH_FACT_ACTIONS.has(action.type))
+  if (FACT_ACTIONS.has(action.type))
     return unwrap(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
-  if (ORCH_MEMORY_ACTIONS.has(action.type))
+  if (MEMORY_ACTIONS.has(action.type))
     return unwrap(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
   return `[Error: action type "${(action as any).type}" is not supported in orchestrator mode]`;
 }

@@ -20,6 +20,15 @@ import {
 } from '../action-executors';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
+import {
+  FACT_ACTIONS,
+  FILE_ACTIONS,
+  INTER_TASK_ACTIONS,
+  MEMORY_ACTIONS,
+  sleep,
+  TRADING_DISABLED_ACTIONS,
+  unwrap,
+} from './shared';
 
 function describeCodeStep(s: TaskStep, resultLimit: number): string {
   const a = s.action as Record<string, unknown>;
@@ -98,23 +107,6 @@ export function setupCodeLoop(setup: CodeLoopSetup): {
   return { systemPrompt, systemPromptCompact, history, callbacks };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function unwrap(res: { ok: boolean; value?: string; error?: string }): string {
-  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
-}
-
-const CODE_INTER_TASK_ACTIONS = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
-const CODE_FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
-const CODE_MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
-const CODE_TRADING_DISABLED = new Set([
-  'polymarket_get_account_summary',
-  'polymarket_get_trader_leaderboard',
-  'polymarket_search_markets',
-  'polymarket_place_order',
-  'polymarket_close_position',
-]);
-
 async function execFileAction(action: TaskAction, raw: Record<string, unknown>): Promise<string | undefined> {
   if (action.type === 'file_read')
     return unwrap(
@@ -155,7 +147,7 @@ async function execExcelAction(raw: Record<string, unknown>, state: { lastScrape
   }
 }
 
-const CODE_FILE_ACTIONS = new Set(['file_read', 'file_write', 'file_edit', 'file_list']);
+const CODE_FILE_ACTIONS = FILE_ACTIONS;
 
 async function handleCodeSetIdentity(action: TaskAction, ctx: ExecutorContext): Promise<string> {
   const a = action as any;
@@ -231,12 +223,12 @@ export async function executeCodeAction(
   state: { lastScrapeData: string }
 ): Promise<string | undefined> {
   const raw = action as Record<string, unknown>;
-  if (CODE_TRADING_DISABLED.has(action.type)) return '[Trading disabled]';
-  if (CODE_INTER_TASK_ACTIONS.has(action.type))
+  if (TRADING_DISABLED_ACTIONS.has(action.type)) return '[Trading disabled]';
+  if (INTER_TASK_ACTIONS.has(action.type))
     return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
-  if (CODE_FACT_ACTIONS.has(action.type))
+  if (FACT_ACTIONS.has(action.type))
     return unwrap(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
-  if (CODE_MEMORY_ACTIONS.has(action.type))
+  if (MEMORY_ACTIONS.has(action.type))
     return unwrap(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
   if (CODE_FILE_ACTIONS.has(action.type)) return execFileAction(action, raw);
   const misc = await handleCodeMiscAction(action, ctx, state, raw);

@@ -14,6 +14,7 @@ import {
 import { buildActionLog, drainInbox } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
+import { FACT_ACTIONS, INTER_TASK_ACTIONS, MEMORY_ACTIONS, sleep, TRADING_DISABLED_ACTIONS, unwrap } from './shared';
 
 export type CdpLoopSetup = {
   deps: {
@@ -98,19 +99,8 @@ export function setupCdpLoop(setup: CdpLoopSetup): {
   return { systemPrompt, systemPromptCompact, history, callbacks };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Execute an API-only action (Polymarket, inter-task, etc). */
-function unwrap(res: { ok: boolean; value?: string; error?: string }): string {
-  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
-}
-
-const TRADING_DISABLED_ACTIONS = new Set([
-  'polymarket_get_account_summary',
-  'polymarket_get_trader_leaderboard',
-  'polymarket_search_markets',
-  'polymarket_place_order',
-  'polymarket_close_position',
+const CDP_DISABLED_ACTIONS = new Set([
+  ...TRADING_DISABLED_ACTIONS,
   'chain_get_balance',
   'chain_get_token_balance',
   'chain_send_token',
@@ -123,10 +113,6 @@ const TRADING_DISABLED_ACTIONS = new Set([
   'cex_get_positions',
   'cex_withdraw',
 ]);
-
-const INTER_TASK_ACTIONS = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
-const FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
-const MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
 
 async function executeIdentityAction(
   action: Extract<TaskAction, { type: 'set_identity' }>,
@@ -164,7 +150,7 @@ async function executeMonitorPosition(
 export async function executeApiOnlyAction(action: TaskAction, ctx: ExecutorContext): Promise<string | undefined> {
   const raw = action as Record<string, unknown>;
 
-  if (TRADING_DISABLED_ACTIONS.has(action.type)) return '[Trading disabled]';
+  if (CDP_DISABLED_ACTIONS.has(action.type)) return '[Trading disabled]';
 
   if (INTER_TASK_ACTIONS.has(action.type))
     return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));

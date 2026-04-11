@@ -17,6 +17,7 @@ import {
 import { buildActionLog } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 import type { LoopCallbacks } from './agent-loop';
+import { FACT_ACTIONS, INTER_TASK_ACTIONS, MEMORY_ACTIONS, sleep, unwrap } from './shared';
 
 export type BrowserLoopSetup = {
   deps: {
@@ -164,8 +165,6 @@ async function autoDelegateForSocialPost(
   });
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const IMAGE_GEN_SITES = [
   { keywords: ['pollinations'], domains: ['pollinations.ai'] },
   { keywords: ['bing image', 'bing create'], domains: ['bing.com/images/create', 'bing.com/create'] },
@@ -176,14 +175,6 @@ const IMAGE_GEN_SITES = [
   { keywords: ['firefly'], domains: ['adobe.com/firefly'] },
   { keywords: ['dream.ai'], domains: ['dream.ai'] },
 ];
-
-const BROWSER_INTER_TASK = new Set(['task_list_peers', 'task_send', 'task_read', 'task_message']);
-const BROWSER_FACT_ACTIONS = new Set(['remember_fact', 'forget_fact']);
-const BROWSER_MEMORY_ACTIONS = new Set(['memory_save', 'memory_search', 'memory_context']);
-
-function unwrapRes(res: { ok: boolean; value?: string; error?: string }): string {
-  return res.ok ? (res.value ?? '') : `[Error: ${res.error}]`;
-}
 
 function resolveKeyCombo(raw: Record<string, unknown>): string {
   return (raw.key as string) || (raw.combo as string);
@@ -257,15 +248,15 @@ async function handleBrowserSystemAction(
 }
 
 async function handleBrowserAgentAction(action: TaskAction, ctx: ExecutorContext, type: string): Promise<string> {
-  if (BROWSER_INTER_TASK.has(type))
-    return unwrapRes(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
-  if (BROWSER_FACT_ACTIONS.has(type))
-    return unwrapRes(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
-  if (BROWSER_MEMORY_ACTIONS.has(type))
-    return unwrapRes(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
+  if (INTER_TASK_ACTIONS.has(type))
+    return unwrap(await executeInterTaskAction(ctx, action as Parameters<typeof executeInterTaskAction>[1]));
+  if (FACT_ACTIONS.has(type))
+    return unwrap(await executeFactAction(ctx, action as Parameters<typeof executeFactAction>[1]));
+  if (MEMORY_ACTIONS.has(type))
+    return unwrap(await executeMemoryAction(ctx, action as Parameters<typeof executeMemoryAction>[1]));
   if (type === 'set_identity') return handleBrowserIdentity(action, ctx);
   if (type === 'generate_image')
-    return unwrapRes(await executeImageAction(ctx, action as Parameters<typeof executeImageAction>[1]));
+    return unwrap(await executeImageAction(ctx, action as Parameters<typeof executeImageAction>[1]));
   throw new Error(`Unknown action type: ${action.type}`);
 }
 

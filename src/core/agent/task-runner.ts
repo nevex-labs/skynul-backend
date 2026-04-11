@@ -14,6 +14,7 @@ import { executeBrowserAction, setupBrowserLoop } from './loops/browser-loop';
 import { executeApiOnlyAction, setupCdpLoop } from './loops/cdp-loop';
 import { executeCodeAction, setupCodeLoop } from './loops/code-loop';
 import { executeOrchestratorAction, setupOrchestratorLoop } from './loops/orchestrator-loop';
+import type { TaskManager } from './task-manager';
 import { deriveRunner } from './task-routing';
 
 export type TaskRunnerCallbacks = {
@@ -24,7 +25,7 @@ export type TaskRunnerOpts = {
   provider: ProviderId;
   model: string;
   memoryContext?: string;
-  taskManager?: import('./task-manager').TaskManager | null;
+  taskManager?: TaskManager | null;
   taskId?: string;
   paperMode?: boolean;
 };
@@ -67,6 +68,7 @@ export class TaskRunner {
   }
 
   private async runOrchestrator(): Promise<Task> {
+    console.log('[runner] starting orchestrator');
     const deps = {
       task: this.task,
       memoryContext: this.opts.memoryContext,
@@ -192,6 +194,7 @@ export class TaskRunner {
   }
 
   private async runCode(): Promise<Task> {
+    console.log('[runner] starting code mode, provider=', this.opts.provider, 'model=', this.opts.model);
     const deps = {
       task: this.task,
       memoryContext: this.opts.memoryContext,

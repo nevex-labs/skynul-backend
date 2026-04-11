@@ -9,7 +9,7 @@ import type { ProviderId, Task, TaskAction, TaskStep, VisionMessage } from '../.
 import { callVision } from '../../providers/vision-dispatch';
 import { type ParserState, parseModelResponse } from '../action-parser';
 import { computeBudget } from '../context-budget';
-import { formatError } from '../errors';
+import { formatErrorMessage } from '../errors';
 import { compressHistory, drainInbox, summarizeHistory, truncateHistory } from '../history-manager';
 import type { TaskManager } from '../task-manager';
 
@@ -104,15 +104,17 @@ async function callLLM(
   const activeSystemPrompt = systemPromptCompact && budget.applyLevel2 ? systemPromptCompact : systemPrompt;
 
   try {
+    console.log(`[loop:callLLM] provider=${provider} model=${model} historyLen=${history.length}`);
     const result = await callVision(provider, activeSystemPrompt, history, task.id, model);
+    console.log(`[loop:callLLM] response received, ${result.text.length} chars`);
     return { rawResponse: result.text, usage: result.usage };
   } catch (e) {
+    console.error('[loop:callLLM] error:', e instanceof Error ? e.message : String(e));
     if (callbacks.isAborted()) {
       finish(task, 'cancelled', callbacks, task.error);
       return null;
     }
-    const formatted = formatError(e instanceof Error ? e.message : String(e));
-    finish(task, 'failed', callbacks, `[${formatted.code}] ${formatted.userMessage}`);
+    finish(task, 'failed', callbacks, formatErrorMessage(e));
     return null;
   }
 }
@@ -127,8 +129,9 @@ async function executeStep(ctx: LoopContext, action: TaskAction): Promise<{ resu
     const result = await callbacks.executeAction?.(action);
     return { result };
   } catch (e) {
-    const formatted = formatError(e instanceof Error ? e.message : String(e));
-    return { error: formatted.userMessage };
+    const rawMsg = e instanceof Error ? e.message : String(e);
+    console.error('[loop:executeStep] action error:', rawMsg);
+    return { error: formatErrorMessage(e) };
   }
 }
 
@@ -207,6 +210,7 @@ export async function runAgentLoop(
   contextWindowOverride?: number,
   systemPromptCompact?: string
 ): Promise<Task> {
+  console.log(`[loop:start] provider=${provider} model=${model} mode=${task.mode} maxSteps=${maxSteps}`);
   const ctx: LoopContext = {
     systemPrompt,
     systemPromptCompact,
@@ -220,12 +224,18 @@ export async function runAgentLoop(
   };
 
   while (task.steps.length < maxSteps && !callbacks.isAborted()) {
+    console.log(`[loop:step] step ${task.steps.length}`);
     const result = await processLoopStep(ctx, task.steps.length);
-    if (result) return result;
+    if (result) {
+      console.log(`[loop:end] status=${result.status} steps=${result.steps.length}`);
+      return result;
+    }
   }
 
   if (callbacks.isAborted()) return finish(task, 'cancelled', callbacks);
-  return finish(task, 'failed', callbacks, `Reached max steps (${maxSteps})`);
+  const final = finish(task, 'failed', callbacks, `Reached max steps (${maxSteps})`);
+  console.log(`[loop:end] maxSteps status=${final.status}`);
+  return final;
 }
 
 function finish(

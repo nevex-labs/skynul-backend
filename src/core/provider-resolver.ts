@@ -36,9 +36,13 @@ export async function resolveActiveProvider(userId?: string) {
   if (pref?.value) {
     const v = pref.value.trim().toLowerCase();
     if (isProviderId(v) && (await hasUsableCredentials(uid, v))) return v;
+    if (isProviderId(v)) throw new Error(`Provider "${v}" is configured but has no valid credentials`);
+    throw new Error(`Unknown LLM provider: "${v}". Must be one of: ${PROVIDERS.join(', ')}`);
   }
   for (const p of INFER_ORDER) {
     if (await hasUsableCredentials(uid, p)) return p;
   }
-  return 'chatgpt';
+  throw new Error(
+    `No LLM provider configured. Add an API key in Settings for one of: ${PROVIDERS.join(', ')} (ollama works locally with no key)`
+  );
 }

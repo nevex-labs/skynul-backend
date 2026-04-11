@@ -93,22 +93,22 @@ const STEALTH_ARGS = [
 async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
 
-  // If another call is already launching, wait for it
+  // If another call is already launching, wait for it.
+  // JS is single-threaded so this assignment is atomic — concurrent callers
+  // will always see the lock set before any `await` yields.
   if (browserLock) return browserLock;
 
+  // Create the promise synchronously so the lock is visible immediately.
   browserLock = (async () => {
     try {
-      // Double-check after acquiring "lock"
       if (browserInstance?.isConnected()) return browserInstance;
 
       if (IS_WSL) {
-        // WSL: use Playwright's bundled Chromium (Linux binary) — no cross-boundary issues
         browserInstance = await chromium.launch({
           headless: true,
           args: STEALTH_ARGS,
         });
       } else {
-        // Native Windows: use system Chrome
         const executablePath = findChromePath();
         browserInstance = await chromium.launch({
           executablePath,

@@ -7,7 +7,7 @@ import { createVisionProvider } from './base-vision';
 import { toText } from './vision-utils';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
-const DEFAULT_MODEL = 'qwen3.5:27b';
+const DEFAULT_MODEL = 'qwen2.5:7b';
 
 function reinforceJsonFormat(systemPrompt: string): string {
   return (
@@ -27,6 +27,7 @@ export const ollamaVisionRespond = createVisionProvider({
   buildRequest: async (opts) => {
     const baseUrl = (await getSecret('ollama.baseUrl')) || DEFAULT_BASE_URL;
     const model = (await getSecret('ollama.model')) || DEFAULT_MODEL;
+    console.log('[ollama] using model:', model, 'at', baseUrl);
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: reinforceJsonFormat(opts.systemPrompt) },
     ];

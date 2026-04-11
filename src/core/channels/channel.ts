@@ -47,9 +47,9 @@ export abstract class Channel {
 
   /** Subscribe to task updates and relay them to the channel. */
   protected subscribeToTaskUpdates(): void {
-    this.taskManager.on('taskUpdate', (task: Task) => {
+    this.taskManager.on('taskUpdate', ((task: Task) => {
       void this.handleTaskUpdate(task);
-    });
+    }) as (...args: unknown[]) => void);
   }
 
   private toWslPath(fp: string): string {

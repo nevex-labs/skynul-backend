@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, execFile, execSync, spawn } from 'child_process';
+import { type ChildProcessWithoutNullStreams, execFile, execFileSync, spawn } from 'child_process';
 import { constants as fsConstants } from 'fs';
 import { access, cp, mkdir, readFile, readlink, stat, unlink, writeFile } from 'fs/promises';
 import http from 'http';
@@ -542,19 +542,37 @@ function getAttemptErrorMeta(
 
 async function tryKillExistingSessionByUserDataDir(attemptUserDataDir: string): Promise<void> {
   try {
-    const psList = execSync(
-      `ps aux | grep -- '--user-data-dir=${attemptUserDataDir}' | grep -v grep | awk '{print $2}'`,
-      { timeout: 3000 }
-    )
-      .toString()
-      .trim();
-    for (const pidStr of psList.split('\n').filter(Boolean)) {
+    const pids = findChromePidsByUserDataDir(attemptUserDataDir);
+    for (const pid of pids) {
       try {
-        process.kill(Number(pidStr), 'SIGTERM');
-      } catch {}
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
     }
-    await new Promise((r) => setTimeout(r, 1500));
-  } catch {}
+    if (pids.length) {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch (e) {
+    console.warn('[browser] failed to kill existing session:', e instanceof Error ? e.message : e);
+  }
+}
+
+function findChromePidsByUserDataDir(userDataDir: string): number[] {
+  try {
+    const psOutput = execFileSync('ps', ['aux'], { timeout: 3000, encoding: 'utf8' });
+    const needle = `--user-data-dir=${userDataDir}`;
+    const pids: number[] = [];
+    for (const line of psOutput.split('\n')) {
+      if (!line.includes(needle) || line.includes('grep')) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = Number(parts[1]);
+      if (Number.isFinite(pid) && pid > 1) pids.push(pid);
+    }
+    return pids;
+  } catch {
+    return [];
+  }
 }
 
 async function prepareAttempt(
