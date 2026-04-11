@@ -305,8 +305,27 @@ export class PlaywrightBridge {
     }
   }
 
+  private normalizeKey(key: string): string {
+    const aliases: Record<string, string> = {
+      ctrl: 'Control',
+      cmd: 'Meta',
+      command: 'Meta',
+      opt: 'Alt',
+      option: 'Alt',
+      esc: 'Escape',
+      enter: 'Return',
+    };
+    const lower = key.toLowerCase();
+    return aliases[lower] ?? key;
+  }
+
   async pressKey(key: string): Promise<void> {
-    await this.page.keyboard.press(key);
+    const normalized = this.normalizeKey(key);
+    await this.page.keyboard.press(normalized);
+  }
+
+  async keyboardType(text: string): Promise<void> {
+    await this.page.keyboard.type(text);
   }
 
   async evaluate(script: string, frameId?: string): Promise<string> {

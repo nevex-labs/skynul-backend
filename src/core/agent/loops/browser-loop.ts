@@ -294,6 +294,21 @@ export async function executeBrowserAction(
     await handleBrowserUploadFile(engine, raw, frameId);
     return undefined;
   }
+  if (type === 'shell') {
+    const { executeShell } = await import('../action-executors');
+    const res = await executeShell(raw.command as string, raw.cwd as string | undefined, raw.timeout as number | undefined);
+    return res.ok ? res.value : `[Error: ${res.error}]`;
+  }
+  if (type === 'keyboard_type') {
+    const text = String(raw.text ?? '');
+    if (!text) return '[keyboard_type] No text provided';
+    await engine.keyboardType(text);
+    return undefined;
+  }
+  if (type === 'scrollIntoView') {
+    await engine.evaluate(`document.querySelector('${raw.selector}')?.scrollIntoView({behavior:'smooth'})`, frameId);
+    return undefined;
+  }
   const sys = await handleBrowserSystemAction(engine, action, ctx, raw, frameId, type);
   if (sys !== undefined) return sys;
   return handleBrowserAgentAction(action, ctx, type);

@@ -32,6 +32,7 @@ export interface BrowserEngine {
   click: (selector: string, frameId?: string) => Promise<void>;
   type: (selector: string, text: string, frameId?: string) => Promise<void>;
   pressKey: (key: string) => Promise<void>;
+  keyboardType: (text: string) => Promise<void>;
   evaluate: (script: string, frameId?: string) => Promise<string>;
   uploadFile: (selector: string, filePaths: string[], frameId?: string) => Promise<void>;
   screenshot: () => Promise<string>;

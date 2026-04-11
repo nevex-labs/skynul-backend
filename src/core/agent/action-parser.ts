@@ -185,6 +185,10 @@ const VALID_ACTION_TYPES = new Set([
   'evaluate',
   // Shell
   'shell',
+  // Keyboard type (for canvas-based UIs like Google Sheets)
+  'keyboard_type',
+  // Batch browser actions
+  'batch',
   // CDP file upload
   'upload_file',
   // Scroll element into view
